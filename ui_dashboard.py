@@ -87,7 +87,17 @@ def render_dashboard():
         with c1: st.markdown(f"### 🕯️ { _('MARKET_CHART') }")
         
         if "selected_chart_symbol" not in st.session_state:
-            st.session_state.selected_chart_symbol = current_symbols[0] if current_symbols else "BTC/USDT"
+            # Por defecto: la posición con más inversión (v7.9)
+            default_sym = current_symbols[0] if current_symbols else "BTC/USDT"
+            if open_positions:
+                max_v = -1
+                for s, p in open_positions.items():
+                    price = exchange.get_ticker(s) or p['entry_price']
+                    val = p['amount'] * price
+                    if val > max_v:
+                        max_v = val
+                        default_sym = s
+            st.session_state.selected_chart_symbol = default_sym
         if st.session_state.selected_chart_symbol not in current_symbols:
             current_symbols.insert(0, st.session_state.selected_chart_symbol)
             

@@ -58,8 +58,10 @@ def render_terminal():
                 max_value = value
                 max_symbol = sym
         
-        if max_symbol in current_symbols:
-            default_index = current_symbols.index(max_symbol)
+        if max_symbol not in current_symbols:
+            current_symbols.insert(0, max_symbol)
+        
+        default_index = current_symbols.index(max_symbol)
 
     # Selector de activo con default inteligente
     symbol = st.selectbox(_('SELECT_ASSET'), current_symbols, index=default_index)
