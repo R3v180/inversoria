@@ -135,16 +135,46 @@ def render_dashboard():
                 color = "#00FFAA" if u_pnl >= 0 else "#FF4444"
                 current_value = pos.get('amount', 0) * current_price
                 with st.container():
-                    col_info, col_btn = st.columns([5, 1])
+                    safe_key = sym.replace("/", "_").replace(" ", "_")
+                    col_info, col_chart, col_sell = st.columns([4.2, 0.9, 0.9])
                     with col_info:
                         st.markdown(f'<div class="position-card" style="margin-bottom: 5px; padding: 15px;"><div style="display:flex; justify-content:space-between;"><div><b>{sym}</b><br/><span style="color:gray; font-size:0.8em;">{ _("INVESTMENT") }: ${current_value:.2f}</span></div><div style="text-align:right;"><span style="font-size:1.2em; font-weight:bold; color:{color};">{u_pnl:.2f}%</span><br/><span style="font-size:0.8em;">${current_price:.4f}</span></div></div></div>', unsafe_allow_html=True)
-                    with col_btn:
-                        st.markdown("<div style='margin-top: 15px;'></div>", unsafe_allow_html=True)
-                        
+                    with col_chart:
+                        st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
+
                         def update_chart_symbol(s=sym):
                             st.session_state.selected_chart_symbol = s
-                            
-                        st.button("📈", key=f"btn_chart_{sym}", help=f"Ver gráfico de {sym}", on_click=update_chart_symbol)
+
+                        st.button("📈", key=f"btn_chart_{safe_key}", help=f"Ver gráfico de {sym}", on_click=update_chart_symbol)
+                    with col_sell:
+                        st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
+                        if st.button(
+                            _('MANUAL_SELL'),
+                            key=f"btn_sell_{safe_key}",
+                            help=_('MANUAL_SELL_HELP'),
+                            type="secondary",
+                        ):
+                            amt = float(pos.get("amount") or 0)
+                            if amt <= 0:
+                                st.error(_('MANUAL_SELL_FAIL'))
+                            else:
+                                res = exchange.execute_order(sym, "sell", amt, current_price)
+                                if res.get("status") in ("closed", "simulated"):
+                                    exit_p = res.get("average") or res.get("price") or current_price
+                                    try:
+                                        exit_p = float(exit_p)
+                                    except (TypeError, ValueError):
+                                        exit_p = float(current_price)
+                                    reason = _("MANUAL_SELL_REASON")
+                                    if db.close_position(sym, exit_p, reason):
+                                        db.add_log(f"{reason}: {sym} @ {exit_p:.6f}")
+                                        st.success(_("MANUAL_SELL_OK"))
+                                        st.rerun()
+                                    else:
+                                        st.warning(_("MANUAL_SELL_FAIL"))
+                                else:
+                                    err = res.get("reason", str(res))
+                                    st.error(f"{_('MANUAL_SELL_FAIL')}: {err}")
         else: st.info(_('NO_POSITIONS'))
 
     with col_right:
