@@ -7,6 +7,7 @@ import config # Importar el módulo completo para hot-reload
 from market_context import MarketContext
 from multi_timeframe import MultiTimeframeAnalyzer
 from backtest_engine import BacktestEngine
+from i18n import _
 
 class DecisionEngine:
     def __init__(self, sentiment=None, exchange=None, lang='es'):
