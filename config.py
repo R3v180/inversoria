@@ -13,6 +13,8 @@ DEFAULT_SETTINGS = {
     'MONEDAS': 'BTC/USDT,ETH/USDT,SOL/USDT,ADA/USDT,DOT/USDT',
     'RISK_PER_TRADE': 0.10,
     'MAX_OPEN_POSITIONS': 5,
+    # False = límite por escala de capital (<100→3, etc.). True = usa solo "Máximo Posiciones".
+    'MANUAL_MAX_POSITIONS_PRIORITY': False,
     'MIN_PROFIT_NET': 1.0,
     'STOP_LOSS_PERCENT': 3.0,
     # Parámetros de Rotación
@@ -101,3 +103,14 @@ def get_dynamic_max_positions(balance_usdt: float) -> int:
     else:
         return 10
 
+
+def get_effective_max_positions(balance_usdt: float) -> int:
+    """
+    Límite de posiciones abiertas para el bot y el dashboard.
+    Si MANUAL_MAX_POSITIONS_PRIORITY: usa el valor de MAX_OPEN_POSITIONS (1–10).
+    Si no: usa get_dynamic_max_positions (recomendado según capital).
+    """
+    if get_setting('MANUAL_MAX_POSITIONS_PRIORITY', False, bool):
+        m = get_setting('MAX_OPEN_POSITIONS', 5, int)
+        return max(1, min(int(m), 10))
+    return get_dynamic_max_positions(balance_usdt)

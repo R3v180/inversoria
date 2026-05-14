@@ -35,7 +35,18 @@ def render_settings():
                 modo_sim = st.checkbox(_('MODE_SIM'), value=get_setting('MODO_SIMULACION', True, bool))
                 presupuesto = st.number_input(_('INITIAL_CAPITAL'), value=get_setting('PRESUPUESTO_INICIAL', 60.0, float))
             with col2:
-                max_pos = st.number_input(_('MAX_POSITIONS_L'), min_value=1, max_value=10, value=get_setting('MAX_OPEN_POSITIONS', 3, int))
+                manual_cap = st.checkbox(
+                    _('MANUAL_POS_PRIORITY'),
+                    value=get_setting('MANUAL_MAX_POSITIONS_PRIORITY', False, bool),
+                    help=_('MANUAL_POS_PRIORITY_HELP'),
+                )
+                max_pos = st.number_input(
+                    _('MAX_POSITIONS_L'),
+                    min_value=1,
+                    max_value=10,
+                    value=get_setting('MAX_OPEN_POSITIONS', 5, int),
+                    help=_('MAX_POSITIONS_HELP'),
+                )
                 riesgo = st.slider(_('RISK_PER_TRADE_L'), 1, 100, int(get_setting('RISK_PER_TRADE', 0.1, float)*100))
                 min_profit = st.number_input(
                     _('MIN_PROFIT_L'),
@@ -78,6 +89,7 @@ def render_settings():
                 "COINDESK_API_KEY": coindesk_api,
                 "MODO_SIMULACION": modo_sim,
                 "PRESUPUESTO_INICIAL": float(presupuesto),
+                "MANUAL_MAX_POSITIONS_PRIORITY": bool(manual_cap),
                 "MAX_OPEN_POSITIONS": int(max_pos),
                 "MIN_PROFIT_NET": float(min_profit),
                 "RISK_PER_TRADE": riesgo / 100.0,

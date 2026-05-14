@@ -104,6 +104,18 @@ TRANSLATIONS = {
     'LINGUISTIC_BRAIN': {'es': 'Cerebro Lingüístico (Prompts)', 'en': 'Linguistic Brain (Prompts)'},
     'INITIAL_CAPITAL': {'es': 'Capital Inicial (USD)', 'en': 'Initial Capital (USD)'},
     'MAX_POSITIONS_L': {'es': 'Máximo Posiciones', 'en': 'Max Positions'},
+    'MANUAL_POS_PRIORITY': {
+        'es': 'Priorizar límite manual (ignorar escala por capital)',
+        'en': 'Prioritize manual cap (ignore balance-based scaling)',
+    },
+    'MANUAL_POS_PRIORITY_HELP': {
+        'es': 'Desactivado (recomendado): el bot ajusta el máximo según tu equity (<100 USDT→3, <300→5…). Activado: el bot usa siempre el número «Máximo Posiciones» aunque el capital sea bajo (más riesgo de dispersión y comisiones).',
+        'en': 'Off (recommended): max slots scale with equity (<100→3, <300→5…). On: the bot always uses «Max Positions» even with small capital (higher dispersion/fee risk).',
+    },
+    'MAX_POSITIONS_HELP': {
+        'es': 'Solo aplica como tope duro si activas «Priorizar límite manual». Si no, este valor se guarda pero el tope visible sigue la escala por capital.',
+        'en': 'Only used as the hard cap if «Prioritize manual cap» is on. Otherwise it is saved but the visible cap follows balance-based scaling.',
+    },
     'RISK_PER_TRADE_L': {'es': 'Riesgo por Trade (%)', 'en': 'Risk per Trade (%)'},
     'MIN_PROFIT_L': {'es': 'Profit Mínimo Objetivo (%)', 'en': 'Min Profit Target (%)'},
     'ENABLE_ROTATION': {'es': 'Activar Rotación de Capital', 'en': 'Enable Capital Rotation'},

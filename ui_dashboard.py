@@ -6,7 +6,7 @@ from plotly.subplots import make_subplots
 import time
 import json
 import pandas_ta as ta
-from config import PRESUPUESTO_INICIAL, MAX_OPEN_POSITIONS, SYMBOLS, get_dynamic_max_positions
+from config import PRESUPUESTO_INICIAL, SYMBOLS, get_effective_max_positions
 
 def render_dashboard():
     # Estilos CSS Avanzados
@@ -63,7 +63,7 @@ def render_dashboard():
 
     from i18n import _, TRANSLATIONS
     # --- TOP METRICS ---
-    dynamic_max = get_dynamic_max_positions(total_value)
+    dynamic_max = get_effective_max_positions(total_value)
     m1, m2, m3, m4 = st.columns(4)
     m1.metric(_('EQUITY_TOTAL'), f"${total_value:.2f}", f"{pnl_pct:.2f}%")
     m2.metric(_('AVAILABLE'), f"${available_usdt:.2f}")

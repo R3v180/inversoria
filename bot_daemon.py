@@ -183,7 +183,7 @@ class BotDaemon:
         self.db.log_equity(total_value)
         
         # Límite dinámico basado en balance total (v6.1)
-        self.dynamic_max = config.get_dynamic_max_positions(total_value)
+        self.dynamic_max = config.get_effective_max_positions(total_value)
         
         # Para el cálculo de cuánto podemos comprar, necesitamos el cash (USDT) disponible
         open_positions = self.db.get_open_positions()
