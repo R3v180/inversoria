@@ -5,7 +5,7 @@ import streamlit as st
 
 TRANSLATIONS = {
     # --- Onboarding ---
-    'WELCOME_TITLE': {'es': 'Bienvenido a la Terminal Inversoria', 'en': 'Welcome to Inversoria Terminal'},
+    'WELCOME_TITLE': {'es': 'Bienvenido a InversorIA', 'en': 'Welcome to InversorIA'},
     'WELCOME_SUBTITLE': {'es': 'Configura tu experiencia de trading institucional', 'en': 'Configure your institutional trading experience'},
     'USER_NAME_LABEL': {'es': '¿Cómo quieres que te llame?', 'en': 'How should I call you?'},
     'LANG_LABEL': {'es': 'Idioma de la interfaz', 'en': 'Interface language'},
@@ -58,6 +58,7 @@ TRANSLATIONS = {
     'SETTINGS_TITLE': {'es': '⚙️ Centro de Mandos - Configuración', 'en': '⚙️ Command Center - Settings'},
     'SAVE_SETTINGS': {'es': '💾 Guardar Cambios en Caliente', 'en': '💾 Save Hot Changes'},
     'RESET_GLOBAL': {'es': '🔄 Reset Global', 'en': '🔄 Global Reset'},
+    'RESET_HELP': {'es': 'Restaurar toda la configuración sugerida por InversorIA', 'en': 'Restore all settings suggested by InversorIA'},
     'SUCCESS_SETTINGS': {'es': '¡Configuración actualizada!', 'en': 'Settings updated!'},
     'SELECT_MODE': {'es': 'SELECCIONAR MODO', 'en': 'SELECT MODE'},
     'MODE_SIM': {'es': '🤖 Simulación (Dinero Ficticio)', 'en': '🤖 Simulation (Paper Money)'},

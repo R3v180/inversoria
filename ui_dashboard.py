@@ -21,7 +21,7 @@ def render_dashboard():
         </style>
     """, unsafe_allow_html=True)
 
-    st.title("🏛️ Terminal Iversoria")
+    st.title("🏛️ Terminal InversorIA")
     
     db = st.session_state.db
     exchange = st.session_state.exchange

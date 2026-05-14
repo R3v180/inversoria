@@ -9,7 +9,7 @@ from trading_logic import TradingLogic
 from database_manager import DatabaseManager
 
 # --- CONFIGURACIÓN DE STREAMLIT ---
-st.set_page_config(page_title="IVERSORIA Terminal", layout="wide", page_icon="📈")
+st.set_page_config(page_title="InversorIA Terminal", layout="wide", page_icon="📈")
 
 # Estilos CSS para Bloomberg style
 st.markdown("""
@@ -65,7 +65,7 @@ st.session_state.sentiment.set_user_context(
 )
 
 with st.sidebar:
-    st.markdown("### 🚀 IVERSORIA")
+    st.markdown("### 🚀 InversorIA")
     st.markdown(_('WELCOME_SUBTITLE'))
     st.markdown("---")
     

@@ -12,7 +12,7 @@ def render_settings():
     # Botón de Reset fuera del formulario para acción inmediata
     col_reset1, col_reset2 = st.columns([4, 1])
     with col_reset2:
-        if st.button(_('RESET_GLOBAL'), help="Restaurar toda la configuración sugerida por Iversoria", type="secondary"):
+        if st.button(_('RESET_GLOBAL'), help=_('RESET_HELP'), type="secondary"):
             reset_to_defaults()
             st.rerun()
 
