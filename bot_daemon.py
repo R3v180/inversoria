@@ -117,6 +117,7 @@ class BotDaemon:
                 
                 # Refrescar idioma v7.3
                 self.u_lang = self.db.get_system_status('language', 'es')
+                self.sentiment.set_user_context(self.u_name, self.u_lang)
                 
                 now = time.time()
                 if now - self.last_watchlist_update > 43200:
