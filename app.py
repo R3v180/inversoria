@@ -44,6 +44,8 @@ def log_message(msg):
     logging.info(msg)
 
 # --- ENRUTADOR UI ---
+from i18n import _
+from ui_onboarding import render_onboarding, is_onboarding_done
 from ui_dashboard import render_dashboard
 from ui_terminal import render_terminal
 from ui_history import render_history
@@ -51,14 +53,19 @@ from ui_settings import render_settings
 from ui_assistant import render_assistant
 from streamlit_option_menu import option_menu
 
+# --- CONTROL DE FLUJO (ONBOARDING) ---
+if not is_onboarding_done():
+    render_onboarding()
+    st.stop() # Detiene la ejecución del resto del script
+
 with st.sidebar:
-    st.markdown("### 🚀 IVERSORIA")
-    st.markdown("Terminal Institucional")
+    st.markdown(f"### 🚀 { _('WELCOME_TITLE')[:9] }") # Muestra 'IVERSORIA'
+    st.markdown(_('WELCOME_SUBTITLE'))
     st.markdown("---")
     
     selected = option_menu(
         menu_title=None,
-        options=["Dashboard", "Terminal de Trading", "Asistente IA", "Historial y Analítica", "Configuración"],
+        options=[_('NAV_DASHBOARD'), _('NAV_TERMINAL'), _('NAV_ASSISTANT'), _('NAV_HISTORY'), _('NAV_SETTINGS')],
         icons=["pie-chart-fill", "graph-up-arrow", "chat-dots-fill", "journal-text", "gear-fill"],
         menu_icon="cast",
         default_index=0,
@@ -71,19 +78,19 @@ with st.sidebar:
     )
     
     st.markdown("---")
-    st.markdown("### 🤖 Motor Core")
+    st.markdown(f"### 🤖 { _('CORE_ENGINE') }")
     
     is_running_str = st.session_state.db.get_system_status('is_running', 'false')
     is_running = str(is_running_str).lower() == 'true'
     
-    if st.button("🔴 Detener Bot" if is_running else "🟢 Iniciar Bot", width="stretch"):
+    if st.button(_('STOP_BOT') if is_running else _('START_BOT'), width="stretch"):
         new_status = not is_running
         st.session_state.db.set_system_status('is_running', 'true' if new_status else 'false')
         st.rerun()
     
     status_color = "#00FFAA" if is_running else "#FF4444"
-    status_text = "EN LÍNEA" if is_running else "DETENIDO"
-    st.markdown(f"<div style='text-align:center; padding:10px; border-radius:5px; background:#1E1E1E; color:{status_color}; font-weight:bold;'>ESTADO: {status_text}</div>", unsafe_allow_html=True)
+    status_text = _('STATUS_ONLINE') if is_running else _('STATUS_OFFLINE')
+    st.markdown(f"<div style='text-align:center; padding:10px; border-radius:5px; background:#1E1E1E; color:{status_color}; font-weight:bold;'>{status_text}</div>", unsafe_allow_html=True)
     
     st.markdown("---")
     st.subheader("⚙️ Configuración Global")

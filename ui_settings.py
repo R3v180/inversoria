@@ -2,20 +2,17 @@ import streamlit as st
 import json
 import os
 from config import get_setting, USER_SETTINGS_FILE, save_settings, reset_to_defaults, DEFAULT_SETTINGS
+from i18n import _
 
 def render_settings():
-    st.title("⚙️ Centro de Mandos - Configuración")
+    st.title(_('SETTINGS_TITLE'))
     
-    st.markdown("""
-    <div style='background: rgba(255, 255, 255, 0.05); padding: 20px; border-radius: 10px; border: 1px solid rgba(0, 255, 127, 0.2); margin-bottom: 20px;'>
-        Ajusta los parámetros de inteligencia y riesgo de Iversoria. Los cambios se guardarán automáticamente en <code>user_settings.json</code>.
-    </div>
-    """, unsafe_allow_html=True)
-
+    # ...
+    
     # Botón de Reset fuera del formulario para acción inmediata
     col_reset1, col_reset2 = st.columns([4, 1])
     with col_reset2:
-        if st.button("🔄 Reset Global", help="Restaurar toda la configuración sugerida por Iversoria", type="secondary"):
+        if st.button(_('RESET_GLOBAL'), help="Restaurar toda la configuración sugerida por Iversoria", type="secondary"):
             reset_to_defaults()
             st.rerun()
 
@@ -69,7 +66,7 @@ def render_settings():
             p_cur = st.text_area("Prompt Radar (Curación)", value=get_setting('PROMPT_CURATION', DEFAULT_SETTINGS['PROMPT_CURATION']), height=100)
 
         # Guardar todo
-        submit = st.form_submit_button("💾 Guardar Cambios en Caliente", type="primary", use_container_width=True)
+        submit = st.form_submit_button(_('SAVE_SETTINGS'), type="primary", use_container_width=True)
         
         if submit:
             new_data = {
@@ -94,5 +91,5 @@ def render_settings():
                 "PROMPT_CURATION": p_cur
             }
             save_settings(new_data)
-            st.success("¡Configuración actualizada! El Bot Daemon captará los cambios en el próximo ciclo.")
+            st.success(_('SUCCESS_SETTINGS'))
             st.balloons()

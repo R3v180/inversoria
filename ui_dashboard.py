@@ -61,19 +61,20 @@ def render_dashboard():
     pnl_pct = (pnl / baseline) * 100 if baseline else 0
     open_positions = db.get_open_positions()
 
+    from i18n import _
     # --- TOP METRICS ---
     dynamic_max = get_dynamic_max_positions(total_value)
     m1, m2, m3, m4 = st.columns(4)
-    m1.metric("Equity Total", f"${total_value:.2f}", f"{pnl_pct:.2f}%")
-    m2.metric("Disponible", f"${available_usdt:.2f}")
-    m3.metric("Posiciones", f"{len(open_positions)} / {dynamic_max}")
-    m4.metric("PnL USD", f"${pnl:.2f}", f"{pnl_pct:.2f}%")
+    m1.metric(_('EQUITY_TOTAL'), f"${total_value:.2f}", f"{pnl_pct:.2f}%")
+    m2.metric(_('AVAILABLE'), f"${available_usdt:.2f}")
+    m3.metric(_('POSITIONS'), f"{len(open_positions)} / {dynamic_max}")
+    m4.metric(_('PNL_USD'), f"${pnl:.2f}", f"{pnl_pct:.2f}%")
 
     # --- COMMAND CENTER ---
     col_equity, col_market = st.columns([1, 1.2])
 
     with col_equity:
-        st.markdown("### 📈 Patrimonio")
+        st.markdown(f"### 📈 { _('EQUITY_CHART') }")
         equity_df = db.get_equity_history(limit=500)
         if not equity_df.empty:
             fig_equity = go.Figure()
@@ -83,7 +84,7 @@ def render_dashboard():
 
     with col_market:
         c1, c2 = st.columns([2, 1])
-        with c1: st.markdown("### 🕯️ Mercado")
+        with c1: st.markdown(f"### 🕯️ { _('MARKET_CHART') }")
         
         if "selected_chart_symbol" not in st.session_state:
             st.session_state.selected_chart_symbol = current_symbols[0] if current_symbols else "BTC/USDT"
@@ -116,7 +117,7 @@ def render_dashboard():
     col_left, col_right = st.columns([1.5, 1])
 
     with col_left:
-        st.markdown("### 💼 Posiciones Activas")
+        st.markdown(f"### 💼 { _('ACTIVE_POSITIONS') }")
         if open_positions:
             for sym, pos in open_positions.items():
                 current_price = exchange.get_ticker(sym) or pos['entry_price']
@@ -134,10 +135,10 @@ def render_dashboard():
                             st.session_state.selected_chart_symbol = s
                             
                         st.button("📈", key=f"btn_chart_{sym}", help=f"Ver gráfico de {sym}", on_click=update_chart_symbol)
-        else: st.info("Sin posiciones activas.")
+        else: st.info(_('NO_POSITIONS'))
 
     with col_right:
-        st.markdown("### 🤖 IA & Logs")
+        st.markdown(f"### 🤖 { _('ASSISTANT_TITLE')[:9] } & Logs")
         last_decision_raw = db.get_system_status('last_ia_decision', '{}')
         try:
             decision = json.loads(last_decision_raw)
@@ -156,7 +157,7 @@ def render_dashboard():
     c_pie, c_radar = st.columns([1, 1])
     
     with c_pie:
-        with st.expander("🥧 Distribución del Portfolio", expanded=True):
+        with st.expander(f"🥧 { _('Portfolio Distribution') if 'Portfolio Distribution' in TRANSLATIONS else 'Portfolio Distribution' }", expanded=True):
             pie_data = [{"Activo": "Liquidez", "Valor": available_usdt}]
             for sym, amt in portfolio.items():
                 p = exchange.get_ticker(sym)
@@ -164,7 +165,7 @@ def render_dashboard():
             st.plotly_chart(px.pie(pd.DataFrame(pie_data), values='Valor', names='Activo', hole=0.6, color_discrete_sequence=['#00FFAA', '#3A86FF', '#FF006E']), use_container_width=True)
 
     with c_radar:
-        with st.expander("🛰️ Radar de Oportunidades (Top 24h)", expanded=True):
+        with st.expander(f"🛰️ { _('Opportunity Radar') if 'Opportunity Radar' in TRANSLATIONS else 'Opportunity Radar' }", expanded=True):
             radar_data = []
             for sym in current_symbols[:8]: # Top 8 del radar
                 stats = exchange.get_market_stats(sym)
@@ -184,7 +185,7 @@ def render_dashboard():
     col_macro, col_backtest = st.columns(2)
 
     with col_macro:
-        with st.expander("🌍 Contexto Macro", expanded=True):
+        with st.expander(f"🌍 { _('MACRO_CONTEXT') }", expanded=True):
             macro_raw = db.get_system_status('macro_context', '{}')
             try:
                 macro = json.loads(macro_raw)
@@ -202,24 +203,24 @@ def render_dashboard():
                         f"font-weight:bold;'>RÉGIMEN: {regime}</div>",
                         unsafe_allow_html=True
                     )
-                    st.metric("BTC Dominance", f"{macro.get('btc_dominance', 0):.1f}%")
-                    st.metric("Cap. total 24h", f"{macro.get('market_cap_change_24h', 0):+.2f}%")
-                    st.metric("Sector líder", macro.get('leading_sector', 'N/A').upper())
+                    st.metric(_('BTC_DOM'), f"{macro.get('btc_dominance', 0):.1f}%")
+                    st.metric(_('MARKET_CAP'), f"{macro.get('market_cap_change_24h', 0):+.2f}%")
+                    st.metric(_('LEADING_SECTOR'), macro.get('leading_sector', 'N/A').upper())
                     
                     # Mostrar datos de Alpha Vantage v6.0
                     st.markdown("---")
-                    st.markdown("**🌍 Mercados Globales**")
+                    st.markdown(f"**{ _('GLOBAL_TITLE') }**")
                     macro_db = db.get_all_macro_data()
                     if macro_db:
                         c_m1, c_m2 = st.columns(2)
                         # DXY Proxy
                         if 'UUP' in macro_db:
                             d = macro_db['UUP']
-                            c_m1.metric("Dólar (UUP)", f"${d['price']:.2f}", f"{d['change_24h']:+.2f}%")
+                            c_m1.metric(_('DOLLAR'), f"${d['price']:.2f}", f"{d['change_24h']:+.2f}%")
                         # SP500
                         if 'SPY' in macro_db:
                             d = macro_db['SPY']
-                            c_m2.metric("S&P 500 (SPY)", f"${d['price']:.2f}", f"{d['change_24h']:+.2f}%")
+                            c_m2.metric(_('SP500'), f"${d['price']:.2f}", f"{d['change_24h']:+.2f}%")
                     else:
                         st.caption("Cargando indicadores Alpha Vantage...")
                 else:

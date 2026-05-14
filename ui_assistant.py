@@ -1,9 +1,11 @@
 import streamlit as st
 import time
+from i18n import _
 
 def render_assistant():
-    st.title("💬 Asistente IA Inversor")
-    st.caption("Investiga el mercado, debate estrategias y da órdenes en lenguaje natural.")
+    user_name = st.session_state.get('user_name', 'User')
+    st.title(_('ASSISTANT_TITLE'))
+    st.caption(_('ASSISTANT_CAPTION'))
     st.markdown("---")
 
     db = st.session_state.db
@@ -17,8 +19,9 @@ def render_assistant():
         if history:
             st.session_state.messages = history
         else:
+            welcome_msg = f"Hello {user_name}! I am your trading copilot. How can I help you today?" if st.session_state.get('language') == 'en' else f"¡Hola {user_name}! Soy tu copiloto de trading. ¿En qué puedo ayudarte hoy?"
             st.session_state.messages = [
-                {"role": "assistant", "content": "¡Hola! Soy tu copiloto de trading. ¿En qué puedo ayudarte hoy? Puedes pasarme un tema para investigar o preguntarme por tu cartera."}
+                {"role": "assistant", "content": welcome_msg}
             ]
 
     # Mostrar mensajes
@@ -29,7 +32,8 @@ def render_assistant():
                 st.caption(f"🕒 {msg['timestamp']}")
 
     # Entrada de usuario
-    if prompt := st.chat_input("Escribe tu consulta o comando aquí..."):
+    input_placeholder = "Escribe tu consulta aquí..." if st.session_state.get('language') == 'es' else "Type your query here..."
+    if prompt := st.chat_input(input_placeholder):
         # Guardar y mostrar mensaje de usuario
         current_time = time.strftime('%Y-%m-%d %H:%M:%S')
         st.session_state.messages.append({"role": "user", "content": prompt, "timestamp": current_time})
@@ -90,8 +94,10 @@ def render_assistant():
                 """
                 
                 # 2. Llamada a la IA (Conversacional)
-                system_prompt = """
-                Actúa como un asesor de trading experto.
+                lang_name = "Spanish" if st.session_state.get('language') == 'es' else "English"
+                system_prompt = f"""
+                Actúa como un asesor de trading experto. Tu cliente se llama {user_name}.
+                DEBES responder SIEMPRE en idioma {lang_name}.
                 Si estás proponiendo una acción, pide confirmación.
                 Si el usuario TE CONFIRMA claramente que ejecutes una orden (comprar o vender), DEBES incluir al final de tu respuesta este bloque exacto para que el sistema lo procese:
                 
@@ -99,8 +105,6 @@ def render_assistant():
                 ACTION: BUY o SELL
                 SYMBOL: moneda/USDT
                 [/EXECUTE_ORDER]
-                
-                No incluyas el bloque [EXECUTE_ORDER] a menos que el usuario te haya dado una orden directa y clara.
                 """
                 
                 raw_response, provider = sentiment.call_ai_hybrid(
