@@ -27,7 +27,9 @@ def render_dashboard():
     exchange = st.session_state.exchange
 
     # --- DATOS ---
-    balance = exchange.get_balance()
+    available_usdt = exchange.get_usdt_balance()
+    total_value = exchange.get_balance()
+    
     saved_watchlist = db.get_system_status('dynamic_watchlist')
     current_symbols = [s.strip() for s in saved_watchlist.split(',') if s.strip()] if saved_watchlist else SYMBOLS
 
@@ -40,11 +42,6 @@ def render_dashboard():
                     portfolio[f"{coin}/USDT"] = amount
         except: pass
 
-    total_value = balance
-    for sym, amt in portfolio.items():
-        price = exchange.get_ticker(sym)
-        if price: total_value += amt * price
-            
     pnl = total_value - PRESUPUESTO_INICIAL
     pnl_pct = (pnl / PRESUPUESTO_INICIAL) * 100 if PRESUPUESTO_INICIAL else 0
     open_positions = db.get_open_positions()
@@ -52,7 +49,7 @@ def render_dashboard():
     # --- TOP METRICS ---
     m1, m2, m3, m4 = st.columns(4)
     m1.metric("Equity Total", f"${total_value:.2f}", f"{pnl_pct:.2f}%")
-    m2.metric("Disponible", f"${balance:.2f}")
+    m2.metric("Disponible", f"${available_usdt:.2f}")
     m3.metric("Posiciones", f"{len(open_positions)} / {MAX_OPEN_POSITIONS}")
     m4.metric("PnL USD", f"${pnl:.2f}", f"{pnl_pct:.2f}%")
 
