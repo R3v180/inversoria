@@ -84,11 +84,19 @@ class DecisionEngine:
 
     def curate_watchlist(self, raw_symbols):
         system_instruction = config.PROMPT_CURATION
-        prompt = f"Filtra esta lista: {', '.join(raw_symbols)}"
+        prompt = f"Filtra esta lista y devuelve solo los nombres de los elegidos separados por comas: {', '.join(raw_symbols)}"
         raw_content, provider = self.sentiment.call_ai_hybrid(prompt, system_instruction)
         if raw_content:
-            found = re.findall(r'(\w+/USDT)', raw_content)
+            # Extraer cualquier cosa que se parezca a un símbolo (ABC/USDT, ABC-USDT o solo ABC)
+            potential = re.findall(r'([A-Z0-9]+)', raw_content.upper())
+            found = []
+            for p in potential:
+                symbol = f"{p}/USDT" if "/" not in p and "-" not in p else p.replace("-", "/")
+                if symbol in raw_symbols:
+                    found.append(symbol)
+            
             if found: return list(set(found))
+        
         return raw_symbols[:15]
 
     def get_decision(self, symbol, current_price, indicators, ohlcv, open_positions_count, is_already_open=False):
