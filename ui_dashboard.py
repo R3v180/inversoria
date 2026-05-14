@@ -158,7 +158,7 @@ def render_dashboard():
     
     with c_pie:
         with st.expander(f"🥧 { _('PORTFOLIO_DIST') }", expanded=True):
-            pie_data = [{"Activo": "Liquidez", "Valor": available_usdt}]
+            pie_data = [{"Activo": _('CASH'), "Valor": available_usdt}]
             for sym, amt in portfolio.items():
                 p = exchange.get_ticker(sym)
                 if p: pie_data.append({"Activo": sym, "Valor": amt * p})

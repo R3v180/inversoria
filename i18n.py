@@ -41,6 +41,7 @@ TRANSLATIONS = {
     'LEADING_SECTOR': {'es': 'Sector líder', 'en': 'Leading Sector'},
     'PORTFOLIO_DIST': {'es': 'Distribución del Portfolio', 'en': 'Portfolio Distribution'},
     'OPPORTUNITY_RADAR': {'es': 'Radar de Oportunidades', 'en': 'Opportunity Radar'},
+    'CASH': {'es': 'Liquidez', 'en': 'Cash/USDT'},
     
     # --- Assistant ---
     'ASSISTANT_TITLE': {'es': 'Asistente IA', 'en': 'AI Assistant'},

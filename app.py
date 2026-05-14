@@ -156,20 +156,20 @@ with st.sidebar:
                 st.rerun()
 
 # RENDERIZAR VISTAS
-if selected == "Dashboard":
+if selected == _('NAV_DASHBOARD'):
     from streamlit_autorefresh import st_autorefresh
     # Refresca cada 30 segundos (30000 ms), máximo 1000 veces
     st_autorefresh(interval=30_000, limit=1000, key="dashboard_refresh")
     render_dashboard()
-elif selected == "Terminal de Trading":
+elif selected == _('NAV_TERMINAL'):
     render_terminal()
     # Auto-refrescar si el interruptor del terminal está activado
     if st.session_state.get('terminal_refresh', False):
         time.sleep(30)
         st.rerun()
-elif selected == "Asistente IA":
+elif selected == _('NAV_ASSISTANT'):
     render_assistant()
-elif selected == "Historial y Analítica":
+elif selected == _('NAV_HISTORY'):
     render_history()
-elif selected == "Configuración":
+elif selected == _('NAV_SETTINGS'):
     render_settings()
