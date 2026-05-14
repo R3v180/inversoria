@@ -8,9 +8,9 @@
 <img src="https://img.shields.io/badge/SQLite-003B57?style=for-the-badge&logo=sqlite&logoColor=white"/>
 
 # 🏛️ INVERSORIA
-### Agente de Trading Autónomo con IA Híbrida — v5.1 [INTELLIGENCE UPGRADE]
+### Agente de Trading Autónomo con IA Híbrida — v6.1 [GLOBAL MACRO & DYNAMIC UPGRADE]
 
-*Fusión de análisis técnico institucional, inteligencia artificial generativa, memoria histórica de 2 años y gestión de riesgo adaptativa.*
+*Fusión de análisis técnico institucional, inteligencia artificial generativa, memoria histórica de 2 años, análisis de mercados globales y gestión de capital dinámica.*
 
 </div>
 
@@ -18,14 +18,13 @@
 
 ## ¿Qué es Inversoria?
 
-Inversoria es un **bot de trading autónomo** para Crypto.com que opera de forma continua tomando decisiones basadas en un pipeline de cuatro capas de inteligencia:
+Inversoria es un **bot de trading autónomo** para Crypto.com que opera de forma continua tomando decisiones basadas en un pipeline de cinco capas de inteligencia:
 
-1. **Filtro Macro** — Analiza dominancia de BTC, sentimiento global y régimen de mercado (Risk-On/Off).
-2. **Memoria Histórica (Backtest Engine)** — Consulta el Win Rate real de los últimos 2 años para cada moneda antes de decidir.
-3. **Motor de IA Híbrida** — Gemini y Groq analizan la estructura técnica, noticias y sentimiento en tiempo real.
-4. **Gestión de Riesgo** — Stop Loss, Trailing Stop dinámico y rotación de capital automática.
-
-La UI Bloomberg-style en Streamlit permite monitorizar el patrimonio, ver gráficos interactivos de confluencia y chatear con el bot para entender sus decisiones.
+1. **Inteligencia Global (Alpha Vantage)** — Monitoriza el Dólar (DXY), Petróleo (WTI) y Bolsa (SP500) para detectar riesgos sistémicos.
+2. **Filtro Macro Crypto** — Analiza dominancia de BTC y régimen de mercado (Risk-On/Off).
+3. **Memoria Histórica (Backtest Engine)** — Consulta el Win Rate real de los últimos 2 años para cada moneda antes de decidir.
+4. **Motor de IA Híbrida** — Gemini y Groq analizan la estructura técnica, noticias y sentimiento en tiempo real.
+5. **Gestión Dinámica de Capital** — Ajusta automáticamente el número de posiciones según el balance total de la cuenta.
 
 ---
 
@@ -43,8 +42,8 @@ La UI Bloomberg-style en Streamlit permite monitorizar el patrimonio, ver gráfi
 │          │                                    │               │
 │   ┌──────▼───────┐                   ┌────────▼───────────┐   │
 │   │ ui_dashboard │                   │  decision_engine   │   │
-│   │ ui_assistant │                   │  backtest_engine   │   │
-│   │ ui_history   │                   │  sentiment_engine  │   │
+│   │ ui_assistant │                   │  macro_analyzer    │   │
+│   │ ui_history   │                   │  backtest_engine   │   │
 │   │ ui_settings  │                   │  exchange_helper   │   │
 │   │ ui_terminal  │                   └────────────────────┘   │
 │   └──────────────┘                                            │
@@ -53,50 +52,42 @@ La UI Bloomberg-style en Streamlit permite monitorizar el patrimonio, ver gráfi
 
 ---
 
-## Flujo de Decisión v5.1 (cada 60 segundos)
+## Flujo de Decisión v6.1 (cada 60 segundos)
 
 ```
 bot_daemon.py
 │
-├── 1. reload(config)  ← Sincronización en caliente de parámetros
+├── 1. Actualización Macro Global (cada 6h)
+│      └── Consulta Alpha Vantage: DXY, SP500, WTI, GLD
+│          └── Veto automático si hay pánico en bolsa o dólar fuerte
 │
 ├── 2. Backtest Semanal Automático (cada 7 días)
-│      └── Simulación de 4 estrategias en 2 años de datos para cada moneda
-│          └── Genera tabla de "Win Rate Histórico" en SQLite
+│      └── Simulación de 2 años → Genera "Win Rate Histórico"
 │
-├── 3. Actualizar Watchlist (cada 12h)
-│      └── Top 30 por volumen → CurationAI filtra calidad
+├── 3. Sizing Dinámico de Posiciones
+│      └── <100€: 3 slots | 100-300€: 5 slots | >300€: 7-10 slots
 │
 ├── 4. Escaneo de Ciclo (por cada símbolo):
-│      │
-│      ├── Filtro Macro: ¿La dominancia de BTC permite operar Alts?
-│      │
-│      ├── Filtro Técnico: ¿Hay volatilidad (ADX) o es mercado lateral?
-│      │
-│      ├── Consulta Histórica: ¿Qué Win Rate tiene esta moneda en este contexto?
-│      │     └── Si WR < 35% → VETO HISTÓRICO
-│      │
-│      ├── IA Híbrida: Análisis final de confluencia técnica + Noticias
-│      │
-│      └── Ejecución: Compra, Venta o Rotación (si slots llenos)
+│      ├── Veto Macro/Global: ¿El entorno mundial permite operar?
+│      ├── Veto Técnico: ¿Hay volatilidad o es mercado lateral?
+│      ├── Veto Histórico: ¿Esta moneda es ganadora en este contexto?
+│      └── Ejecución: Compra, Venta o Rotación
 │
-└── 5. Log Equity: Cálculo de PnL Real vs Saldo inicial capturado
+└── 5. Log Equity: PnL Real vs Saldo inicial capturado en Crypto.com
 ```
 
 ---
 
-## Nuevas Funcionalidades v5.1
+## Nuevas Funcionalidades v6.1
 
-### 🧠 Motor de Backtest Integrado
-El bot ya no solo mira el presente. Al arrancar, descarga hasta **4380 velas (2 años)** y calcula qué estrategias funcionaron mejor en el pasado. Si una moneda tiene un historial perdedor en las condiciones actuales, el bot veta la entrada automáticamente.
+### 🌍 Radar de Mercados Globales
+Integración con **Alpha Vantage** para tener "ojos" en la economía real. El bot sabe si el petróleo sube por una guerra o si el dólar se fortalece, ajustando su agresividad en cripto de forma automática.
 
-### 🌍 Filtro Macro Avanzado
-Detección automática de regímenes de mercado. Si la dominancia de Bitcoin es demasiado alta o el sentimiento global es de pánico, el bot entra en modo defensivo y protege tu capital en USDT.
+### 📈 Position Sizing Dinámico
+El bot ya no usa un límite de posiciones fijo. Ahora escala contigo: a medida que tu balance crece, el bot desbloquea más "slots" de trading (de 3 hasta 10 posiciones), optimizando el pago de comisiones y la diversificación.
 
-### 📈 Dashboard Interactivo
-- **Gráficos de Confluencia**: Visualización de EMAs, RSI y ATR en tiempo real.
-- **Acceso Rápido**: Botones (📈) en las posiciones activas para saltar directamente al gráfico de esa moneda.
-- **PnL Real**: Seguimiento exacto de ganancias/pérdidas basado en tu saldo real de Crypto.com al iniciar.
+### 🧠 Asistente Macroeconómico
+El chat de IA ahora tiene acceso a los datos de mercados globales. Puedes preguntarle sobre la situación del petróleo, el dólar o la bolsa, y te dará consejos de trading basados en el contexto mundial actual.
 
 ---
 
@@ -104,30 +95,17 @@ Detección automática de regímenes de mercado. Si la dominancia de Bitcoin es 
 
 ### Prerrequisitos
 - Python 3.11+
-- Claves API de Crypto.com, Google Gemini y Groq.
+- Claves API: Crypto.com, Google Gemini, Groq y **Alpha Vantage**.
 
 ### Configuración rápida
-1. Clona el repositorio.
-2. Instala dependencias: `pip install -r requirements.txt`
-3. Configura tu `.env` con las claves necesarias.
-4. Lanza la UI: `streamlit run app.py`
-5. Lanza el Daemon: `python bot_daemon.py`
-
----
-
-## Gestión de Riesgo
-
-| Parámetro | Función |
-|---|---|
-| `STOP_LOSS_PCT` | Corte de pérdidas fijo por operación. |
-| `TRAILING_STOP` | Asegura beneficios una vez la moneda sube un 2-5%. |
-| `ROTATION` | Cierra la posición más débil para entrar en una de mayor confianza. |
-| `MAX_POSITIONS` | Límite configurable de slots abiertos simultáneos (ahora hasta 5). |
+1. Instala dependencias: `pip install -r requirements.txt`
+2. Configura tu `.env` (añade `ALPHA_VANTAGE_API_KEY`).
+3. Lanza la UI (`app.py`) y el Daemon (`bot_daemon.py`).
 
 ---
 
 <div align="center">
 
-**INVERSORIA v5.1** · Inteligencia Híbrida · Licencia MIT
+**INVERSORIA v6.1** · Hecho con Python · Licencia MIT
 
 </div>
