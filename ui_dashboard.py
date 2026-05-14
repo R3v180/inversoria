@@ -216,14 +216,23 @@ def render_dashboard():
             radar_data = []
             for sym in current_symbols[:8]: # Top 8 del radar
                 stats = exchange.get_market_stats(sym)
-                change = stats.get('change_24h', 0)
+                raw = stats.get('change_24h')
+                try:
+                    change = float(raw) if raw is not None else 0.0
+                except (TypeError, ValueError):
+                    change = 0.0
                 radar_data.append({"Moneda": sym, "Cambio": change})
-            
+
             # Ordenar por cambio
-            radar_data = sorted(radar_data, key=lambda x: x['Cambio'] or 0, reverse=True)
+            radar_data = sorted(radar_data, key=lambda x: x['Cambio'], reverse=True)
             for item in radar_data:
-                c_color = "#00FFAA" if (item['Cambio'] or 0) >= 0 else "#FF4444"
-                st.markdown(f'<div class="radar-item"><span>{item["Moneda"]}</span><span style="color:{c_color}; font-weight:bold;">{item["Cambio"]:.2f}%</span></div>', unsafe_allow_html=True)
+                chg = float(item['Cambio'] or 0)
+                c_color = "#00FFAA" if chg >= 0 else "#FF4444"
+                st.markdown(
+                    f'<div class="radar-item"><span>{item["Moneda"]}</span>'
+                    f'<span style="color:{c_color}; font-weight:bold;">{chg:.2f}%</span></div>',
+                    unsafe_allow_html=True,
+                )
 
     # --- PANEL DE INTELIGENCIA ---
     st.markdown("---")
