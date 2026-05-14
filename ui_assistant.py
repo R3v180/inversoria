@@ -54,8 +54,17 @@ def render_assistant():
                 macro_info = "Sin datos"
                 try:
                     macro = json.loads(db.get_system_status('macro_context', '{}'))
+                    macro_db = db.get_all_macro_data()
+                    macro_list = [f"{k}: {v['price']} ({v['change_24h']:+.2f}%)" for k, v in macro_db.items()]
+                    macro_str = " | ".join(macro_list) if macro_list else "N/A"
+                    
                     if macro:
-                        macro_info = f"Régimen: {macro.get('macro_regime')}, BTC Dominancia: {macro.get('btc_dominance')}%, Sector: {macro.get('leading_sector')}"
+                        macro_info = (
+                            f"Régimen: {macro.get('macro_regime')}, "
+                            f"BTC Dominancia: {macro.get('btc_dominance')}%, "
+                            f"Sector Líder: {macro.get('leading_sector')}. "
+                            f"Indicadores Globales: {macro_str}"
+                        )
                 except: pass
 
                 backtest_info = "Sin datos"

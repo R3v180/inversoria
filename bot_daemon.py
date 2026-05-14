@@ -28,6 +28,12 @@ class BotDaemon:
         self.last_backtest_run = 0
         self.BACKTEST_INTERVAL = 604800  # 7 días en segundos
 
+        # Control macro v6.0
+        from macro_analyzer import MacroAnalyzer
+        self.macro_analyzer = MacroAnalyzer()
+        self.last_macro_update = 0
+        self.MACRO_INTERVAL = 21600 # 6 horas
+
         self.log_message("Bot Daemon v5.1 [INTELLIGENCE UPGRADE] Inicializado.")
 
     def log_message(self, msg):
@@ -114,6 +120,11 @@ class BotDaemon:
                 # Backtest semanal automático
                 if now - self.last_backtest_run > self.BACKTEST_INTERVAL:
                     self.run_weekly_backtest()
+
+                # Actualización Macro v6.0 (cada 6h)
+                if now - self.last_macro_update > self.MACRO_INTERVAL:
+                    self.macro_analyzer.fetch_global_market_status()
+                    self.last_macro_update = now
                     
                 is_running = self.db.get_system_status('is_running')
                 if str(is_running).lower() == 'true':

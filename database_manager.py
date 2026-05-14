@@ -126,6 +126,16 @@ class DatabaseManager:
                 )
             ''')
             
+            # Macro Data (v6.0)
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS macro_data (
+                    symbol TEXT PRIMARY KEY,
+                    price REAL,
+                    change_24h REAL,
+                    last_update REAL
+                )
+            ''')
+            
             conn.commit()
 
     # --- System Status ---
@@ -303,3 +313,17 @@ class DatabaseManager:
         with self._get_connection() as conn:
             conn.execute("DELETE FROM chat_history")
             conn.commit()
+
+    # --- Macro Data (v6.0) ---
+    def set_macro_data(self, symbol, price, change_24h):
+        with self._get_connection() as conn:
+            conn.execute('''
+                INSERT OR REPLACE INTO macro_data (symbol, price, change_24h, last_update)
+                VALUES (?, ?, ?, ?)
+            ''', (symbol, price, change_24h, time.time()))
+            conn.commit()
+
+    def get_all_macro_data(self):
+        with self._get_connection() as conn:
+            cursor = conn.execute('SELECT * FROM macro_data')
+            return {row['symbol']: dict(row) for row in cursor.fetchall()}

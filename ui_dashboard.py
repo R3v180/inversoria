@@ -204,6 +204,23 @@ def render_dashboard():
                     st.metric("BTC Dominance", f"{macro.get('btc_dominance', 0):.1f}%")
                     st.metric("Cap. total 24h", f"{macro.get('market_cap_change_24h', 0):+.2f}%")
                     st.metric("Sector líder", macro.get('leading_sector', 'N/A').upper())
+                    
+                    # Mostrar datos de Alpha Vantage v6.0
+                    st.markdown("---")
+                    st.markdown("**🌍 Mercados Globales**")
+                    macro_db = db.get_all_macro_data()
+                    if macro_db:
+                        c_m1, c_m2 = st.columns(2)
+                        # DXY Proxy
+                        if 'UUP' in macro_db:
+                            d = macro_db['UUP']
+                            c_m1.metric("Dólar (UUP)", f"${d['price']:.2f}", f"{d['change_24h']:+.2f}%")
+                        # SP500
+                        if 'SPY' in macro_db:
+                            d = macro_db['SPY']
+                            c_m2.metric("S&P 500 (SPY)", f"${d['price']:.2f}", f"{d['change_24h']:+.2f}%")
+                    else:
+                        st.caption("Cargando indicadores Alpha Vantage...")
                 else:
                     st.info("Contexto macro pendiente (próxima actualización en el siguiente ciclo)")
             except Exception:

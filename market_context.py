@@ -252,10 +252,19 @@ class MarketContext:
         leading_sector = max(sectors, key=lambda k: sectors.get(k, -999)) if sectors else 'unknown'
         leading_sector_change = sectors.get(leading_sector, 0)
 
+        # ─── Macro Datos v6.0 (Alpha Vantage) ───
+        macro_db_data = self.db.get_all_macro_data()
+        macro_lines = []
+        if macro_db_data:
+            for sym, d in macro_db_data.items():
+                macro_lines.append(f"{sym}: {d['price']} ({d['change_24h']:+.2f}%)")
+        macro_str = " | ".join(macro_lines) if macro_lines else "N/A"
+
         # ─── Construir el bloque de texto para el prompt ───
         context_block = f"""
-=== CONTEXTO MACRO DE MERCADO ===
+=== CONTEXTO MACRO GLOBAL (v6.0) ===
 Régimen macro: {macro_regime}
+Indicadores: {macro_str}
 Dominancia BTC: {btc_dom}% | ETH: {global_m.get('eth_dominance', 0)}%
 Cap. total 24h: {market_cap_change:+.2f}%
 Sector líder: {leading_sector.upper()} ({leading_sector_change:+.2f}% 24h)
@@ -291,6 +300,19 @@ ETH actividad de red: {eth_gas.get('eth_network_activity', 'N/A')} ({eth_gas.get
         """
         regime = macro_context.get('macro_regime', 'NEUTRAL')
         btc_dom = macro_context.get('btc_dominance', 50)
+        
+        # Consultar datos de Alpha Vantage desde la DB
+        macro_data = self.db.get_all_macro_data()
+        
+        # 1. Veto por DXY (Dólar fuerte = Riesgo en Cripto)
+        dxy = macro_data.get('UUP') # Proxy del DXY
+        if dxy and dxy['change_24h'] > 1.5:
+            return False, f"VETO MACRO: Dólar (DXY) subiendo con fuerza (+{dxy['change_24h']}%)"
+
+        # 2. Veto por SP500 (Pánico en Bolsa)
+        spy = macro_data.get('SPY')
+        if spy and spy['change_24h'] < -2.0:
+            return False, f"VETO MACRO: Pánico en Wall Street (SP500 bajando {spy['change_24h']}%)"
 
         if regime == 'RISK_OFF':
             return False, f"Régimen RISK_OFF: BTC dominancia {btc_dom}%, mercado en modo refugio"
