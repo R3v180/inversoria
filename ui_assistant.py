@@ -27,14 +27,18 @@ def render_assistant():
     for msg in st.session_state.messages:
         with st.chat_message(msg["role"]):
             st.write(msg["content"])
+            if "timestamp" in msg and msg["timestamp"]:
+                st.caption(f"🕒 {msg['timestamp']}")
 
     # Entrada de usuario
     if prompt := st.chat_input("Escribe tu consulta o comando aquí..."):
         # Guardar y mostrar mensaje de usuario
-        st.session_state.messages.append({"role": "user", "content": prompt})
+        current_time = time.strftime('%Y-%m-%d %H:%M:%S')
+        st.session_state.messages.append({"role": "user", "content": prompt, "timestamp": current_time})
         db.save_chat_message("user", prompt)
         with st.chat_message("user"):
             st.write(prompt)
+            st.caption(f"🕒 {current_time}")
 
         # Respuesta de la IA
         with st.chat_message("assistant"):
@@ -57,10 +61,11 @@ def render_assistant():
                     prompt=f"{context}\nUSUARIO DICE: {prompt}"
                 )
                 
-                full_response = raw_logs_str = raw_response if raw_response else "Lo siento, no he podido procesar esa consulta."
+                full_response = raw_response if raw_response else "Lo siento, no he podido procesar esa consulta."
                 
                 st.write(full_response)
-                st.session_state.messages.append({"role": "assistant", "content": full_response})
+                st.caption(f"🕒 {current_time}") 
+                st.session_state.messages.append({"role": "assistant", "content": full_response, "timestamp": current_time})
                 db.save_chat_message("assistant", full_response)
                 
         st.rerun()

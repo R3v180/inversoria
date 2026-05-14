@@ -248,7 +248,7 @@ class DatabaseManager:
 
     def get_chat_history(self, limit=50):
         with self._get_connection() as conn:
-            cursor = conn.execute("SELECT role, content FROM chat_history ORDER BY id ASC")
+            cursor = conn.execute("SELECT role, content, timestamp FROM chat_history ORDER BY id ASC")
             return [dict(row) for row in cursor.fetchall()]
 
     def clear_chat_history(self):
