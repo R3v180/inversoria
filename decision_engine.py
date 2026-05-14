@@ -13,6 +13,7 @@ class DecisionEngine:
         self.sentiment = sentiment if sentiment else SentimentEngine()
         self.last_analysis = {}
         self.decision_cache = {}
+        self.current_lang = 'es' # Idioma de la última tanda de análisis
 
         # Nuevas capas de inteligencia
         self.market_context = MarketContext()
@@ -41,6 +42,14 @@ class DecisionEngine:
         3. Prior histórico del backtest (win rate en condiciones similares)
         """
         now = time.time()
+
+        # Invalidar caché si el idioma ha cambiado (v7.4)
+        user_lang = self.sentiment.u_lang
+        if user_lang != self.current_lang:
+            print(f"[DecisionEngine] Idioma cambiado de {self.current_lang} a {user_lang}. Limpiando caché...")
+            self.last_analysis = {}
+            self.decision_cache = {}
+            self.current_lang = user_lang
 
         # Respetar intervalo de análisis por símbolo
         if symbol in self.last_analysis and now - self.last_analysis[symbol] < config.AI_ANALYSIS_INTERVAL:
