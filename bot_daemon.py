@@ -160,6 +160,9 @@ class BotDaemon:
         total_value = self.exchange.get_balance()
         self.db.log_equity(total_value)
         
+        # Límite dinámico basado en balance total (v6.1)
+        self.dynamic_max = config.get_dynamic_max_positions(total_value)
+        
         # Para el cálculo de cuánto podemos comprar, necesitamos el cash (USDT) disponible
         open_positions = self.db.get_open_positions()
 
@@ -215,7 +218,7 @@ class BotDaemon:
             else:
                 if decision['action'] == 'BUY':
                     # ¿Límite alcanzado? -> Evaluar ROTACIÓN
-                    if len(open_positions) >= config.MAX_OPEN_POSITIONS:
+                    if len(open_positions) >= self.dynamic_max:
                         if config.ROTATION_ENABLED:
                             # Preparar datos de posiciones actuales para comparar
                             pos_details = {}

@@ -62,10 +62,11 @@ def render_dashboard():
     open_positions = db.get_open_positions()
 
     # --- TOP METRICS ---
+    dynamic_max = config.get_dynamic_max_positions(total_value)
     m1, m2, m3, m4 = st.columns(4)
     m1.metric("Equity Total", f"${total_value:.2f}", f"{pnl_pct:.2f}%")
     m2.metric("Disponible", f"${available_usdt:.2f}")
-    m3.metric("Posiciones", f"{len(open_positions)} / {MAX_OPEN_POSITIONS}")
+    m3.metric("Posiciones", f"{len(open_positions)} / {dynamic_max}")
     m4.metric("PnL USD", f"${pnl:.2f}", f"{pnl_pct:.2f}%")
 
     # --- COMMAND CENTER ---

@@ -89,3 +89,15 @@ PROMPT_SENTIMENT = get_setting('PROMPT_SENTIMENT', DEFAULT_SETTINGS['PROMPT_SENT
 PROMPT_DECISION = get_setting('PROMPT_DECISION', DEFAULT_SETTINGS['PROMPT_DECISION'])
 PROMPT_CURATION = get_setting('PROMPT_CURATION', DEFAULT_SETTINGS['PROMPT_CURATION'])
 AI_ANALYSIS_INTERVAL = get_setting('AI_ANALYSIS_INTERVAL', 1200, int)
+
+def get_dynamic_max_positions(balance_usdt: float) -> int:
+    """Escala dinámica de posiciones basada en el balance total (v6.1)"""
+    if balance_usdt < 100:
+        return 3
+    elif balance_usdt < 300:
+        return 5
+    elif balance_usdt < 600:
+        return 7
+    else:
+        return 10
+
