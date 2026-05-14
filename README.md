@@ -138,7 +138,7 @@ Inversoria funciona mediante dos procesos independientes para garantizar la esta
 
 **Terminal A (Interfaz Visual):**
 ```bash
-streamlit run app.py
+python -m streamlit run app.py
 ```
 *Monitorea el Dashboard, chatea con el asistente y configura parámetros en tiempo real.*
 
