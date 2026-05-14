@@ -120,10 +120,27 @@ TRANSLATIONS = {
     'TUT_STEP1_TITLE': {'es': 'Métricas en tiempo real', 'en': 'Real-time Metrics'},
     'TUT_STEP1_DESC': {'es': 'Controla tu capital total y beneficio neto al instante.', 'en': 'Monitor your total capital and net profit instantly.'},
     'TUT_STEP2_TITLE': {'es': 'Ojos Globales', 'en': 'Global Eyes'},
-    'TUT_STEP2_DESC': {'es': 'El bot monitoriza la Bolsa y el Dólar para evitar riesgos.', 'en': 'The bot monitors Stocks and the Dollar to avoid risks.'}
+    'TUT_STEP2_DESC': {'es': 'El bot monitoriza la Bolsa y el Dólar para evitar riesgos.', 'en': 'The bot monitors Stocks and the Dollar to avoid risks.'},
+    
+    # --- Daemon Logs ---
+    'LOG_DAEMON_INIT': {'es': 'Bot Daemon v5.1 [INTELLIGENCE UPGRADE] Inicializado.', 'en': 'Bot Daemon v5.1 [INTELLIGENCE UPGRADE] Initialized.'},
+    'LOG_SCANNING_RADAR': {'es': '🛰️ Escaneando radar de mercado (Top Volumen)...', 'en': '🛰️ Scanning market radar (Top Volume)...'},
+    'LOG_WATCHLIST_UPDATED': {'es': '✅ Watchlist actualizada', 'en': '✅ Watchlist updated'},
+    'LOG_BACKTEST_START': {'es': '📊 Iniciando backtest semanal automático...', 'en': '📊 Starting automatic weekly backtest...'},
+    'LOG_BACKTEST_DONE': {'es': '📊 Backtest semanal completado.', 'en': '📊 Weekly backtest completed.'},
+    'LOG_MODE_CHANGED': {'es': 'Modo cambiado a', 'en': 'Mode changed to'},
+    'LOG_BUY': {'es': '🚀 COMPRA', 'en': '🚀 BUY'},
+    'LOG_SELL': {'es': '💰 VENTA', 'en': '💰 SELL'},
+    'LOG_REASON': {'es': 'Motivo', 'en': 'Reason'},
+    'LOG_ROTATION': {'es': '🔄 ROTACIÓN', 'en': '🔄 ROTATION'},
 }
 
-def _(key):
-    """Retorna la traducción según el idioma en session_state"""
-    lang = st.session_state.get('language', 'es')
+def _(key, lang=None):
+    """Retorna la traducción según el idioma (Streamlit o Manual)"""
+    if not lang:
+        try:
+            import streamlit as st
+            lang = st.session_state.get('language', 'es')
+        except:
+            lang = 'es' # Default si falla streamlit
     return TRANSLATIONS.get(key, {}).get(lang, key)

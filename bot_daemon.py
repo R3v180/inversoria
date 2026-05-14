@@ -7,6 +7,7 @@ from sentiment_engine import SentimentEngine
 from trading_logic import TradingLogic
 from database_manager import DatabaseManager
 from decision_engine import DecisionEngine
+from i18n import _
 
 class BotDaemon:
     def __init__(self):
@@ -15,9 +16,9 @@ class BotDaemon:
         self.sentiment = SentimentEngine()
         
         # Cargar contexto de usuario v7.0
-        u_name = self.db.get_system_status('user_name', 'User')
-        u_lang = self.db.get_system_status('language', 'es')
-        self.sentiment.set_user_context(u_name, u_lang)
+        self.u_name = self.db.get_system_status('user_name', 'User')
+        self.u_lang = self.db.get_system_status('language', 'es')
+        self.sentiment.set_user_context(self.u_name, self.u_lang)
         
         self.logic = TradingLogic()
         
@@ -40,14 +41,14 @@ class BotDaemon:
         self.last_macro_update = 0
         self.MACRO_INTERVAL = 21600 # 6 horas
 
-        self.log_message("Bot Daemon v5.1 [INTELLIGENCE UPGRADE] Inicializado.")
+        self.log_message(_('LOG_DAEMON_INIT', lang=self.u_lang))
 
     def log_message(self, msg):
         print(f"[DAEMON] {msg}")
         self.db.add_log(msg)
 
     def update_dynamic_watchlist(self):
-        self.log_message("🛰️ Escaneando radar de mercado (Top Volumen)...")
+        self.log_message(_('LOG_SCANNING_RADAR', lang=self.u_lang))
         try:
             raw_top = self.exchange.get_top_volume_symbols(limit=30)
             if not raw_top:
@@ -57,7 +58,7 @@ class BotDaemon:
             if curated:
                 self.active_symbols = curated
                 self.db.set_system_status('dynamic_watchlist', ",".join(curated))
-                self.log_message(f"✅ Watchlist actualizada: {', '.join(curated)}")
+                self.log_message(f"{ _('LOG_WATCHLIST_UPDATED', lang=self.u_lang) }: {', '.join(curated)}")
             else:
                 self.log_message("⚠️ La IA no devolvió una lista válida.")
         except Exception as e:
@@ -71,14 +72,10 @@ class BotDaemon:
             self.active_symbols = config.SYMBOLS
 
     def run_weekly_backtest(self):
-        """
-        Corre el backtest completo para todos los símbolos activos.
-        Se ejecuta automáticamente una vez por semana.
-        Puede tardar 5-15 minutos dependiendo del número de símbolos.
-        """
+        # ...
         from backtest_engine import BacktestEngine
 
-        self.log_message("📊 Iniciando backtest semanal automático...")
+        self.log_message(_('LOG_BACKTEST_START', lang=self.u_lang))
         bt = BacktestEngine(self.exchange)
 
         # Correr backtest para los primeros 5 símbolos de la watchlist activa
@@ -100,7 +97,7 @@ class BotDaemon:
                 self.log_message(f"❌ Error en backtest de {symbol}: {e}")
 
         self.last_backtest_run = time.time()
-        self.log_message("📊 Backtest semanal completado.")
+        self.log_message(_('LOG_BACKTEST_DONE', lang=self.u_lang))
 
     def run(self):
         self.load_active_watchlist()
@@ -117,6 +114,9 @@ class BotDaemon:
                 import config
                 import importlib
                 importlib.reload(config)
+                
+                # Refrescar idioma v7.3
+                self.u_lang = self.db.get_system_status('language', 'es')
                 
                 now = time.time()
                 if now - self.last_watchlist_update > 43200:
@@ -143,7 +143,7 @@ class BotDaemon:
                             sentiment=self.sentiment,
                             exchange=self.exchange
                         )
-                        self.log_message(f"Modo cambiado a {'Simulación' if is_sim else 'REAL'}.")
+                        self.log_message(f"{ _('LOG_MODE_CHANGED', lang=self.u_lang) } {'Simulación' if is_sim else 'REAL'}.")
                 
                 # Asegurar que el saldo inicial REAL esté fijado si estamos en ese modo
                 if not is_sim:
@@ -151,7 +151,7 @@ class BotDaemon:
                     if not real_start:
                         current_equity = self.exchange.get_balance()
                         self.db.set_system_status('real_start_balance', current_equity)
-                        self.log_message(f"🚀 Saldo inicial REAL fijado en: ${current_equity:.2f}")
+                        self.log_message(f"🚀 { _('INITIAL_CAPITAL', lang=self.u_lang) } REAL: ${current_equity:.2f}")
 
                 self.bot_iteration()
                 time.sleep(60)
@@ -213,7 +213,7 @@ class BotDaemon:
                     if order_result.get('status') in ['closed', 'simulated']:
                         closed = self.db.close_position(symbol, current_price, sell_res['reason'])
                         if closed:
-                            self.log_message(f"💰 VENTA {symbol} @ {current_price:.4f} | Motivo: {sell_res['reason']}")
+                            self.log_message(f"{ _('LOG_SELL', lang=self.u_lang) } {symbol} @ {current_price:.4f} | { _('LOG_REASON', lang=self.u_lang) }: {sell_res['reason']}")
                             del open_positions[symbol]
                         else:
                             self.log_message(f"⚠️ Venta ejecutada pero posición {symbol} no encontrada en DB")
@@ -266,7 +266,7 @@ class BotDaemon:
                         decision['entry_confidence'] = decision.get('confidence', 0.7)
                         self.db.add_open_position(symbol, current_price, current_price, amount_coin, extra_data=json.dumps(decision))
                         open_positions[symbol] = {'entry_price': current_price, 'amount': amount_coin}
-                        self.log_message(f"🚀 COMPRA {symbol} @ {current_price} [{provider}]")
+                        self.log_message(f"{ _('LOG_BUY', lang=self.u_lang) } {symbol} @ {current_price} [{provider}]")
 
 if __name__ == "__main__":
     daemon = BotDaemon()
