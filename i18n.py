@@ -133,6 +133,15 @@ TRANSLATIONS = {
     'LOG_SELL': {'es': '💰 VENTA', 'en': '💰 SELL'},
     'LOG_REASON': {'es': 'Motivo', 'en': 'Reason'},
     'LOG_ROTATION': {'es': '🔄 ROTACIÓN', 'en': '🔄 ROTATION'},
+    'LOG_YEARS': {'es': 'años', 'en': 'years'},
+    'LOG_BEST_STRAT_IS': {'es': 'mejor estrategia =', 'en': 'best strategy ='},
+    'LOG_INITIAL_REAL': {'es': '🚀 Saldo inicial REAL fijado en:', 'en': '🚀 Initial REAL balance set at:'},
+    'LOG_POS_ADOPTED': {'es': 'Posición adoptada', 'en': 'Position adopted'},
+    'LOG_INSUFFICIENT': {'es': '⚠️ Balance USDT insuficiente', 'en': '⚠️ Insufficient USDT balance'},
+    'LOG_SACRIFICING': {'es': 'Sacrificando', 'en': 'Sacrificing'},
+    'LOG_FOR': {'es': 'por', 'en': 'for'},
+    'LOG_EXECUTED': {'es': 'ejecutada', 'en': 'executed'},
+    'LOG_SOLD_AT': {'es': 'vendido a', 'en': 'sold at'},
 }
 
 def _(key, lang=None):

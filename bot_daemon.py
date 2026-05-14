@@ -84,13 +84,13 @@ class BotDaemon:
 
         for symbol in symbols_to_backtest:
             try:
-                self.log_message(f"📊 Backtest {symbol} (4h · 2 años)...")
+                self.log_message(f"📊 Backtest {symbol} (4h · 2 { _('LOG_YEARS', lang=self.u_lang) })...")
                 results = bt.run_full_backtest(symbol, timeframe='4h', years=2.0)
                 if results:
                     best = max(results, key=lambda k: results[k].get('profit_factor', 0))
                     best_wr = results[best].get('win_rate', 0)
                     self.log_message(
-                        f"✅ {symbol}: mejor estrategia = {best} "
+                        f"✅ {symbol}: { _('LOG_BEST_STRAT_IS', lang=self.u_lang) } {best} "
                         f"(WR: {best_wr:.0%})"
                     )
             except Exception as e:
@@ -144,7 +144,8 @@ class BotDaemon:
                             sentiment=self.sentiment,
                             exchange=self.exchange
                         )
-                        self.log_message(f"{ _('LOG_MODE_CHANGED', lang=self.u_lang) } {'Simulación' if is_sim else 'REAL'}.")
+                        mode_name = _('MODE_SIM', lang=self.u_lang) if is_sim else _('MODE_REAL', lang=self.u_lang)
+                        self.log_message(f"{ _('LOG_MODE_CHANGED', lang=self.u_lang) } {mode_name}")
                 
                 # Asegurar que el saldo inicial REAL esté fijado si estamos en ese modo
                 if not is_sim:
@@ -152,7 +153,7 @@ class BotDaemon:
                     if not real_start:
                         current_equity = self.exchange.get_balance()
                         self.db.set_system_status('real_start_balance', current_equity)
-                        self.log_message(f"🚀 { _('INITIAL_CAPITAL', lang=self.u_lang) } REAL: ${current_equity:.2f}")
+                        self.log_message(f"{ _('LOG_INITIAL_REAL', lang=self.u_lang) } ${current_equity:.2f}")
 
                 self.bot_iteration()
                 time.sleep(60)
@@ -183,7 +184,7 @@ class BotDaemon:
                 if (coin_amount * current_price) > 5.0:
                     self.db.add_open_position(symbol, current_price, current_price, coin_amount)
                     open_positions[symbol] = {'entry_price': current_price, 'amount': coin_amount}
-                    self.log_message(f"[{symbol}] Posición adoptada.")
+                    self.log_message(f"[{symbol}] { _('LOG_POS_ADOPTED', lang=self.u_lang) }.")
 
             # Análisis
             ohlcv = self.exchange.get_historical_data(symbol)
@@ -237,14 +238,14 @@ class BotDaemon:
                             to_sacrifice = self.decision_engine.evaluate_rotation_potential(decision, pos_details)
                             if to_sacrifice:
                                 sym_sac = to_sacrifice['symbol']
-                                self.log_message(f"🔄 ROTACIÓN: Sacrificando {sym_sac} (+{to_sacrifice['profit']:.2f}%) por {symbol} (Conf: {decision['confidence']})")
+                                self.log_message(f"{ _('LOG_ROTATION', lang=self.u_lang) }: { _('LOG_SACRIFICING', lang=self.u_lang) } {sym_sac} (+{to_sacrifice['profit']:.2f}%) { _('LOG_FOR', lang=self.u_lang) } {symbol} (Conf: {decision['confidence']})")
                                 sac_pos = open_positions[sym_sac]
                                 sac_price = self.exchange.get_ticker(sym_sac)
                                 if sac_price:
                                     self.exchange.execute_order(sym_sac, 'sell', sac_pos['amount'], sac_price)
                                     self.db.close_position(sym_sac, sac_price, "ROTACIÓN IA")
                                     del open_positions[sym_sac]
-                                    self.log_message(f"🔄 Rotación ejecutada: {sym_sac} vendido a {sac_price:.4f}")
+                                    self.log_message(f"{ _('LOG_ROTATION', lang=self.u_lang) } { _('LOG_EXECUTED', lang=self.u_lang) }: {sym_sac} { _('LOG_SOLD_AT', lang=self.u_lang) } {sac_price:.4f}")
                                 else:
                                     self.log_message(f"⚠️ No se pudo obtener precio para rotar {sym_sac}, rotación cancelada")
                                     continue
@@ -259,7 +260,7 @@ class BotDaemon:
                     amount_usdt = balance_usdt_actual * config.RISK_PER_TRADE
 
                     if amount_usdt < 1.0:  # Guard mínimo: no comprar si quedan menos de 1 USDT
-                        self.log_message(f"⚠️ Balance USDT insuficiente ({balance_usdt_actual:.2f}) para comprar {symbol}")
+                        self.log_message(f"{ _('LOG_INSUFFICIENT', lang=self.u_lang) } ({balance_usdt_actual:.2f}) { _('LOG_FOR', lang=self.u_lang) } {symbol}")
                         continue
                     amount_coin = amount_usdt / current_price
                     res = self.exchange.execute_order(symbol, 'buy', amount_coin, current_price)
