@@ -91,16 +91,82 @@ El chat de IA ahora tiene acceso a los datos de mercados globales. Puedes pregun
 
 ---
 
-## Instalación y Configuración
+## 🚀 Instalación y Configuración Paso a Paso
 
-### Prerrequisitos
-- Python 3.11+
-- Claves API: Crypto.com, Google Gemini, Groq y **Alpha Vantage**.
+### 1. Prerrequisitos
+- **Python 3.11+** instalado.
+- Cuenta activa en **Crypto.com Exchange** (con permisos de API habilitados).
+- Claves de API de los modelos de lenguaje (al menos una es obligatoria, se recomiendan todas para el sistema de fallback).
 
-### Configuración rápida
-1. Instala dependencias: `pip install -r requirements.txt`
-2. Configura tu `.env` (añade `ALPHA_VANTAGE_API_KEY`).
-3. Lanza la UI (`app.py`) y el Daemon (`bot_daemon.py`).
+### 2. Clonar y Preparar el Entorno
+```bash
+# Clonar repositorio
+git clone https://github.com/R3v180/inversoria
+cd inversoria
+
+# Crear entorno virtual (Recomendado)
+python -m venv venv
+source venv/bin/activate  # En Windows: venv\Scripts\activate
+
+# Instalar dependencias
+pip install -r requirements.txt
+```
+
+### 3. Configurar Credenciales (.env)
+Copia el archivo de ejemplo y rellena tus claves:
+```bash
+cp .env.example .env
+```
+Edita el archivo `.env` con tus datos:
+```env
+# --- EXCHANGE ---
+CRYPTO_API_KEY=tu_clave
+CRYPTO_API_SECRET=tu_secreto
+
+# --- INTELIGENCIA ARTIFICIAL ---
+GOOGLE_API_KEY=tu_clave_gemini      # Consíguela en aistudio.google.com
+GROQ_API_KEY=tu_clave_groq          # Consíguela en console.groq.com
+SAMBANOVA_API_KEY=tu_clave_samba    # (Opcional)
+
+# --- DATOS EXTERNOS ---
+ALPHA_VANTAGE_API_KEY=tu_clave      # Consíguela gratis en alphavantage.co
+COINDESK_API_KEY=tu_clave           # (Opcional)
+```
+
+### 4. Lanzar la Terminal Institutional
+Inversoria funciona mediante dos procesos independientes para garantizar la estabilidad:
+
+**Terminal A (Interfaz Visual):**
+```bash
+streamlit run app.py
+```
+*Monitorea el Dashboard, chatea con el asistente y configura parámetros en tiempo real.*
+
+**Terminal B (Cerebro del Bot):**
+```bash
+python bot_daemon.py
+```
+*Ejecuta los backtests, el análisis macro y las órdenes de mercado cada 60 segundos.*
+
+---
+
+## 🛠️ Panel de Control (Hot-Reload)
+No necesitas reiniciar el bot para cambiar tu estrategia. Desde el panel de **Settings** en la UI puedes modificar:
+- **Límite de Riesgo**: Porcentaje de capital por trade.
+- **Modo Simulación**: Activa/Desactiva el trading con dinero real.
+- **Intervalo IA**: Frecuencia de los análisis profundos.
+- **Watchlist**: Monedas que el bot debe vigilar.
+
+---
+
+## 🛡️ Gestión de Riesgo (Risk Management)
+
+| Parámetro | Función |
+|---|---|
+| `STOP_LOSS_PCT` | Corte de pérdidas automático por operación. |
+| `TRAILING_STOP` | Asegura beneficios dinámicamente si el precio sube. |
+| `ROTATION` | Cierra la posición más débil para entrar en una de mayor confianza. |
+| `DYNAMIC_SLOTS` | Límite automático de posiciones según balance (v6.1). |
 
 ---
 
