@@ -43,7 +43,7 @@ TRANSLATIONS = {
     'OPPORTUNITY_RADAR': {'es': 'Radar de Oportunidades', 'en': 'Opportunity Radar'},
     
     # --- Assistant ---
-    'ASSISTANT_TITLE': {'es': '💬 Asistente IA Inversor', 'en': '💬 Inversor AI Assistant'},
+    'ASSISTANT_TITLE': {'es': 'Asistente IA', 'en': 'AI Assistant'},
     'ASSISTANT_CAPTION': {'es': 'Investiga el mercado y da órdenes.', 'en': 'Research the market and give orders.'},
     'CLEAN_CHAT': {'es': '🧹 Limpiar Chat', 'en': '🧹 Clear Chat'},
     'THINKING': {'es': 'Pensando e investigando...', 'en': 'Thinking and researching...'},
@@ -58,6 +58,13 @@ TRANSLATIONS = {
     'SAVE_SETTINGS': {'es': '💾 Guardar Cambios en Caliente', 'en': '💾 Save Hot Changes'},
     'RESET_GLOBAL': {'es': '🔄 Reset Global', 'en': '🔄 Global Reset'},
     'SUCCESS_SETTINGS': {'es': '¡Configuración actualizada!', 'en': 'Settings updated!'},
+    'SELECT_MODE': {'es': 'SELECCIONAR MODO', 'en': 'SELECT MODE'},
+    'MODE_SIM': {'es': '🤖 Simulación (Dinero Ficticio)', 'en': '🤖 Simulation (Paper Money)'},
+    'MODE_REAL': {'es': '💰 REAL (Fondos Crypto.com)', 'en': '💰 REAL (Crypto.com Funds)'},
+    'REAL_FUNDS_WARNING': {'es': '⚠️ CUIDADO: El bot operará con fondos reales en tu cuenta.', 'en': '⚠️ CAUTION: The bot will operate with real funds in your account.'},
+    'EMERGENCY_ACTIONS': {'es': 'Acciones de Emergencia', 'en': 'Emergency Actions'},
+    'SELL_ALL_USDT': {'es': '🔴 VENDER TODO A USDT', 'en': '🔴 SELL ALL TO USDT'},
+    'LIQUIDATING_MSG': {'es': 'Liquidando activos a mercado...', 'en': 'Liquidating assets at market price...'},
     'TUT_STEP1_TITLE': {'es': 'Métricas en tiempo real', 'en': 'Real-time Metrics'},
     'TUT_STEP1_DESC': {'es': 'Controla tu capital total y beneficio neto al instante.', 'en': 'Monitor your total capital and net profit instantly.'},
     'TUT_STEP2_TITLE': {'es': 'Ojos Globales', 'en': 'Global Eyes'},

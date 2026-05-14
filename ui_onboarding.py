@@ -57,7 +57,7 @@ def render_onboarding():
                 st.caption(_('TUT_STEP2_DESC'))
             
             st.markdown("---")
-            if st.button(_('START_BUTTON'), type="primary", use_container_width=True):
+            if st.button(_('START_BUTTON'), type="primary", width="stretch"):
                 if name:
                     # Persistir en DB
                     db.set_system_status('user_name', name)

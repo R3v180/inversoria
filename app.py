@@ -65,7 +65,7 @@ st.session_state.sentiment.set_user_context(
 )
 
 with st.sidebar:
-    st.markdown(f"### 🚀 { _('WELCOME_TITLE')[:9] }") # Muestra 'IVERSORIA'
+    st.markdown(f"### 🚀 { _('WELCOME_TITLE').split(' ')[-1].upper() if ' ' in _('WELCOME_TITLE') else 'IVERSORIA' }")
     st.markdown(_('WELCOME_SUBTITLE'))
     st.markdown("---")
     
@@ -89,7 +89,7 @@ with st.sidebar:
     is_running_str = st.session_state.db.get_system_status('is_running', 'false')
     is_running = str(is_running_str).lower() == 'true'
     
-    if st.button(_('STOP_BOT') if is_running else _('START_BOT'), width="stretch"):
+    if st.button(_('STOP_BOT') if is_running else _('START_BOT'), use_container_width=True):
         new_status = not is_running
         st.session_state.db.set_system_status('is_running', 'true' if new_status else 'false')
         st.rerun()
@@ -99,14 +99,27 @@ with st.sidebar:
     st.markdown(f"<div style='text-align:center; padding:10px; border-radius:5px; background:#1E1E1E; color:{status_color}; font-weight:bold;'>{status_text}</div>", unsafe_allow_html=True)
     
     st.markdown("---")
-    st.subheader("⚙️ Configuración Global")
-    default_mode_index = 0 if st.session_state.current_mode else 1
-    modo_seleccionado = st.radio("SELECCIONAR MODO", ["🤖 Simulación (Dinero Ficticio)", "💰 REAL (Dinero de Crypto.com)"], index=default_mode_index)
+    st.subheader(f"⚙️ { _('NAV_SETTINGS') }")
     
-    is_simulacion = "Simulación" in modo_seleccionado
+    # Selector de Idioma v7.0
+    lang_options = ["Español 🇪🇸", "English 🇺🇸"]
+    current_lang_idx = 0 if st.session_state.get('language') == 'es' else 1
+    new_lang_sel = st.radio("IDIOMA / LANGUAGE", lang_options, index=current_lang_idx, horizontal=True)
+    new_lang_code = 'es' if "Español" in new_lang_sel else 'en'
+    
+    if st.session_state.get('language') != new_lang_code:
+        st.session_state.language = new_lang_code
+        st.session_state.db.set_system_status('language', new_lang_code)
+        st.rerun()
+
+    st.markdown("<br/>", unsafe_allow_html=True)
+    default_mode_index = 0 if st.session_state.current_mode else 1
+    modo_seleccionado = st.radio(_('SELECT_MODE'), [_('MODE_SIM'), _('MODE_REAL')], index=default_mode_index)
+    
+    is_simulacion = modo_seleccionado == _('MODE_SIM')
     
     if not is_simulacion:
-        st.warning("CUIDADO: El bot operará con fondos reales en tu cuenta de Crypto.com")
+        st.warning(_('REAL_FUNDS_WARNING'))
         
     # Detectar cambio de modo
     if st.session_state.current_mode != is_simulacion:
@@ -117,9 +130,9 @@ with st.sidebar:
         st.session_state.db.clear_open_positions()
         st.rerun()
         
-    with st.expander("⚠️ Acciones de Emergencia", expanded=False):
-        if st.button("🔴 VENDER TODO A USDT"):
-            with st.spinner("Liquidando activos a mercado..."):
+    with st.expander(f"⚠️ { _('EMERGENCY_ACTIONS') }", expanded=False):
+        if st.button(_('SELL_ALL_USDT')):
+            with st.spinner(_('LIQUIDATING_MSG')):
                 resultados = st.session_state.exchange.liquidate_all_to_usdt()
                 
                 # Procesar éxitos

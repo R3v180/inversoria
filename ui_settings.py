@@ -66,7 +66,7 @@ def render_settings():
             p_cur = st.text_area("Prompt Radar (Curación)", value=get_setting('PROMPT_CURATION', DEFAULT_SETTINGS['PROMPT_CURATION']), height=100)
 
         # Guardar todo
-        submit = st.form_submit_button(_('SAVE_SETTINGS'), type="primary", use_container_width=True)
+        submit = st.form_submit_button(_('SAVE_SETTINGS'), type="primary", width="stretch")
         
         if submit:
             new_data = {

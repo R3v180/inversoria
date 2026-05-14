@@ -138,7 +138,7 @@ def render_dashboard():
         else: st.info(_('NO_POSITIONS'))
 
     with col_right:
-        st.markdown(f"### 🤖 { _('ASSISTANT_TITLE')[:9] } & Logs")
+        st.markdown(f"### 🤖 { _('ASSISTANT_TITLE') } & Logs")
         last_decision_raw = db.get_system_status('last_ia_decision', '{}')
         try:
             decision = json.loads(last_decision_raw)
