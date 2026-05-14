@@ -233,9 +233,14 @@ class DatabaseManager:
             conn.commit()
 
     def get_equity_history(self, limit=100):
-        """Obtiene el historial de patrimonio para graficar"""
+        """Obtiene el historial de patrimonio para graficar (Últimos 100 puntos)"""
         with self._get_connection() as conn:
-            df = pd.read_sql_query(f'SELECT * FROM equity_history ORDER BY timestamp ASC LIMIT {limit}', conn)
+            # Leemos los últimos N puntos y luego los re-ordenamos para el gráfico
+            df = pd.read_sql_query(f'''
+                SELECT * FROM (
+                    SELECT * FROM equity_history ORDER BY timestamp DESC LIMIT {limit}
+                ) ORDER BY timestamp ASC
+            ''', conn)
             if not df.empty:
                 df['timestamp'] = pd.to_datetime(df['timestamp'], unit='s')
             return df
