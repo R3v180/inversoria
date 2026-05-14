@@ -23,7 +23,7 @@ DEFAULT_SETTINGS = {
     # Prompts de IA
     'PROMPT_SENTIMENT': "Eres un analista senior de criptomonedas. Responde solo BULLISH, BEARISH o NEUTRAL y una frase corta.",
     'PROMPT_DECISION': "Eres un analista senior de criptomonedas. Responde SOLO con JSON válido.",
-    'PROMPT_CURATION': "De esta lista de símbolos con mucho volumen, devuelve solo los nombres (separados por comas) de las monedas que sean proyectos serios, con utilidad real o 'Blue Chips'. ELIMINA memecoins puras o proyectos sospechosos.",
+    'PROMPT_CURATION': "Analiza esta lista de símbolos con alto volumen. Devuelve los nombres (separados por comas) de las monedas que tengan un proyecto sólido o sean tendencia legítima. Incluye Blue Chips y proyectos con utilidad. Solo ELIMINA memecoins sin volumen o estafas evidentes. Queremos una lista amplia (aprox 15-20 monedas).",
     'AI_ANALYSIS_INTERVAL': 1200 # 20 minutos por defecto
 }
 

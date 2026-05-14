@@ -44,15 +44,32 @@ class ExchangeHelper:
             except Exception as e:
                 print(f"Error cargando estado simulado: {e}")
 
-    def get_balance(self):
+    def get_usdt_balance(self):
+        """Retorna solo el cash disponible (USDT)"""
         if self.modo_simulacion:
             return self.virtual_balance
         else:
             try:
                 balance = self.exchange.fetch_balance()
-                return balance['total'].get('USDT', 0.0)
+                return balance['free'].get('USDT', 0.0)
             except Exception as e:
-                print(f"Error obteniendo balance: {e}")
+                print(f"Error obteniendo balance USDT: {e}")
+                return 0.0
+
+    def get_balance(self):
+        """Retorna la Equity Total (Cash + Valor de Criptos)"""
+        if self.modo_simulacion:
+            total = self.virtual_balance
+            for sym, amount in self.virtual_portfolio.items():
+                price = self.get_ticker(sym)
+                if price: total += amount * price
+            return total
+        else:
+            try:
+                balance = self.exchange.fetch_balance()
+                return balance['total'].get('USDT', 0.0) # CCXT suele sumar todo en total['USDT'] si es la moneda base
+            except Exception as e:
+                print(f"Error obteniendo balance total: {e}")
                 return 0.0
 
     def get_coin_balance(self, symbol):
