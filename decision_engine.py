@@ -44,7 +44,7 @@ class DecisionEngine:
         now = time.time()
 
         # Invalidar caché si el idioma ha cambiado (v7.4)
-        user_lang = self.sentiment.u_lang
+        user_lang = self.sentiment.language
         if user_lang != self.current_lang:
             print(f"[DecisionEngine] Idioma cambiado de {self.current_lang} a {user_lang}. Limpiando caché...")
             self.last_analysis = {}
