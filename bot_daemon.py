@@ -209,12 +209,17 @@ class BotDaemon:
             if not decision: continue
             
             provider = decision.get('provider', 'IA')
-            # Guardar para UI
-            self.db.set_system_status('last_ia_decision', json.dumps({
+            # Guardar para UI (Global y por Símbolo)
+            decision_json = json.dumps({
                 'symbol': symbol,
                 'reasoning': decision.get('reasoning', ''),
-                'regime': decision.get('regime', 'N/A')
-            }))
+                'regime': decision.get('regime', 'N/A'),
+                'best_strategy': decision.get('best_strategy', 'N/A'),
+                'confidence': decision.get('confidence', 0),
+                'action': decision.get('action', 'HOLD')
+            })
+            self.db.set_system_status('last_ia_decision', decision_json)
+            self.db.set_system_status(f'decision_{symbol}', decision_json)
             # Mostrar progreso
             print(f"[DAEMON] {symbol}: {decision['action']} [{provider}] - {decision.get('reasoning')[:40]}...")
             
@@ -248,11 +253,14 @@ class BotDaemon:
                     if len(open_positions) >= self.dynamic_max:
                         # Guardar estado para la UI (v7.10.1)
                         limit_reason = _('FILTER_POS_LIMIT', lang=self.u_lang)
-                        self.db.set_system_status('last_ia_decision', json.dumps({
+                        limit_json = json.dumps({
                             'symbol': symbol,
                             'reasoning': limit_reason,
-                            'regime': 'LIMIT'
-                        }))
+                            'regime': 'LIMIT',
+                            'action': 'HOLD'
+                        })
+                        self.db.set_system_status('last_ia_decision', limit_json)
+                        self.db.set_system_status(f'decision_{symbol}', limit_json)
 
                         if config.ROTATION_ENABLED:
                             # Preparar datos de posiciones actuales para comparar
