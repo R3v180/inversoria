@@ -199,6 +199,12 @@ class BotDaemon:
             if not decision: continue
             
             provider = decision.get('provider', 'IA')
+            # Guardar para UI
+            self.db.set_system_status('last_ia_decision', json.dumps({
+                'symbol': symbol,
+                'reasoning': decision.get('reasoning', ''),
+                'regime': decision.get('regime', 'N/A')
+            }))
             # Mostrar progreso
             print(f"[DAEMON] {symbol}: {decision['action']} [{provider}] - {decision.get('reasoning')[:40]}...")
             
@@ -230,6 +236,14 @@ class BotDaemon:
                 if decision['action'] == 'BUY':
                     # ¿Límite alcanzado? -> Evaluar ROTACIÓN
                     if len(open_positions) >= self.dynamic_max:
+                        # Guardar estado para la UI (v7.10.1)
+                        limit_reason = _('FILTER_POS_LIMIT', lang=self.u_lang)
+                        self.db.set_system_status('last_ia_decision', json.dumps({
+                            'symbol': symbol,
+                            'reasoning': limit_reason,
+                            'regime': 'LIMIT'
+                        }))
+
                         if config.ROTATION_ENABLED:
                             # Preparar datos de posiciones actuales para comparar
                             pos_details = {}

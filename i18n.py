@@ -161,6 +161,7 @@ TRANSLATIONS = {
     # --- Decision Filters ---
     'FILTER_SIDEWAYS': {'es': 'Mercado lateral', 'en': 'Sideways market'},
     'FILTER_SIN_DATOS': {'es': 'Sin datos técnicos suficientes', 'en': 'Insufficient technical data'},
+    'FILTER_POS_LIMIT': {'es': 'Límite de posiciones alcanzado', 'en': 'Position limit reached'},
 }
 
 def _(key, lang=None):
