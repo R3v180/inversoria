@@ -48,6 +48,7 @@ from i18n import _
 from ui_onboarding import render_onboarding, is_onboarding_done
 from ui_dashboard import render_dashboard
 from ui_terminal import render_terminal
+from ui_wallet import render_wallet
 from ui_history import render_history
 from ui_settings import render_settings
 from ui_assistant import render_assistant
@@ -71,8 +72,8 @@ with st.sidebar:
     
     selected = option_menu(
         menu_title=None,
-        options=[_('NAV_DASHBOARD'), _('NAV_TERMINAL'), _('NAV_ASSISTANT'), _('NAV_HISTORY'), _('NAV_SETTINGS')],
-        icons=["pie-chart-fill", "graph-up-arrow", "chat-dots-fill", "journal-text", "gear-fill"],
+        options=[_('NAV_DASHBOARD'), _('NAV_WALLET'), _('NAV_TERMINAL'), _('NAV_ASSISTANT'), _('NAV_HISTORY'), _('NAV_SETTINGS')],
+        icons=["pie-chart-fill", "wallet2", "graph-up-arrow", "chat-dots-fill", "journal-text", "gear-fill"],
         menu_icon="cast",
         default_index=0,
         styles={
@@ -161,6 +162,8 @@ if selected == _('NAV_DASHBOARD'):
     # Refresca cada 30 segundos (30000 ms), máximo 1000 veces
     st_autorefresh(interval=30_000, limit=1000, key="dashboard_refresh")
     render_dashboard()
+elif selected == _('NAV_WALLET'):
+    render_wallet()
 elif selected == _('NAV_TERMINAL'):
     render_terminal()
     # Auto-refrescar si el interruptor del terminal está activado

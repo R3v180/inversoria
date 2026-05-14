@@ -326,3 +326,177 @@ class ExchangeHelper:
         except Exception as e:
             print(f"Error obteniendo ranking de volumen: {e}")
             return []
+
+    def get_spot_inventory_rows(self):
+        """
+        Inventario spot para la UI: moneda, libre, total, valor aprox. en USDT y par USDT si existe.
+        """
+        rows = []
+        if self.modo_simulacion:
+            rows.append({
+                "coin": "USDT",
+                "symbol": None,
+                "free": float(self.virtual_balance),
+                "total": float(self.virtual_balance),
+                "usd_free": float(self.virtual_balance),
+                "usd_total": float(self.virtual_balance),
+            })
+            for sym, amt in self.virtual_portfolio.items():
+                amt = float(amt or 0)
+                if amt <= 0:
+                    continue
+                coin = sym.split("/")[0]
+                px = self.get_ticker(sym) or 0.0
+                usd = amt * px
+                rows.append({
+                    "coin": coin,
+                    "symbol": sym,
+                    "free": amt,
+                    "total": amt,
+                    "usd_free": usd,
+                    "usd_total": usd,
+                })
+            return sorted(rows, key=lambda x: -x["usd_total"])
+
+        try:
+            balance = self.exchange.fetch_balance()
+            free_d = balance.get("free", {}) or {}
+            tot_d = balance.get("total", {}) or {}
+            coins = sorted(set(list(free_d.keys()) + list(tot_d.keys())))
+            for coin in coins:
+                free_c = float(free_d.get(coin) or 0)
+                tot_c = float(tot_d.get(coin) or 0)
+                if tot_c <= 0 and free_c <= 0:
+                    continue
+                sym = None
+                if coin in ("USDT", "USD"):
+                    px = 1.0
+                else:
+                    sym = f"{coin}/USDT"
+                    px = self.get_ticker(sym) or 0.0
+                    if not px and sym not in (self.exchange.markets or {}):
+                        sym = None
+                usd_tot = tot_c * px
+                usd_fre = free_c * px
+                rows.append({
+                    "coin": coin,
+                    "symbol": sym,
+                    "free": free_c,
+                    "total": tot_c,
+                    "usd_free": usd_fre,
+                    "usd_total": usd_tot,
+                })
+            return sorted(rows, key=lambda x: -x["usd_total"])
+        except Exception as e:
+            return [{"coin": "—", "symbol": None, "free": 0, "total": 0, "usd_free": 0, "usd_total": 0, "error": str(e)}]
+
+    def get_market_sell_constraints(self, symbol):
+        """Límites del mercado CCXT para venta (cantidad mínima, coste mínimo, etc.)."""
+        if not symbol or self.modo_simulacion:
+            return None
+        try:
+            if not self.exchange.markets:
+                self.exchange.load_markets()
+            if symbol not in self.exchange.markets:
+                return None
+            m = self.exchange.market(symbol)
+            lim = m.get("limits") or {}
+            amt_l = lim.get("amount") or {}
+            cost_l = lim.get("cost") or {}
+            return {
+                "symbol": symbol,
+                "min_amount": amt_l.get("min"),
+                "max_amount": amt_l.get("max"),
+                "min_cost": cost_l.get("min"),
+                "max_cost": cost_l.get("max"),
+                "amount_precision": (m.get("precision") or {}).get("amount"),
+                "price_precision": (m.get("precision") or {}).get("price"),
+            }
+        except Exception:
+            return None
+
+    def prevalidate_market_sell(self, symbol, amount, price_hint=None, free_override=None):
+        """
+        Comprueba si una venta a mercado es viable (sin enviar orden).
+        Devuelve dict: ok, errors[], info[], amount_after_precision (float|None)
+        """
+        out = {"ok": False, "errors": [], "info": [], "amount_after_precision": None}
+        if amount is None or float(amount) <= 0:
+            out["errors"].append("ZERO_AMOUNT")
+            return out
+        amount = float(amount)
+
+        if self.modo_simulacion:
+            have = float(self.virtual_portfolio.get(symbol, 0) or 0)
+            if amount > have + 1e-12:
+                out["errors"].append("INSUFFICIENT_VIRTUAL")
+                return out
+            out["amount_after_precision"] = amount
+            out["ok"] = True
+            out["info"].append("SIM_OK")
+            return out
+
+        if not symbol:
+            out["errors"].append("NO_SYMBOL")
+            return out
+
+        coin = symbol.split("/")[0]
+        try:
+            bal = self.exchange.fetch_balance()
+            free_c = float(free_override) if free_override is not None else float(bal.get("free", {}).get(coin) or 0)
+        except Exception as e:
+            out["errors"].append(f"BALANCE:{e}")
+            return out
+
+        capped = min(amount, free_c)
+        if capped <= 0:
+            out["errors"].append("NO_FREE_BALANCE")
+            return out
+
+        try:
+            if not self.exchange.markets:
+                self.exchange.load_markets()
+            if symbol not in self.exchange.markets:
+                out["errors"].append("MARKET_NOT_LISTED")
+                return out
+            market = self.exchange.market(symbol)
+            fmt = float(self.exchange.amount_to_precision(symbol, capped))
+            out["amount_after_precision"] = fmt
+            if fmt <= 0:
+                out["errors"].append("PRECISION_ZERO")
+                return out
+
+            min_amt = (market.get("limits") or {}).get("amount", {}).get("min")
+            if min_amt is not None and fmt + 1e-12 < float(min_amt):
+                out["errors"].append(f"BELOW_MIN_AMOUNT:{min_amt}")
+
+            px = float(price_hint) if price_hint else (self.get_ticker(symbol) or 0.0)
+            notional = fmt * px if px else 0.0
+            min_cost = (market.get("limits") or {}).get("cost", {}).get("min")
+            if min_cost is not None and notional + 1e-8 < float(min_cost):
+                out["errors"].append(f"BELOW_MIN_COST:{min_cost}:{notional:.4f}")
+
+            if out["errors"]:
+                return out
+
+            if px and px > 0:
+                try:
+                    ob = self.exchange.fetch_order_book(symbol, limit=5)
+                    bids = ob.get("bids") or []
+                    if bids:
+                        best_bid = float(bids[0][0])
+                        slip = abs(px - best_bid) / px
+                        if slip > 0.005:
+                            out["errors"].append(f"SLIPPAGE:{slip*100:.2f}%")
+                except Exception:
+                    pass
+
+            if out["errors"]:
+                return out
+
+            out["ok"] = True
+            out["info"].append(f"NOTIONAL_EST:{notional:.4f}")
+            return out
+        except Exception as e:
+            out["errors"].append(str(e))
+            return out

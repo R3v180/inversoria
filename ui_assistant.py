@@ -4,13 +4,19 @@ from i18n import _
 
 def render_assistant():
     user_name = st.session_state.get('user_name', 'User')
-    st.title(_('ASSISTANT_TITLE'))
-    st.caption(_('ASSISTANT_CAPTION'))
-    st.markdown("---")
-
     db = st.session_state.db
     exchange = st.session_state.exchange
     sentiment = st.session_state.sentiment
+
+    st.title(_('ASSISTANT_TITLE'))
+    st.caption(_('ASSISTANT_CAPTION'))
+    from ui_wallet import build_inventory_snapshot_text
+    if st.button(_('WALLET_SNAPSHOT_BTN'), key="asst_wallet_snapshot"):
+        st.session_state["_asst_wallet_clip"] = build_inventory_snapshot_text(exchange, db)
+    if st.session_state.get("_asst_wallet_clip"):
+        st.caption(_("WALLET_SNAPSHOT_HINT"))
+        st.code(st.session_state["_asst_wallet_clip"], language=None)
+    st.markdown("---")
 
     # Inicializar chat si está vacío
     if "messages" not in st.session_state:
