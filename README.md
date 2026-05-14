@@ -10,7 +10,10 @@
 # 🏛️ INVERSORIA
 ### Autonomous Trading Agent with Hybrid AI — v6.1 [GLOBAL MACRO & DYNAMIC UPGRADE]
 
+![Inversoria Dashboard](docs/dashboard.png)
+
 *Fusion of institutional technical analysis, generative AI, 2-year historical memory, global market analysis, and dynamic capital management.*
+
 
 [English Version](#english) | [Versión en Español](#español)
 
