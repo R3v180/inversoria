@@ -150,7 +150,8 @@ def render_terminal():
         st.markdown("**Registro de Operaciones (Live):**")
         
         log_html = "<div class='log-container'>"
-        logs_to_show = st.session_state.db.get_logs()[-20:]
+        raw_logs = st.session_state.db.get_logs()
+        logs_to_show = [l for l in raw_logs if "Escaneo" not in l and "Ciclo" not in l][-20:]
         for log in logs_to_show:
             log_html += f"<span style='color:#00FFAA;'>>></span> <span style='color:#D4D4D4;'>{log}</span><br/>"
         log_html += "</div>"

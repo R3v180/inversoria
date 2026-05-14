@@ -117,8 +117,9 @@ def render_dashboard():
         except: pass
         
         st.markdown("<br/>", unsafe_allow_html=True)
-        logs = db.get_logs()[-15:]
-        log_content = "".join([f"<span style='color:#00FFAA;'>>></span> {l}<br/>" for l in logs])
+        raw_logs = db.get_logs()
+        important_logs = [l for l in raw_logs if "Escaneo" not in l and "Ciclo" not in l][-15:]
+        log_content = "".join([f"<span style='color:#00FFAA;'>>></span> {l}<br/>" for l in important_logs])
         st.markdown(f'<div class="log-box">{log_content}</div>', unsafe_allow_html=True)
 
     # --- FINAL SECTION: PIE + RADAR ---
