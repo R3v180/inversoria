@@ -44,8 +44,24 @@ def render_terminal():
     else:
         current_symbols = SYMBOLS
 
-    # Selector de activo
-    symbol = st.selectbox("Seleccionar Activo", current_symbols)
+    # Determinar moneda con más inversión para el default (v4.5)
+    open_positions = st.session_state.db.get_open_positions()
+    default_index = 0
+    if open_positions:
+        max_value = -1
+        max_symbol = current_symbols[0]
+        for sym, pos in open_positions.items():
+            price = st.session_state.exchange.get_ticker(sym) or pos['entry_price']
+            value = pos['amount'] * price
+            if value > max_value:
+                max_value = value
+                max_symbol = sym
+        
+        if max_symbol in current_symbols:
+            default_index = current_symbols.index(max_symbol)
+
+    # Selector de activo con default inteligente
+    symbol = st.selectbox("Seleccionar Activo", current_symbols, index=default_index)
     
     col_chart, col_ai = st.columns([3, 1])
     
