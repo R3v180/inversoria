@@ -6,8 +6,8 @@ import pandas as pd
 import config # Importar el módulo completo para hot-reload
 
 class DecisionEngine:
-    def __init__(self):
-        self.sentiment = SentimentEngine()
+    def __init__(self, sentiment=None):
+        self.sentiment = sentiment if sentiment else SentimentEngine()
         self.last_analysis = {}    # symbol -> timestamp
         self.decision_cache = {}   # symbol -> last_valid_json_decision
         

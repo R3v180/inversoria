@@ -14,7 +14,7 @@ class BotDaemon:
         self.exchange = ExchangeHelper()
         self.sentiment = SentimentEngine()
         self.logic = TradingLogic()
-        self.decision_engine = DecisionEngine()
+        self.decision_engine = DecisionEngine(sentiment=self.sentiment)
         self.active_symbols = config.SYMBOLS
         self.last_watchlist_update = 0
         self.log_message("Bot Daemon v3.5 [ROTACIÓN INTELIGENTE] Inicializado.")
@@ -154,8 +154,8 @@ class BotDaemon:
                         else:
                             continue # Rotación desactivada
                     
-                    # Ejecutar Compra
-                    amount_usdt = balance * config.RISK_PER_TRADE
+                    # Ejecutar Compra (usamos balance_usdt para saber cuánto cash hay realmente)
+                    amount_usdt = balance_usdt * config.RISK_PER_TRADE
                     amount_coin = amount_usdt / current_price
                     res = self.exchange.execute_order(symbol, 'buy', amount_coin, current_price)
                     if res.get('status') in ['closed', 'simulated']:
