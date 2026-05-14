@@ -50,6 +50,16 @@ class DatabaseManager:
                     timestamp REAL
                 )
             ''')
+
+            # Chat History
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS chat_history (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    role TEXT,
+                    content TEXT,
+                    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+                )
+            ''')
             
             # Trades
             cursor.execute('''
