@@ -25,12 +25,12 @@ def render_terminal():
         }
         </style>
     """, unsafe_allow_html=True)
-    st.title("⚡ Terminal de Trading")
+    st.title(f"⚡ { _('NAV_TERMINAL') }")
     
     # Interruptor de auto-refresco (v3.5)
     col_t1, col_t2 = st.columns([4, 1])
     with col_t2:
-        terminal_refresh = st.toggle("Auto-Refresco", value=st.session_state.get('terminal_refresh', False))
+        terminal_refresh = st.toggle("Auto-Refresh", value=st.session_state.get('terminal_refresh', False))
         st.session_state.terminal_refresh = terminal_refresh
 
     if 'exchange' not in st.session_state:
@@ -61,16 +61,16 @@ def render_terminal():
             default_index = current_symbols.index(max_symbol)
 
     # Selector de activo con default inteligente
-    symbol = st.selectbox("Seleccionar Activo", current_symbols, index=default_index)
+    symbol = st.selectbox(_('SELECT_ASSET'), current_symbols, index=default_index)
     
     col_chart, col_ai = st.columns([3, 1])
     
     with col_chart:
-        st.subheader(f"Análisis Técnico: {symbol}")
-        with st.spinner("Cargando datos históricos..."):
+        st.subheader(f"{ _('TECH_ANALYSIS') }: {symbol}")
+        with st.spinner(_('LOADING_DATA')):
             ohlcv = st.session_state.exchange.get_historical_data(symbol, limit=300)
             if not ohlcv:
-                st.error("No se pudieron cargar datos históricos.")
+                st.error(_('DATA_ERROR'))
                 return
                 
             df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
@@ -123,7 +123,7 @@ def render_terminal():
             st.plotly_chart(fig, width="stretch")
             
     with col_ai:
-        st.subheader("🤖 Consola IA")
+        st.subheader(f"🤖 { _('AI_CONSOLE') }")
         st.markdown("---")
         
         # Cargar decisión específica para el símbolo seleccionado (Sincronización v2.3)
@@ -133,21 +133,21 @@ def render_terminal():
         except:
             decision = {}
 
-        last_reason = decision.get('reasoning', 'Sin análisis específico para este activo aún.')
+        last_reason = decision.get('reasoning', _('NO_ANALYSIS'))
         
         if decision:
             with st.container(border=True):
-                st.markdown(f"**🎯 Régimen:** `{decision.get('regime', 'N/A')}`")
-                st.markdown(f"**🧠 Estrategia:** `{decision.get('best_strategy', 'N/A')}`")
+                st.markdown(f"**🎯 { _('REGIME') }:** `{decision.get('regime', 'N/A')}`")
+                st.markdown(f"**🧠 { _('STRATEGY') }:** `{decision.get('best_strategy', 'N/A')}`")
                 conf = decision.get('confidence', 0)
-                st.progress(conf, text=f"Confianza: {conf*100:.0f}%")
+                st.progress(conf, text=f"{ _('CONFIDENCE') }: {conf*100:.0f}%")
         
         with st.container(border=True):
-            st.caption(f"Última interpretación ({symbol}):")
+            st.caption(f"{ _('LAST_INTERPRETATION') } ({symbol}):")
             st.write(last_reason)
             
         st.markdown("---")
-        st.markdown("**Registro de Operaciones (Live):**")
+        st.markdown(f"**{ _('LIVE_LOGS') }:**")
         
         log_html = "<div class='log-container'>"
         raw_logs = st.session_state.db.get_logs()

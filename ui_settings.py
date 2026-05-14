@@ -17,10 +17,10 @@ def render_settings():
             st.rerun()
 
     with st.form("settings_form"):
-        tab1, tab2, tab3 = st.tabs(["🔑 Conexiones", "🛡️ Riesgo & Rotación", "🧠 Inteligencia (Prompts)"])
+        tab1, tab2, tab3 = st.tabs([_('TAB_CONNECTIONS'), _('TAB_RISK'), _('TAB_AI')])
         
         with tab1:
-            st.subheader("APIs y Credenciales")
+            st.subheader(_('API_CREDENTIALS'))
             crypto_api = st.text_input("Crypto.com API Key", value=get_setting('CRYPTO_API_KEY', ''), type="password")
             crypto_sec = st.text_input("Crypto.com API Secret", value=get_setting('CRYPTO_API_SECRET', ''), type="password")
             groq_api = st.text_input("Groq API Key", value=get_setting('GROQ_API_KEY', ''), type="password")
@@ -29,16 +29,16 @@ def render_settings():
             coindesk_api = st.text_input("News API Key", value=get_setting('COINDESK_API_KEY', ''), type="password")
 
         with tab2:
-            st.subheader("Gestión de Capital")
+            st.subheader(_('CAPITAL_MGMT'))
             col1, col2 = st.columns(2)
             with col1:
-                modo_sim = st.checkbox("Modo Simulación", value=get_setting('MODO_SIMULACION', True, bool))
-                presupuesto = st.number_input("Capital Inicial (USD)", value=get_setting('PRESUPUESTO_INICIAL', 60.0, float))
+                modo_sim = st.checkbox(_('MODE_SIM'), value=get_setting('MODO_SIMULACION', True, bool))
+                presupuesto = st.number_input(_('INITIAL_CAPITAL'), value=get_setting('PRESUPUESTO_INICIAL', 60.0, float))
             with col2:
-                max_pos = st.number_input("Máximo Posiciones", min_value=1, max_value=10, value=get_setting('MAX_OPEN_POSITIONS', 3, int))
-                riesgo = st.slider("Riesgo por Trade (%)", 1, 100, int(get_setting('RISK_PER_TRADE', 0.1, float)*100))
+                max_pos = st.number_input(_('MAX_POSITIONS_L'), min_value=1, max_value=10, value=get_setting('MAX_OPEN_POSITIONS', 3, int))
+                riesgo = st.slider(_('RISK_PER_TRADE_L'), 1, 100, int(get_setting('RISK_PER_TRADE', 0.1, float)*100))
                 min_profit = st.number_input(
-                    "Profit Mínimo Objetivo (%)",
+                    _('MIN_PROFIT_L'),
                     min_value=0.1,
                     max_value=10.0,
                     value=get_setting('MIN_PROFIT_NET', 1.0, float),
@@ -47,19 +47,19 @@ def render_settings():
                 )
             
             st.markdown("---")
-            st.subheader("Módulo de Rotación Inteligente")
-            rot_en = st.checkbox("Activar Rotación de Capital", value=get_setting('ROTATION_ENABLED', True, bool))
+            st.subheader(_('ROTATION_MODULE'))
+            rot_en = st.checkbox(_('ENABLE_ROTATION'), value=get_setting('ROTATION_ENABLED', True, bool))
             col3, col4 = st.columns(2)
             with col3:
-                rot_prof = st.slider("Min. Profit para Rotar (%)", 0.0, 5.0, get_setting('ROTATION_MIN_PROFIT', 0.35, float), step=0.05)
-                rot_gap = st.slider("Gap de Confianza Necesario", 0.05, 0.50, get_setting('ROTATION_CONFIDENCE_GAP', 0.20, float), step=0.05)
+                rot_prof = st.slider(_('MIN_PROFIT_ROT'), 0.0, 5.0, get_setting('ROTATION_MIN_PROFIT', 0.35, float), step=0.05)
+                rot_gap = st.slider(_('CONF_GAP'), 0.05, 0.50, get_setting('ROTATION_CONFIDENCE_GAP', 0.20, float), step=0.05)
             with col4:
-                rot_min_new = st.slider("Confianza Mínima Nueva", 0.60, 0.95, get_setting('ROTATION_MIN_NEW_CONFIDENCE', 0.85, float), step=0.05)
-                ai_interval_min = st.slider("Frecuencia Análisis IA (minutos)", 5, 120, int(get_setting('AI_ANALYSIS_INTERVAL', 1200, int)/60))
+                rot_min_new = st.slider(_('MIN_NEW_CONF'), 0.60, 0.95, get_setting('ROTATION_MIN_NEW_CONFIDENCE', 0.85, float), step=0.05)
+                ai_interval_min = st.slider(_('AI_FREQ'), 5, 120, int(get_setting('AI_ANALYSIS_INTERVAL', 1200, int)/60))
 
         with tab3:
-            st.subheader("Cerebro Lingüístico (Prompts)")
-            st.warning("⚠️ Cambiar los prompts afectará directamente la lógica de decisión de la IA.")
+            st.subheader(_('LINGUISTIC_BRAIN'))
+            st.warning(_('PROMPT_WARNING'))
             
             p_sent = st.text_area("Prompt Análisis Sentiment", value=get_setting('PROMPT_SENTIMENT', DEFAULT_SETTINGS['PROMPT_SENTIMENT']), height=100)
             p_dec = st.text_area("Prompt Motor de Decisión (JSON)", value=get_setting('PROMPT_DECISION', DEFAULT_SETTINGS['PROMPT_DECISION']), height=100)

@@ -1,18 +1,18 @@
 import streamlit as st
 import pandas as pd
 import plotly.express as px
-import os
+from i18n import _
 
 def render_history():
-    st.title("🧾 Historial y Analítica")
+    st.title(f"🧾 { _('NAV_HISTORY') }")
     
     if 'db' not in st.session_state:
-        st.warning("Base de datos no inicializada.")
+        st.warning(_('DB_NOT_INIT'))
         return
         
     df = st.session_state.db.get_trades_history()
     if df.empty:
-        st.info("El historial está vacío.")
+        st.info(_('HISTORY_EMPTY'))
         return
     df['Date'] = pd.to_datetime(df['Date'])
     
@@ -29,12 +29,11 @@ def render_history():
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("Win Rate", f"{win_rate:.1f}%")
     c2.metric("Profit Factor", f"{profit_factor:.2f}")
-    c3.metric("Trades Cerrados", total_trades)
-    c4.metric("Mejor Trade", f"{ventas['PnL_%'].max() if not ventas.empty else 0:.2f}%")
+    c3.metric(_('TRADES_CLOSED'), total_trades)
+    c4.metric(_('BEST_TRADE'), f"{ventas['PnL_%'].max() if not ventas.empty else 0:.2f}%")
     
     st.markdown("---")
-    
-    st.subheader("Curva de Evolución (Trades Completados)")
+    st.subheader(_('EVOLUTION_CURVE'))
     
     ventas = df[df['Side'] == 'sell'].copy()
     if not ventas.empty:
@@ -50,15 +49,15 @@ def render_history():
         fig.update_layout(paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)")
         st.plotly_chart(fig, width="stretch")
     else:
-        st.write("Aún no hay ventas registradas para generar la curva de equidad.")
+        st.write(_('NO_TRADES_MSG'))
         
     st.markdown("---")
-    st.subheader("Diario de Trading")
+    st.subheader(_('TRADING_JOURNAL'))
     
     # Tarjetas Expandibles (Trade Cards)
     for index, row in df.sort_values(by='Date', ascending=False).iterrows():
         action_color = "🟢" if row['Side'] == 'buy' else "🔴"
-        action_text = "COMPRA" if row['Side'] == 'buy' else "VENTA"
+        action_text = _('BUY') if row['Side'] == 'buy' else _('SELL')
         pnl_text = f" | PNL: {row.get('Pnl_Pct', 0):.2f}%" if row['Side'] == 'sell' else ""
         
         with st.expander(f"{action_color} {action_text} | {row['Date'].strftime('%Y-%m-%d %H:%M')} | {row['Symbol']} a ${row['Price']:.4f}{pnl_text}"):
