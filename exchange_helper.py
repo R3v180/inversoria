@@ -165,7 +165,7 @@ class ExchangeHelper:
                     self.virtual_balance += revenue
                     self.virtual_portfolio[symbol] -= amount
                     self._save_simulated_state()
-                    return {"status": "simulated", "side": side, "price": price, "amount": amount, "revenue": revenue}
+                    return {"status": "simulated", "side": side, "price": price, "amount": amount, "filled": amount, "revenue": revenue}
                 else:
                     return {"status": "failed", "reason": "Cantidad virtual insuficiente para vender"}
         else:
@@ -176,9 +176,31 @@ class ExchangeHelper:
                     # Validaciones institucionales CCXT
                     self.exchange.load_markets()
                     market = self.exchange.market(symbol)
+
+                    # Venta real: nunca pedir más moneda base de la que hay LIBRE (fees/redondeo vs DB)
+                    sell_amount_in = float(amount)
+                    if side == "sell":
+                        coin = symbol.split("/")[0]
+                        bal = self.exchange.fetch_balance()
+                        free_coin = float(bal.get("free", {}).get(coin) or 0)
+                        if free_coin <= 0:
+                            return {"status": "failed", "reason": "Saldo base libre insuficiente para vender"}
+                        sell_amount_in = min(sell_amount_in, free_coin)
+                        if sell_amount_in <= 0:
+                            return {"status": "failed", "reason": "Saldo base libre insuficiente para vender"}
+                        amount = sell_amount_in
                     
                     # Truncar cantidad a la precisión permitida
                     formatted_amount = float(self.exchange.amount_to_precision(symbol, amount))
+                    if side == "sell":
+                        bal2 = self.exchange.fetch_balance()
+                        free2 = float(bal2.get("free", {}).get(coin) or 0)
+                        if formatted_amount > free2:
+                            formatted_amount = float(
+                                self.exchange.amount_to_precision(symbol, free2 * 0.9999)
+                            )
+                        if formatted_amount <= 0:
+                            return {"status": "failed", "reason": "Ajuste de precisión: cantidad no vendible"}
                     
                     # Comprobar límites mínimos
                     min_amount = market.get('limits', {}).get('amount', {}).get('min', 0)

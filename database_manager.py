@@ -195,39 +195,50 @@ class DatabaseManager:
             conn.execute('DELETE FROM open_positions WHERE symbol = ?', (symbol,))
             conn.commit()
 
-    def close_position(self, symbol, exit_price, reason):
+    def close_position(self, symbol, exit_price, reason, sold_amount=None):
         """
-        Cierra una posición abierta: calcula el PnL, guarda el trade en el historial
-        y elimina la posición de open_positions en una sola operación atómica.
+        Cierra (total o parcialmente) una posición abierta: registra el trade y
+        actualiza o elimina la fila en open_positions. sold_amount: cantidad
+        vendida en exchange (si difiere de la DB por fees/redondeo).
         """
         with self._get_connection() as conn:
-            # 1. Obtener datos de la posición abierta
             cursor = conn.execute(
                 'SELECT entry_price, amount FROM open_positions WHERE symbol = ?',
                 (symbol,)
             )
             row = cursor.fetchone()
             if not row:
-                # La posición ya no existe (race condition entre UI y daemon), salir silenciosamente
                 return False
 
-            entry_price = row['entry_price']
-            amount = row['amount']
+            entry_price = float(row['entry_price'] or 0)
+            db_amount = float(row['amount'] or 0)
 
-            # 2. Calcular PnL porcentual
+            qty = float(sold_amount) if sold_amount is not None else db_amount
+            qty = min(qty, db_amount)
+            if qty <= 0:
+                return False
+
             if entry_price and entry_price > 0:
-                pnl_pct = ((exit_price - entry_price) / entry_price) * 100
+                pnl_pct = ((float(exit_price) - entry_price) / entry_price) * 100
             else:
                 pnl_pct = 0.0
 
-            # 3. Registrar el trade en el historial
             conn.execute('''
                 INSERT INTO trades (symbol, side, price, amount, reason, pnl_pct, timestamp)
                 VALUES (?, ?, ?, ?, ?, ?, ?)
-            ''', (symbol, 'sell', exit_price, amount, reason, pnl_pct, time.time()))
+            ''', (symbol, 'sell', float(exit_price), qty, reason, pnl_pct, time.time()))
 
-            # 4. Eliminar la posición abierta
-            conn.execute('DELETE FROM open_positions WHERE symbol = ?', (symbol,))
+            remaining = db_amount - qty
+            dust_usd = remaining * float(exit_price) if exit_price else 0.0
+            dust_ratio = (remaining / db_amount) if db_amount > 0 else 0.0
+
+            if remaining <= 0 or dust_ratio < 1e-4 or dust_usd < 0.02:
+                conn.execute('DELETE FROM open_positions WHERE symbol = ?', (symbol,))
+            else:
+                conn.execute(
+                    'UPDATE open_positions SET amount = ? WHERE symbol = ?',
+                    (remaining, symbol)
+                )
             conn.commit()
 
         return True

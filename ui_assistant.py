@@ -137,7 +137,14 @@ def render_assistant():
                             
                             res = exchange.execute_order(symbol, 'sell', sell_amount, current_price)
                             if res.get('status') in ['closed', 'open', 'simulated']:
-                                db.close_position(symbol, current_price, "Venta Manual vía Asistente")
+                                try:
+                                    sold = float(res.get('filled') or 0)
+                                except (TypeError, ValueError):
+                                    sold = 0.0
+                                if sold <= 0:
+                                    sold = float(sell_amount)
+                                sold = min(sold, float(pos['amount']))
+                                db.close_position(symbol, current_price, "Venta Manual vía Asistente", sold_amount=sold)
                                 st.success(f"✅ Venta ejecutada exitosamente: {symbol} a {current_price}")
                                 time.sleep(1) # Pausa breve para asegurar que el balance USDT se actualiza en el exchange
                             else:

@@ -166,7 +166,14 @@ def render_dashboard():
                                     except (TypeError, ValueError):
                                         exit_p = float(current_price)
                                     reason = _("MANUAL_SELL_REASON")
-                                    if db.close_position(sym, exit_p, reason):
+                                    try:
+                                        sold = float(res.get("filled") or 0)
+                                    except (TypeError, ValueError):
+                                        sold = 0.0
+                                    if sold <= 0:
+                                        sold = float(res.get("amount") or amt)
+                                    sold = min(sold, amt)
+                                    if db.close_position(sym, exit_p, reason, sold_amount=sold):
                                         db.add_log(f"{reason}: {sym} @ {exit_p:.6f}")
                                         st.success(_("MANUAL_SELL_OK"))
                                         st.rerun()

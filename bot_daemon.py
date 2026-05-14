@@ -238,10 +238,21 @@ class BotDaemon:
                 if sell_res['should_sell']:
                     order_result = self.exchange.execute_order(symbol, 'sell', pos['amount'], current_price)
                     if order_result.get('status') in ['closed', 'simulated']:
-                        closed = self.db.close_position(symbol, current_price, sell_res['reason'])
+                        try:
+                            sold = float(order_result.get('filled') or 0)
+                        except (TypeError, ValueError):
+                            sold = 0.0
+                        if sold <= 0:
+                            sold = float(pos['amount'])
+                        sold = min(sold, float(pos['amount']))
+                        closed = self.db.close_position(symbol, current_price, sell_res['reason'], sold_amount=sold)
                         if closed:
+                            still = self.db.get_open_positions().get(symbol)
+                            if still:
+                                open_positions[symbol] = still
+                            else:
+                                del open_positions[symbol]
                             self.log_message(f"{ _('LOG_SELL', lang=self.u_lang) } {symbol} @ {current_price:.4f} | { _('LOG_REASON', lang=self.u_lang) }: {sell_res['reason']}")
-                            del open_positions[symbol]
                         else:
                             self.log_message(f"⚠️ Venta ejecutada pero posición {symbol} no encontrada en DB")
                     else:
@@ -278,10 +289,25 @@ class BotDaemon:
                                 sac_pos = open_positions[sym_sac]
                                 sac_price = self.exchange.get_ticker(sym_sac)
                                 if sac_price:
-                                    self.exchange.execute_order(sym_sac, 'sell', sac_pos['amount'], sac_price)
-                                    self.db.close_position(sym_sac, sac_price, "ROTACIÓN IA")
-                                    del open_positions[sym_sac]
-                                    self.log_message(f"{ _('LOG_ROTATION', lang=self.u_lang) } { _('LOG_EXECUTED', lang=self.u_lang) }: {sym_sac} { _('LOG_SOLD_AT', lang=self.u_lang) } {sac_price:.4f}")
+                                    rot_res = self.exchange.execute_order(sym_sac, 'sell', sac_pos['amount'], sac_price)
+                                    if rot_res.get('status') in ['closed', 'simulated']:
+                                        try:
+                                            sold = float(rot_res.get('filled') or 0)
+                                        except (TypeError, ValueError):
+                                            sold = 0.0
+                                        if sold <= 0:
+                                            sold = float(sac_pos['amount'])
+                                        sold = min(sold, float(sac_pos['amount']))
+                                        self.db.close_position(sym_sac, sac_price, "ROTACIÓN IA", sold_amount=sold)
+                                        still_sac = self.db.get_open_positions().get(sym_sac)
+                                        if still_sac:
+                                            open_positions[sym_sac] = still_sac
+                                        else:
+                                            del open_positions[sym_sac]
+                                        self.log_message(f"{ _('LOG_ROTATION', lang=self.u_lang) } { _('LOG_EXECUTED', lang=self.u_lang) }: {sym_sac} { _('LOG_SOLD_AT', lang=self.u_lang) } {sac_price:.4f}")
+                                    else:
+                                        self.log_message(f"❌ Fallo venta rotación {sym_sac}: {rot_res.get('reason', rot_res)}")
+                                        continue
                                 else:
                                     self.log_message(f"⚠️ No se pudo obtener precio para rotar {sym_sac}, rotación cancelada")
                                     continue
