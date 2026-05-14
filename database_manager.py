@@ -225,3 +225,19 @@ class DatabaseManager:
             if not df.empty:
                 df['timestamp'] = pd.to_datetime(df['timestamp'], unit='s')
             return df
+
+    # --- Chat History ---
+    def save_chat_message(self, role, content):
+        with self._get_connection() as conn:
+            conn.execute("INSERT INTO chat_history (role, content) VALUES (?, ?)", (role, content))
+            conn.commit()
+
+    def get_chat_history(self, limit=50):
+        with self._get_connection() as conn:
+            cursor = conn.execute("SELECT role, content FROM chat_history ORDER BY id ASC")
+            return [dict(row) for row in cursor.fetchall()]
+
+    def clear_chat_history(self):
+        with self._get_connection() as conn:
+            conn.execute("DELETE FROM chat_history")
+            conn.commit()

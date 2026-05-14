@@ -48,6 +48,7 @@ from ui_dashboard import render_dashboard
 from ui_terminal import render_terminal
 from ui_history import render_history
 from ui_settings import render_settings
+from ui_assistant import render_assistant
 from streamlit_option_menu import option_menu
 
 with st.sidebar:
@@ -57,8 +58,8 @@ with st.sidebar:
     
     selected = option_menu(
         menu_title=None,
-        options=["Dashboard", "Terminal de Trading", "Historial y Analítica", "Configuración"],
-        icons=["pie-chart-fill", "graph-up-arrow", "journal-text", "gear-fill"],
+        options=["Dashboard", "Terminal de Trading", "Asistente IA", "Historial y Analítica", "Configuración"],
+        icons=["pie-chart-fill", "graph-up-arrow", "chat-dots-fill", "journal-text", "gear-fill"],
         menu_icon="cast",
         default_index=0,
         styles={
@@ -140,6 +141,8 @@ elif selected == "Terminal de Trading":
     if st.session_state.get('terminal_refresh', False):
         time.sleep(30)
         st.rerun()
+elif selected == "Asistente IA":
+    render_assistant()
 elif selected == "Historial y Analítica":
     render_history()
 elif selected == "Configuración":
