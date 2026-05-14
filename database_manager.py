@@ -146,8 +146,12 @@ class DatabaseManager:
 
     def get_logs(self):
         with self._get_connection() as conn:
-            cursor = conn.execute('SELECT message FROM logs ORDER BY timestamp ASC')
-            return [row['message'] for row in cursor.fetchall()]
+            cursor = conn.execute('SELECT timestamp, message FROM logs ORDER BY timestamp ASC')
+            logs = []
+            for row in cursor.fetchall():
+                t_str = time.strftime('%H:%M:%S', time.localtime(row['timestamp']))
+                logs.append(f"[{t_str}] {row['message']}")
+            return logs
 
     # --- Open Positions ---
     def get_open_positions(self):
