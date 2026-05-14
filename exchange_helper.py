@@ -67,9 +67,21 @@ class ExchangeHelper:
         else:
             try:
                 balance = self.exchange.fetch_balance()
-                return balance['total'].get('USDT', 0.0) # CCXT suele sumar todo en total['USDT'] si es la moneda base
+                total_equity = 0.0
+                
+                # Sumar valor de cada moneda en USDT
+                for coin, amt in balance['total'].items():
+                    if amt <= 0: continue
+                    if coin in ['USDT', 'USD']:
+                        total_equity += amt
+                    else:
+                        symbol = f"{coin}/USDT"
+                        price = self.get_ticker(symbol)
+                        if price:
+                            total_equity += amt * price
+                return total_equity
             except Exception as e:
-                print(f"Error obteniendo balance total: {e}")
+                print(f"Error calculando equity total real: {e}")
                 return 0.0
 
     def get_coin_balance(self, symbol):
