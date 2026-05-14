@@ -55,7 +55,7 @@ def render_assistant():
                 # Por simplicidad ahora, usamos un prompt enriquecido. 
                 # En v5.1 implementaremos Function Calling real de Google.
                 response = sentiment.call_ai_hybrid(
-                    prompt_type="DECISION", # Reutilizamos o creamos uno nuevo
+                    type="DECISION", # Nombre correcto del argumento
                     input_data=f"{context}\nUSUARIO DICE: {prompt}\nINSTRUCCIÓN: Actúa como un asesor. Si el usuario te pide comprar o vender, analiza si es buena idea y propón la acción exacta. NO ejecutes nada aún."
                 )
                 
