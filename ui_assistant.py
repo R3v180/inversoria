@@ -52,14 +52,12 @@ def render_assistant():
                 """
                 
                 # 2. Llamada a la IA (Conversacional)
-                # Por simplicidad ahora, usamos un prompt enriquecido. 
-                # En v5.1 implementaremos Function Calling real de Google.
-                response = sentiment.call_ai_hybrid(
-                    type="DECISION", # Nombre correcto del argumento
-                    input_data=f"{context}\nUSUARIO DICE: {prompt}\nINSTRUCCIÓN: Actúa como un asesor. Si el usuario te pide comprar o vender, analiza si es buena idea y propón la acción exacta. NO ejecutes nada aún."
+                raw_response, provider = sentiment.call_ai_hybrid(
+                    system_instruction="Actúa como un asesor de trading experto. Si el usuario te pide comprar o vender, analiza su cartera y propón la acción exacta pero NO ejecutes nada aún.",
+                    prompt=f"{context}\nUSUARIO DICE: {prompt}"
                 )
                 
-                full_response = response.get('reasoning', "Lo siento, no he podido procesar esa consulta.")
+                full_response = raw_logs_str = raw_response if raw_response else "Lo siento, no he podido procesar esa consulta."
                 
                 st.write(full_response)
                 st.session_state.messages.append({"role": "assistant", "content": full_response})
