@@ -24,6 +24,12 @@ class SentimentEngine:
         self.coindesk_url = "https://min-api.cryptocompare.com/data/v2/news/"
         self.cache = {}
         self.fng_cache = {'value': 'Unknown', 'classification': 'Unknown', 'timestamp': 0}
+        self.user_name = "User"
+        self.language = "es"
+
+    def set_user_context(self, user_name, language):
+        self.user_name = user_name
+        self.language = language
 
     def get_fear_and_greed(self):
         if time.time() - self.fng_cache['timestamp'] < 86400:
@@ -90,7 +96,8 @@ class SentimentEngine:
         stats_str = f"24h Change: {market_stats.get('change_24h')}%" if market_stats else ""
         
         # Leemos el prompt en tiempo real
-        system_instruction = config.PROMPT_SENTIMENT
+        lang_name = "Spanish" if self.language == 'es' else "English"
+        system_instruction = f"User: {self.user_name}. Language: {lang_name}. " + config.PROMPT_SENTIMENT
         
         prompt = f"Activo: {symbol}\nF&G Index: {fng_val}\n{stats_str}\nNoticias:\n" + "\n".join(titles)
         res, provider = self.call_ai_hybrid(prompt, system_instruction)

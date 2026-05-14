@@ -39,6 +39,8 @@ TRANSLATIONS = {
     'MACRO_CONTEXT': {'es': 'Contexto Macro', 'en': 'Macro Context'},
     'GLOBAL_MARKETS': {'es': 'Mercados Globales', 'en': 'Global Markets'},
     'LEADING_SECTOR': {'es': 'Sector líder', 'en': 'Leading Sector'},
+    'PORTFOLIO_DIST': {'es': 'Distribución del Portfolio', 'en': 'Portfolio Distribution'},
+    'OPPORTUNITY_RADAR': {'es': 'Radar de Oportunidades', 'en': 'Opportunity Radar'},
     
     # --- Assistant ---
     'ASSISTANT_TITLE': {'es': '💬 Asistente IA Inversor', 'en': '💬 Inversor AI Assistant'},

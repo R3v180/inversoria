@@ -61,7 +61,7 @@ def render_dashboard():
     pnl_pct = (pnl / baseline) * 100 if baseline else 0
     open_positions = db.get_open_positions()
 
-    from i18n import _
+    from i18n import _, TRANSLATIONS
     # --- TOP METRICS ---
     dynamic_max = get_dynamic_max_positions(total_value)
     m1, m2, m3, m4 = st.columns(4)
@@ -157,7 +157,7 @@ def render_dashboard():
     c_pie, c_radar = st.columns([1, 1])
     
     with c_pie:
-        with st.expander(f"🥧 { _('Portfolio Distribution') if 'Portfolio Distribution' in TRANSLATIONS else 'Portfolio Distribution' }", expanded=True):
+        with st.expander(f"🥧 { _('PORTFOLIO_DIST') }", expanded=True):
             pie_data = [{"Activo": "Liquidez", "Valor": available_usdt}]
             for sym, amt in portfolio.items():
                 p = exchange.get_ticker(sym)
@@ -165,7 +165,7 @@ def render_dashboard():
             st.plotly_chart(px.pie(pd.DataFrame(pie_data), values='Valor', names='Activo', hole=0.6, color_discrete_sequence=['#00FFAA', '#3A86FF', '#FF006E']), use_container_width=True)
 
     with c_radar:
-        with st.expander(f"🛰️ { _('Opportunity Radar') if 'Opportunity Radar' in TRANSLATIONS else 'Opportunity Radar' }", expanded=True):
+        with st.expander(f"🛰️ { _('OPPORTUNITY_RADAR') }", expanded=True):
             radar_data = []
             for sym in current_symbols[:8]: # Top 8 del radar
                 stats = exchange.get_market_stats(sym)

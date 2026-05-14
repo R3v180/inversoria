@@ -58,6 +58,12 @@ if not is_onboarding_done():
     render_onboarding()
     st.stop() # Detiene la ejecución del resto del script
 
+# Una vez completado, inyectamos los datos en el motor de sentimiento
+st.session_state.sentiment.set_user_context(
+    st.session_state.get('user_name', 'User'),
+    st.session_state.get('language', 'es')
+)
+
 with st.sidebar:
     st.markdown(f"### 🚀 { _('WELCOME_TITLE')[:9] }") # Muestra 'IVERSORIA'
     st.markdown(_('WELCOME_SUBTITLE'))

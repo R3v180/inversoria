@@ -13,6 +13,12 @@ class BotDaemon:
         self.db = DatabaseManager()
         self.exchange = ExchangeHelper()
         self.sentiment = SentimentEngine()
+        
+        # Cargar contexto de usuario v7.0
+        u_name = self.db.get_system_status('user_name', 'User')
+        u_lang = self.db.get_system_status('language', 'es')
+        self.sentiment.set_user_context(u_name, u_lang)
+        
         self.logic = TradingLogic()
         
         # DecisionEngine ahora recibe el exchange para MTF y Backtest
