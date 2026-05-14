@@ -9,16 +9,16 @@ from multi_timeframe import MultiTimeframeAnalyzer
 from backtest_engine import BacktestEngine
 
 class DecisionEngine:
-    def __init__(self, sentiment=None, exchange=None):
+    def __init__(self, sentiment=None, exchange=None, lang='es'):
         self.sentiment = sentiment if sentiment else SentimentEngine()
+        self.current_lang = lang
         self.last_analysis = {}
         self.decision_cache = {}
-        self.current_lang = 'es' # Idioma de la última tanda de análisis
 
         # Nuevas capas de inteligencia
-        self.market_context = MarketContext()
+        self.market_context = MarketContext(lang=self.current_lang)
         self.mtf_analyzer = MultiTimeframeAnalyzer(exchange) if exchange else None
-        self.backtest_engine = BacktestEngine(exchange) if exchange else None
+        self.backtest_engine = BacktestEngine(exchange, lang=self.current_lang) if exchange else None
 
         # Cache del contexto macro (se actualiza cada 6h)
         self._macro_cache = None
@@ -26,12 +26,12 @@ class DecisionEngine:
         self.MACRO_CACHE_TTL = 21600  # 6 horas
         
     def quick_technical_filter(self, indicators, current_price):
-        if not indicators: return False, "Sin datos"
+        if not indicators: return False, _('FILTER_SIN_DATOS', lang=self.current_lang)
         rsi = indicators.get('rsi')
         trend = indicators.get('trend', 'UNKNOWN')
         adx = indicators.get('adx', 0)
         if rsi > 40 and rsi < 60 and adx < 20:
-            return False, f"Mercado lateral (RSI: {rsi:.1f})"
+            return False, f"{ _('FILTER_SIDEWAYS', lang=self.current_lang) } (RSI: {rsi:.1f})"
         return True, "Filtro OK"
 
     def analyze_with_ai_hybrid(self, symbol, current_price, indicators, ohlcv):
@@ -291,7 +291,7 @@ Si la confluencia MTF es fuerte ({confluence_score:.0%}), puedes aumentar positi
 
         decision = self.analyze_with_ai_hybrid(symbol, current_price, indicators, ohlcv)
         if not decision:
-            return {"action": "HOLD", "reasoning": "IA fuera de línea", "confidence": 0.0}
+            return {"action": "HOLD", "reasoning": "AI offline", "confidence": 0.0}
 
         # Umbral bajado de 0.60 a 0.52 para más operaciones
         if decision.get("confidence", 0) < 0.52:

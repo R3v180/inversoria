@@ -7,6 +7,7 @@ from sentiment_engine import SentimentEngine
 from trading_logic import TradingLogic
 from database_manager import DatabaseManager
 from decision_engine import DecisionEngine
+from market_context import MarketContext
 from i18n import _
 
 class BotDaemon:
@@ -21,12 +22,12 @@ class BotDaemon:
         self.sentiment.set_user_context(self.u_name, self.u_lang)
         
         self.logic = TradingLogic()
-        
-        # DecisionEngine ahora recibe el exchange para MTF y Backtest
         self.decision_engine = DecisionEngine(
             sentiment=self.sentiment,
-            exchange=self.exchange
+            exchange=self.exchange,
+            lang=self.u_lang
         )
+        self.market_context = MarketContext(lang=self.u_lang)
         
         self.active_symbols = config.SYMBOLS
         self.last_watchlist_update = 0
@@ -76,7 +77,7 @@ class BotDaemon:
         from backtest_engine import BacktestEngine
 
         self.log_message(_('LOG_BACKTEST_START', lang=self.u_lang))
-        bt = BacktestEngine(self.exchange)
+        bt = BacktestEngine(self.exchange, lang=self.u_lang)
 
         # Correr backtest para los primeros 5 símbolos de la watchlist activa
         # (limitar para no tardar demasiado en el primer ciclo)
@@ -130,7 +131,9 @@ class BotDaemon:
 
                 # Actualización Macro v6.0 (cada 6h)
                 if now - self.last_macro_update > self.MACRO_INTERVAL:
-                    self.macro_analyzer.fetch_global_market_status()
+                    from macro_analyzer import MacroAnalyzer
+                    macro = MacroAnalyzer(lang=self.u_lang)
+                    macro.fetch_global_market_status()
                     self.last_macro_update = now
                     
                 is_running = self.db.get_system_status('is_running')

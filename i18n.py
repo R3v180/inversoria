@@ -143,6 +143,24 @@ TRANSLATIONS = {
     'LOG_FOR': {'es': 'por', 'en': 'for'},
     'LOG_EXECUTED': {'es': 'ejecutada', 'en': 'executed'},
     'LOG_SOLD_AT': {'es': 'vendido a', 'en': 'sold at'},
+    
+    # --- Backtest Engine ---
+    'BT_DOWNLOADING': {'es': 'Descargando datos para', 'en': 'Downloading data for'},
+    'BT_CANDLES_LOADED': {'es': 'velas descargadas', 'en': 'candles downloaded'},
+    'BT_SIMULATING': {'es': 'Simulando', 'en': 'Simulating'},
+    'BT_SUMMARY': {'es': 'RESUMEN', 'en': 'SUMMARY'},
+    'BT_TRADES': {'es': 'trades', 'en': 'trades'},
+    'BT_RETURN': {'es': 'Retorno', 'en': 'Return'},
+    
+    # --- Macro & Context ---
+    'MACRO_UPDATING': {'es': 'Actualizando indicadores globales...', 'en': 'Updating global indicators...'},
+    'MACRO_VETO_DOM': {'es': 'Precaución: dominancia BTC alta. Evitando Alts.', 'en': 'Caution: high BTC dominance. Avoiding Alts.'},
+    'MACRO_VETO_DXY': {'es': 'Dólar (DXY) muy fuerte. Riesgo de caída.', 'en': 'Strong Dollar (DXY). Downside risk.'},
+    'MACRO_VETO_MARKET': {'es': 'Mercado global bajista (SPY/BTC).', 'en': 'Bearish global market (SPY/BTC).'},
+    
+    # --- Decision Filters ---
+    'FILTER_SIDEWAYS': {'es': 'Mercado lateral', 'en': 'Sideways market'},
+    'FILTER_SIN_DATOS': {'es': 'Sin datos técnicos suficientes', 'en': 'Insufficient technical data'},
 }
 
 def _(key, lang=None):

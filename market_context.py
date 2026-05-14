@@ -8,6 +8,7 @@ import requests
 import time
 import json
 from database_manager import DatabaseManager
+from i18n import _
 
 
 class MarketContext:
@@ -23,8 +24,9 @@ class MarketContext:
 
     CACHE_TTL = 21600  # 6 horas en segundos
 
-    def __init__(self):
+    def __init__(self, lang='es'):
         self.db = DatabaseManager()
+        self.u_lang = lang
         self._cache = {}
 
     # ─────────────────────────────────────────────
@@ -307,19 +309,19 @@ ETH actividad de red: {eth_gas.get('eth_network_activity', 'N/A')} ({eth_gas.get
         # 1. Veto por DXY (Dólar fuerte = Riesgo en Cripto)
         dxy = macro_data.get('UUP') # Proxy del DXY
         if dxy and dxy['change_24h'] > 1.5:
-            return False, f"VETO MACRO: Dólar (DXY) subiendo con fuerza (+{dxy['change_24h']}%)"
+            return False, f"{ _('MACRO_VETO_DXY', lang=self.u_lang) } (+{dxy['change_24h']}%)"
 
         # 2. Veto por SP500 (Pánico en Bolsa)
         spy = macro_data.get('SPY')
         if spy and spy['change_24h'] < -2.0:
-            return False, f"VETO MACRO: Pánico en Wall Street (SP500 bajando {spy['change_24h']}%)"
+            return False, f"{ _('MACRO_VETO_MARKET', lang=self.u_lang) } (SP500: {spy['change_24h']}%)"
 
         if regime == 'RISK_OFF':
-            return False, f"Régimen RISK_OFF: BTC dominancia {btc_dom}%, mercado en modo refugio"
+            return False, f"RISK_OFF Mode: BTC Dom {btc_dom}%, risk-off market"
         if regime == 'CAUTION' and btc_dom > 55:
-            return False, f"Precaución: dominancia BTC alta ({btc_dom}%) con mercado bajando"
+            return False, f"{ _('MACRO_VETO_DOM', lang=self.u_lang) } ({btc_dom}%)"
 
-        return True, f"Condiciones macro aceptables: régimen {regime}"
+        return True, f"Macro OK: {regime}"
 
     # ─────────────────────────────────────────────
     # HELPERS DE CACHÉ INTERNA

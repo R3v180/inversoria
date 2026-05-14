@@ -12,6 +12,7 @@ import time
 import sqlite3
 import os
 from database_manager import DatabaseManager
+from i18n import _
 
 
 class BacktestEngine:
@@ -53,9 +54,10 @@ class BacktestEngine:
         },
     }
 
-    def __init__(self, exchange_helper):
+    def __init__(self, exchange_helper, lang='es'):
         self.exchange = exchange_helper
         self.db = DatabaseManager()
+        self.u_lang = lang
         self._init_backtest_tables()
 
     def _init_backtest_tables(self):
@@ -110,7 +112,7 @@ class BacktestEngine:
         Para 2 años de velas 4h: ~4380 velas → ~5 llamadas de API.
         Para 5 años de velas 1D: ~1825 velas → ~2 llamadas de API.
         """
-        print(f"[Backtest] Descargando {years}a de datos {timeframe} para {symbol}...")
+        print(f"[Backtest] { _('BT_DOWNLOADING', lang=self.u_lang) } {symbol} ({timeframe} · {years} { _('LOG_YEARS', lang=self.u_lang) })...")
 
         # Calcular timestamp de inicio
         ms_per_candle = {
@@ -145,7 +147,7 @@ class BacktestEngine:
                 # Pequeña pausa para no saturar el rate limit
                 time.sleep(0.2)
             except Exception as e:
-                print(f"[Backtest] Error descargando {symbol}: {e}")
+                print(f"[Backtest] Error {symbol}: {e}")
                 break
 
         if not all_candles:
@@ -156,7 +158,7 @@ class BacktestEngine:
         df = df.drop_duplicates('timestamp').sort_values('timestamp').reset_index(drop=True)
         df[['open', 'high', 'low', 'close', 'volume']] = df[['open', 'high', 'low', 'close', 'volume']].apply(pd.to_numeric)
 
-        print(f"[Backtest] {len(df)} velas descargadas ({df['timestamp'].iloc[0].date()} → {df['timestamp'].iloc[-1].date()})")
+        print(f"[Backtest] {len(df)} { _('BT_CANDLES_LOADED', lang=self.u_lang) } ({df['timestamp'].iloc[0].date()} → {df['timestamp'].iloc[-1].date()})")
         return df
 
     def calculate_indicators_for_backtest(self, df: pd.DataFrame) -> pd.DataFrame:
@@ -433,7 +435,7 @@ class BacktestEngine:
             ''', rows_to_insert)
             conn.commit()
 
-        print(f"[Backtest] Tabla de condiciones actualizada: {len(rows_to_insert)} combinaciones para {symbol}")
+        print(f"[Backtest] { _('ROTATION_MODULE', lang=self.u_lang) }: {len(rows_to_insert)} combinaciones para {symbol}")
 
     # ─────────────────────────────────────────────
     # CONSULTA EN TIEMPO REAL (el bot llama esto en cada decisión)
@@ -535,7 +537,7 @@ class BacktestEngine:
                 }
 
         except Exception as e:
-            print(f"[Backtest] Error consultando prior para {symbol}: {e}")
+            print(f"[Backtest] Error prior {symbol}: {e}")
             return default
 
     # ─────────────────────────────────────────────
@@ -563,13 +565,13 @@ class BacktestEngine:
             return {}
 
         df = self.calculate_indicators_for_backtest(df_raw)
-        print(f"[Backtest] {len(df)} velas con indicadores calculados para {symbol}")
+        print(f"[Backtest] {len(df)} { _('BT_CANDLES_LOADED', lang=self.u_lang) } ({symbol})")
 
         results = {}
         all_trades = []
 
         for strategy_name in self.STRATEGIES:
-            print(f"[Backtest] Simulando {strategy_name} en {symbol}...")
+            print(f"[Backtest] { _('BT_SIMULATING', lang=self.u_lang) } {strategy_name} ({symbol})...")
             result = self.simulate_strategy(df, strategy_name)
             results[strategy_name] = result
             if result.get('trades_detail'):
@@ -602,10 +604,10 @@ class BacktestEngine:
             ))
             conn.commit()
 
-        print(f"\n[Backtest] === RESUMEN {symbol} ({timeframe} · {years}a) ===")
+        print(f"\n[Backtest] === { _('BT_SUMMARY', lang=self.u_lang) } {symbol} ({timeframe} · {years} { _('LOG_YEARS', lang=self.u_lang) }) ===")
         for s, r in results.items():
             if r.get('total_trades', 0) > 0:
-                print(f"  {s}: {r['total_trades']} trades | WR {r['win_rate']:.0%} | "
-                      f"PF {r['profit_factor']:.2f} | Retorno {r['total_return_pct']:+.1f}%")
+                print(f"  {s}: {r['total_trades']} { _('BT_TRADES', lang=self.u_lang) } | WR {r['win_rate']:.0%} | "
+                      f"PF {r['profit_factor']:.2f} | { _('BT_RETURN', lang=self.u_lang) } {r['total_return_pct']:+.1f}%")
 
         return results

@@ -3,6 +3,7 @@ import os
 import time
 from database_manager import DatabaseManager
 from dotenv import load_dotenv
+from i18n import _
 
 load_dotenv()
 
@@ -16,9 +17,10 @@ class MacroAnalyzer:
     - GLD (Oro)
     """
     
-    def __init__(self):
+    def __init__(self, lang='es'):
         self.api_key = os.getenv('ALPHA_VANTAGE_API_KEY')
         self.db = DatabaseManager()
+        self.u_lang = lang
         self.base_url = "https://www.alphavantage.co/query"
 
     def fetch_global_market_status(self):
@@ -29,13 +31,13 @@ class MacroAnalyzer:
 
         # Lista de activos a monitorizar
         assets = {
-            'SPY': 'S&P 500 (Bolsa USA)',
-            'UUP': 'DXY Proxy (Dólar)',
-            'GLD': 'Oro (Refugio)',
-            'USO': 'Petróleo (Energía)'
+            'SPY': 'S&P 500' if self.u_lang == 'en' else 'S&P 500 (Bolsa USA)',
+            'UUP': 'DXY Proxy' if self.u_lang == 'en' else 'DXY Proxy (Dólar)',
+            'GLD': 'Gold' if self.u_lang == 'en' else 'Oro (Refugio)',
+            'USO': 'Oil' if self.u_lang == 'en' else 'Petróleo (Energía)'
         }
 
-        print("[Macro] Actualizando indicadores globales...")
+        print(f"[Macro] { _('MACRO_UPDATING', lang=self.u_lang) }")
         
         for symbol, name in assets.items():
             try:
