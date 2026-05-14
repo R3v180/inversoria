@@ -319,7 +319,7 @@ ETH actividad de red: {eth_gas.get('eth_network_activity', 'N/A')} ({eth_gas.get
         if regime == 'RISK_OFF':
             return False, f"RISK_OFF Mode: BTC Dom {btc_dom}%, risk-off market"
         if regime == 'CAUTION' and btc_dom > 55:
-            # DEBUG: print(f"[MarketContext] DEBUG: u_lang={self.u_lang}")
+            print(f"[MarketContext] DEBUG: u_lang={self.u_lang}")
             reason = _('MACRO_VETO_DOM', lang=self.u_lang)
             return False, f"{reason} ({btc_dom}%)"
 

@@ -84,7 +84,7 @@ class DecisionEngine:
                 "position_size_multiplier": 0.0,
                 "stop_loss_atr": 2.0,
                 "take_profit_ratio": 2.0,
-                "reasoning": f"[MACRO VETO] {no_trade_reason}",
+                "reasoning": f"[{ _('MACRO_VETO_LABEL', lang=self.current_lang) }] {no_trade_reason}",
                 "provider": "MacroFilter"
             }
             self.last_analysis[symbol] = now

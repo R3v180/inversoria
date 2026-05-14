@@ -155,6 +155,7 @@ TRANSLATIONS = {
     # --- Macro & Context ---
     'MACRO_UPDATING': {'es': 'Actualizando indicadores globales...', 'en': 'Updating global indicators...'},
     'MACRO_VETO_DOM': {'es': 'Precaución: dominancia BTC alta. Evitando Alts.', 'en': 'Caution: high BTC dominance. Avoiding Alts.'},
+    'MACRO_VETO_LABEL': {'es': 'VETO MACRO', 'en': 'MACRO VETO'},
     'MACRO_VETO_DXY': {'es': 'Dólar (DXY) muy fuerte. Riesgo de caída.', 'en': 'Strong Dollar (DXY). Downside risk.'},
     'MACRO_VETO_MARKET': {'es': 'Mercado global bajista (SPY/BTC).', 'en': 'Bearish global market (SPY/BTC).'},
     

@@ -116,19 +116,20 @@ class BotDaemon:
                 import importlib
                 importlib.reload(config)
                 
-                # Refrescar idioma v7.11
-                new_lang = self.db.get_system_status('language', 'es')
-                if new_lang != self.u_lang:
-                    self.u_lang = new_lang
-                    self.sentiment.set_user_context(self.u_name, self.u_lang)
-                    self.decision_engine.current_lang = self.u_lang
-                    if hasattr(self.decision_engine, 'market_context'):
-                        self.decision_engine.market_context.u_lang = self.u_lang
-                    self.market_context.u_lang = self.u_lang
-                    if hasattr(self.decision_engine, 'backtest_engine') and self.decision_engine.backtest_engine:
-                        self.decision_engine.backtest_engine.u_lang = self.u_lang
-                    # Invalidar caché de IA para forzar nueva interpretación en el nuevo idioma
+                # Refrescar idioma v7.14 (Forzar sincronización en cada ciclo)
+                self.u_lang = self.db.get_system_status('language', 'es')
+                self.sentiment.set_user_context(self.u_name, self.u_lang)
+                self.decision_engine.current_lang = self.u_lang
+                if hasattr(self.decision_engine, 'market_context'):
+                    self.decision_engine.market_context.u_lang = self.u_lang
+                self.market_context.u_lang = self.u_lang
+                if hasattr(self.decision_engine, 'backtest_engine') and self.decision_engine.backtest_engine:
+                    self.decision_engine.backtest_engine.u_lang = self.u_lang
+                
+                # Si detectamos cambio REAL, limpiamos caché
+                if 'last_lang_check' not in locals() or last_lang_check != self.u_lang:
                     self.decision_engine.decision_cache = {}
+                    last_lang_check = self.u_lang
                 
                 now = time.time()
                 if now - self.last_watchlist_update > 43200:
