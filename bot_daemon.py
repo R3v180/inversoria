@@ -122,6 +122,8 @@ class BotDaemon:
                     self.u_lang = new_lang
                     self.sentiment.set_user_context(self.u_name, self.u_lang)
                     self.decision_engine.current_lang = self.u_lang
+                    if hasattr(self.decision_engine, 'market_context'):
+                        self.decision_engine.market_context.u_lang = self.u_lang
                     self.market_context.u_lang = self.u_lang
                     if hasattr(self.decision_engine, 'backtest_engine') and self.decision_engine.backtest_engine:
                         self.decision_engine.backtest_engine.u_lang = self.u_lang
