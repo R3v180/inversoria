@@ -127,7 +127,7 @@ def render_dashboard():
                 with st.container():
                     col_info, col_btn = st.columns([5, 1])
                     with col_info:
-                        st.markdown(f'<div class="position-card" style="margin-bottom: 5px; padding: 15px;"><div style="display:flex; justify-content:space-between;"><div><b>{sym}</b><br/><span style="color:gray; font-size:0.8em;">Inversión: ${current_value:.2f}</span></div><div style="text-align:right;"><span style="font-size:1.2em; font-weight:bold; color:{color};">{u_pnl:.2f}%</span><br/><span style="font-size:0.8em;">${current_price:.4f}</span></div></div></div>', unsafe_allow_html=True)
+                        st.markdown(f'<div class="position-card" style="margin-bottom: 5px; padding: 15px;"><div style="display:flex; justify-content:space-between;"><div><b>{sym}</b><br/><span style="color:gray; font-size:0.8em;">{ _("INVESTMENT") }: ${current_value:.2f}</span></div><div style="text-align:right;"><span style="font-size:1.2em; font-weight:bold; color:{color};">{u_pnl:.2f}%</span><br/><span style="font-size:0.8em;">${current_price:.4f}</span></div></div></div>', unsafe_allow_html=True)
                     with col_btn:
                         st.markdown("<div style='margin-top: 15px;'></div>", unsafe_allow_html=True)
                         
@@ -180,7 +180,7 @@ def render_dashboard():
 
     # --- PANEL DE INTELIGENCIA ---
     st.markdown("---")
-    st.markdown("### 🧠 Inteligencia del Sistema")
+    st.markdown(f"### 🧠 { _('SYSTEM_INTEL') }")
 
     col_macro, col_backtest = st.columns(2)
 
@@ -200,7 +200,7 @@ def render_dashboard():
                     st.markdown(
                         f"<div style='text-align:center; padding:10px; border-radius:8px; "
                         f"background:#1E1E1E; color:{regime_color}; font-size:1.2em; "
-                        f"font-weight:bold;'>RÉGIMEN: {regime}</div>",
+                        f"font-weight:bold;'>{ _('REGIME_LABEL') }: {regime}</div>",
                         unsafe_allow_html=True
                     )
                     st.metric(_('BTC_DOM'), f"{macro.get('btc_dominance', 0):.1f}%")
@@ -229,7 +229,7 @@ def render_dashboard():
                 st.info("Cargando contexto macro...")
 
     with col_backtest:
-        with st.expander("📊 Estado del Backtest", expanded=True):
+        with st.expander(f"📊 { _('BACKTEST_STATUS') }", expanded=True):
             try:
                 import sqlite3
                 import os
@@ -246,17 +246,17 @@ def render_dashboard():
                             st.markdown(
                                 f"**{run['symbol']}** · {run['timeframe']} · "
                                 f"WR {run['win_rate']:.0%} · "
-                                f"Mejor: {run['best_strategy']}"
+                                f"{ _('BEST_STRATEGY') }: {run['best_strategy']}"
                             )
                     else:
-                        st.info("Sin datos de backtest. El daemon los genera automáticamente en el primer arranque.")
+                        st.info(_('NO_BACKTEST_DATA'))
             except Exception as e:
                 st.info(f"Backtest no disponible: {e}")
 
     # BOTÓN DE EMERGENCIA
     st.markdown("---")
-    with st.expander("⚠️ Acciones de Emergencia", expanded=False):
-        if st.button("🔴 LIQUIDAR TODO A USDT", use_container_width=True, type="primary"):
+    with st.expander(f"⚠️ { _('EMERGENCY_ACTIONS') }", expanded=False):
+        if st.button(_('SELL_ALL_USDT'), width="stretch", type="primary"):
             exchange.liquidate_all_to_usdt()
             db.clear_open_positions()
             st.rerun()

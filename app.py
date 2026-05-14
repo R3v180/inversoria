@@ -65,7 +65,7 @@ st.session_state.sentiment.set_user_context(
 )
 
 with st.sidebar:
-    st.markdown(f"### 🚀 { _('WELCOME_TITLE').split(' ')[-1].upper() if ' ' in _('WELCOME_TITLE') else 'IVERSORIA' }")
+    st.markdown("### 🚀 IVERSORIA")
     st.markdown(_('WELCOME_SUBTITLE'))
     st.markdown("---")
     
