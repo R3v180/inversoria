@@ -80,7 +80,7 @@ def render_dashboard():
             fig_equity = go.Figure()
             fig_equity.add_trace(go.Scatter(x=equity_df['timestamp'], y=equity_df['total_value'], fill='tozeroy', fillcolor='rgba(0, 255, 170, 0.1)', line=dict(color='#00FFAA', width=3)))
             fig_equity.update_layout(height=400, margin=dict(l=0, r=0, t=0, b=0), paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", xaxis=dict(showgrid=False), yaxis=dict(showgrid=True, gridcolor='#30363D'))
-            st.plotly_chart(fig_equity, use_container_width=True)
+            st.plotly_chart(fig_equity, width='stretch')
 
     with col_market:
         c1, c2 = st.columns([2, 1])
@@ -121,7 +121,7 @@ def render_dashboard():
             fig.add_trace(go.Scatter(x=df['ts'], y=df['RSI_14'], line=dict(color='purple', width=1), name="RSI"), row=2, col=1)
             fig.add_trace(go.Scatter(x=df['ts'], y=df['ATR_14'], line=dict(color='cyan', width=1), name="ATR"), row=3, col=1)
             fig.update_layout(height=400, margin=dict(l=0, r=0, t=0, b=0), paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", xaxis_rangeslider_visible=False)
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width='stretch')
 
     # --- LOWER SECTION ---
     col_left, col_right = st.columns([1.5, 1])
@@ -172,7 +172,7 @@ def render_dashboard():
             for sym, amt in portfolio.items():
                 p = exchange.get_ticker(sym)
                 if p: pie_data.append({"Activo": sym, "Valor": amt * p})
-            st.plotly_chart(px.pie(pd.DataFrame(pie_data), values='Valor', names='Activo', hole=0.6, color_discrete_sequence=['#00FFAA', '#3A86FF', '#FF006E']), use_container_width=True)
+            st.plotly_chart(px.pie(pd.DataFrame(pie_data), values='Valor', names='Activo', hole=0.6, color_discrete_sequence=['#00FFAA', '#3A86FF', '#FF006E']), width='stretch')
 
     with c_radar:
         with st.expander(f"🛰️ { _('OPPORTUNITY_RADAR') }", expanded=True):

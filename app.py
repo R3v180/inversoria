@@ -89,7 +89,7 @@ with st.sidebar:
     is_running_str = st.session_state.db.get_system_status('is_running', 'false')
     is_running = str(is_running_str).lower() == 'true'
     
-    if st.button(_('STOP_BOT') if is_running else _('START_BOT'), use_container_width=True):
+    if st.button(_('STOP_BOT') if is_running else _('START_BOT'), width='stretch'):
         new_status = not is_running
         st.session_state.db.set_system_status('is_running', 'true' if new_status else 'false')
         st.rerun()

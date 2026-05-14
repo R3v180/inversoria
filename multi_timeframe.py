@@ -9,6 +9,19 @@ import numpy as np
 import time
 
 
+def _safe_float(val, default=0.0):
+    """Evita TypeError al comparar float con None/NaN (CCXT + pandas_ta a veces devuelven huecos)."""
+    if val is None:
+        return default
+    try:
+        f = float(val)
+        if f != f or np.isinf(f):  # NaN o inf
+            return default
+        return f
+    except (TypeError, ValueError):
+        return default
+
+
 class MultiTimeframeAnalyzer:
     """
     Analiza el mismo activo en tres timeframes:
@@ -53,14 +66,25 @@ class MultiTimeframeAnalyzer:
             df_closed['atr'] = ta.atr(df_closed['high'], df_closed['low'], df_closed['close'], length=14)
 
             adx_df = ta.adx(df_closed['high'], df_closed['low'], df_closed['close'], length=14)
-            df_closed['adx'] = adx_df['ADX_14'] if adx_df is not None else 0
+            if adx_df is not None and not adx_df.empty and 'ADX_14' in adx_df.columns:
+                df_closed['adx'] = adx_df['ADX_14']
+            else:
+                df_closed['adx'] = 0.0
 
             last = df_closed.iloc[-1]
 
-            # Análisis de la vela actual
-            trend = 'BULL' if last['ema50'] > last['ema200'] else 'BEAR'
-            rsi = round(last['rsi'], 1)
-            adx = round(last['adx'], 1)
+            ema50 = _safe_float(last.get('ema50'), 0.0)
+            ema200 = _safe_float(last.get('ema200'), 0.0)
+            rsi_raw = _safe_float(last.get('rsi'), 50.0)
+            adx_raw = _safe_float(last.get('adx'), 0.0)
+
+            # Análisis de la vela actual (sin comparar float con None/NaN)
+            if ema50 <= 0 or ema200 <= 0:
+                trend = 'BULL'
+            else:
+                trend = 'BULL' if ema50 > ema200 else 'BEAR'
+            rsi = round(rsi_raw, 1)
+            adx = round(adx_raw, 1)
 
             # Momentum: ¿está el precio acelerando o desacelerando?
             recent_closes = df_closed['close'].tail(5)
@@ -73,14 +97,16 @@ class MultiTimeframeAnalyzer:
             current_price = last['close']
             position_in_range = (current_price - dynamic_support) / (dynamic_resistance - dynamic_support) if dynamic_resistance != dynamic_support else 0.5
 
+            atr_safe = _safe_float(last.get('atr'), 0.0)
+
             result = {
                 'timeframe': timeframe,
                 'trend': trend,
                 'rsi': rsi,
                 'adx': adx,
-                'ema50': round(last['ema50'], 6),
-                'ema200': round(last['ema200'], 6),
-                'atr': round(last['atr'], 6),
+                'ema50': round(ema50, 6),
+                'ema200': round(ema200, 6),
+                'atr': round(atr_safe, 6),
                 'momentum': momentum,
                 'dynamic_support': round(dynamic_support, 6),
                 'dynamic_resistance': round(dynamic_resistance, 6),
@@ -96,6 +122,8 @@ class MultiTimeframeAnalyzer:
             return {'error': str(e)}
 
     def _classify_regime(self, trend: str, adx: float, rsi: float) -> str:
+        adx = _safe_float(adx, 0.0)
+        rsi = _safe_float(rsi, 50.0)
         if adx > 30 and trend == 'BULL':
             return 'STRONG_UPTREND'
         elif adx > 30 and trend == 'BEAR':
@@ -146,11 +174,15 @@ class MultiTimeframeAnalyzer:
             confluence_score = 0.10
 
         # ─── Recomendación de estrategia por contexto MTF ───
-        if confluence == 'STRONG_BUY_BIAS' and tf_4h.get('adx', 0) > 25:
+        adx_4h = _safe_float(tf_4h.get('adx'), 0.0)
+        rsi_4h = _safe_float(tf_4h.get('rsi'), 50.0)
+        pos_4h = _safe_float(tf_4h.get('position_in_range'), 0.5)
+
+        if confluence == 'STRONG_BUY_BIAS' and adx_4h > 25:
             recommended_strategy = 'TREND_FOLLOWING'
-        elif confluence == 'PULLBACK' and tf_4h.get('rsi', 50) < 45:
+        elif confluence == 'PULLBACK' and rsi_4h < 45:
             recommended_strategy = 'MEAN_REVERSION'  # Comprar el pullback
-        elif confluence == 'STRONG_BUY_BIAS' and tf_4h.get('position_in_range', 0.5) > 0.7:
+        elif confluence == 'STRONG_BUY_BIAS' and pos_4h > 0.7:
             recommended_strategy = 'BREAKOUT'  # Cerca de resistencia → esperar ruptura
         else:
             recommended_strategy = 'MOMENTUM'
