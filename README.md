@@ -1,6 +1,6 @@
-# 🏛️ IVERSORIA AI - Trading Engine v4.0
+# 🏛️ INVERSOR IA - Trading Engine v4.0
 
-**IVERSORIA AI** es un motor de trading autónomo de grado institucional diseñado para operar en el mercado de criptomonedas (Crypto.com) utilizando inteligencia artificial de vanguardia y análisis técnico avanzado.
+**INVERSOR IA** es un motor de trading autónomo de grado institucional diseñado para operar en el mercado de criptomonedas (Crypto.com) utilizando inteligencia artificial de vanguardia y análisis técnico avanzado.
 
 ![Dashboard Preview](https://github.com/R3v180/inversoria/raw/main/preview.png) *(Sube la foto que me pasaste aquí)*
 
