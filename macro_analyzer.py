@@ -56,13 +56,15 @@ class MacroAnalyzer:
                     change_pct = float(change_pct)
                     
                     self.db.set_macro_data(symbol, price, change_pct)
-                    print(f"  [OK] {symbol} ({name}): ${price} ({change_pct:+.2f}%)")
+                    status_ok = "OK" if self.u_lang == "en" else "LISTO"
+                    print(f"  [{status_ok}] {symbol} ({name}): ${price} ({change_pct:+.2f}%)")
                 
                 # Alpha Vantage Free Tier: 5 calls per minute
                 time.sleep(15) 
                 
             except Exception as e:
-                print(f"  [!] Error consultando {symbol}: {e}")
+                err_msg = "Error fetching" if self.u_lang == "en" else "Error consultando"
+                print(f"  [!] {err_msg} {symbol}: {e}")
 
     def get_macro_summary(self):
         """Genera un resumen textual para la IA"""

@@ -189,6 +189,8 @@ class DecisionEngine:
         fng_value, fng_class = self.sentiment.get_fear_and_greed()
 
         system_instruction = config.PROMPT_DECISION
+        lang_name = "English" if self.current_lang == 'en' else "Spanish"
+        system_instruction += f"\nDEBES responder SIEMPRE en idioma {lang_name}."
 
         prompt = f"""Analiza {symbol} (${current_price:.6f}).
 
