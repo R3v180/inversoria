@@ -40,7 +40,7 @@ class BotDaemon:
         from macro_analyzer import MacroAnalyzer
         self.macro_analyzer = MacroAnalyzer()
         self.last_macro_update = 0
-        self.MACRO_INTERVAL = 21600 # 6 horas
+        self.MACRO_INTERVAL = 86400 # 24 horas para ahorrar API (Límite 25/día)
 
         self.log_message(_('LOG_DAEMON_INIT', lang=self.u_lang))
 

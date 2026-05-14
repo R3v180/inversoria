@@ -55,8 +55,9 @@ class MacroAnalyzer:
                 response = requests.get(self.base_url, params=params)
                 data = response.json()
                 
-                if "Note" in data:
-                    print(f"  [!] Alpha Vantage API Limit: {data['Note']}")
+                if "Note" in data or "Information" in data:
+                    reason = data.get('Note', data.get('Information'))
+                    print(f"  [!] Alpha Vantage API Limit: {reason}")
                     break
 
                 quote = data.get('Global Quote', {})
