@@ -1,0 +1,11 @@
+streamlit
+streamlit-autorefresh
+streamlit-option-menu
+ccxt
+pandas
+pandas-ta
+plotly
+google-genai
+groq
+python-dotenv
+requests

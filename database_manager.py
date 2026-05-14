@@ -179,6 +179,43 @@ class DatabaseManager:
             conn.execute('DELETE FROM open_positions WHERE symbol = ?', (symbol,))
             conn.commit()
 
+    def close_position(self, symbol, exit_price, reason):
+        """
+        Cierra una posición abierta: calcula el PnL, guarda el trade en el historial
+        y elimina la posición de open_positions en una sola operación atómica.
+        """
+        with self._get_connection() as conn:
+            # 1. Obtener datos de la posición abierta
+            cursor = conn.execute(
+                'SELECT entry_price, amount FROM open_positions WHERE symbol = ?',
+                (symbol,)
+            )
+            row = cursor.fetchone()
+            if not row:
+                # La posición ya no existe (race condition entre UI y daemon), salir silenciosamente
+                return False
+
+            entry_price = row['entry_price']
+            amount = row['amount']
+
+            # 2. Calcular PnL porcentual
+            if entry_price and entry_price > 0:
+                pnl_pct = ((exit_price - entry_price) / entry_price) * 100
+            else:
+                pnl_pct = 0.0
+
+            # 3. Registrar el trade en el historial
+            conn.execute('''
+                INSERT INTO trades (symbol, side, price, amount, reason, pnl_pct, timestamp)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            ''', (symbol, 'sell', exit_price, amount, reason, pnl_pct, time.time()))
+
+            # 4. Eliminar la posición abierta
+            conn.execute('DELETE FROM open_positions WHERE symbol = ?', (symbol,))
+            conn.commit()
+
+        return True
+
     def clear_open_positions(self):
         with self._get_connection() as conn:
             conn.execute('DELETE FROM open_positions')

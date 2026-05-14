@@ -40,6 +40,14 @@ def render_settings():
             with col2:
                 max_pos = st.number_input("Máximo Posiciones", min_value=1, max_value=10, value=get_setting('MAX_OPEN_POSITIONS', 3, int))
                 riesgo = st.slider("Riesgo por Trade (%)", 1, 100, int(get_setting('RISK_PER_TRADE', 0.1, float)*100))
+                min_profit = st.number_input(
+                    "Profit Mínimo Objetivo (%)",
+                    min_value=0.1,
+                    max_value=10.0,
+                    value=get_setting('MIN_PROFIT_NET', 1.0, float),
+                    step=0.1,
+                    help="El bot solo considerará rentable una operación si supera este % de beneficio"
+                )
             
             st.markdown("---")
             st.subheader("Módulo de Rotación Inteligente")
@@ -74,6 +82,7 @@ def render_settings():
                 "MODO_SIMULACION": modo_sim,
                 "PRESUPUESTO_INICIAL": float(presupuesto),
                 "MAX_OPEN_POSITIONS": int(max_pos),
+                "MIN_PROFIT_NET": float(min_profit),
                 "RISK_PER_TRADE": riesgo / 100.0,
                 "ROTATION_ENABLED": rot_en,
                 "ROTATION_MIN_PROFIT": float(rot_prof),

@@ -82,7 +82,6 @@ class BotDaemon:
         self.db.log_equity(total_value)
         
         # Para el cálculo de cuánto podemos comprar, necesitamos el cash (USDT) disponible
-        balance_usdt = self.exchange.get_usdt_balance()
         open_positions = self.db.get_open_positions()
 
         for symbol in self.active_symbols:
@@ -122,10 +121,16 @@ class BotDaemon:
                 # Trailing Stop y AI Sell
                 sell_res = self.logic.check_sell_conditions(symbol, current_price, pos, decision)
                 if sell_res['should_sell']:
-                    self.exchange.execute_order(symbol, 'sell', pos['amount'], current_price)
-                    self.db.close_position(symbol, current_price, sell_res['reason'])
-                    self.log_message(f"💰 VENTA {symbol} @ {current_price} - Motivo: {sell_res['reason']}")
-                    del open_positions[symbol]
+                    order_result = self.exchange.execute_order(symbol, 'sell', pos['amount'], current_price)
+                    if order_result.get('status') in ['closed', 'simulated']:
+                        closed = self.db.close_position(symbol, current_price, sell_res['reason'])
+                        if closed:
+                            self.log_message(f"💰 VENTA {symbol} @ {current_price:.4f} | Motivo: {sell_res['reason']}")
+                            del open_positions[symbol]
+                        else:
+                            self.log_message(f"⚠️ Venta ejecutada pero posición {symbol} no encontrada en DB")
+                    else:
+                        self.log_message(f"❌ Fallo al vender {symbol}: {order_result.get('reason', 'Error desconocido')}")
             
             # 2. Lógica de COMPRA
             else:
@@ -145,17 +150,28 @@ class BotDaemon:
                                 sym_sac = to_sacrifice['symbol']
                                 self.log_message(f"🔄 ROTACIÓN: Sacrificando {sym_sac} (+{to_sacrifice['profit']:.2f}%) por {symbol} (Conf: {decision['confidence']})")
                                 sac_pos = open_positions[sym_sac]
-                                self.exchange.execute_order(sym_sac, 'sell', sac_pos['amount'], self.exchange.get_ticker(sym_sac))
-                                self.db.close_position(sym_sac, self.exchange.get_ticker(sym_sac), "ROTACIÓN IA")
-                                del open_positions[sym_sac]
+                                sac_price = self.exchange.get_ticker(sym_sac)
+                                if sac_price:
+                                    self.exchange.execute_order(sym_sac, 'sell', sac_pos['amount'], sac_price)
+                                    self.db.close_position(sym_sac, sac_price, "ROTACIÓN IA")
+                                    del open_positions[sym_sac]
+                                    self.log_message(f"🔄 Rotación ejecutada: {sym_sac} vendido a {sac_price:.4f}")
+                                else:
+                                    self.log_message(f"⚠️ No se pudo obtener precio para rotar {sym_sac}, rotación cancelada")
+                                    continue
                                 # Proceder a comprar la nueva
                             else:
                                 continue # No hubo rotación aprobada
                         else:
                             continue # Rotación desactivada
                     
-                    # Ejecutar Compra (usamos balance_usdt para saber cuánto cash hay realmente)
-                    amount_usdt = balance_usdt * config.RISK_PER_TRADE
+                    # Re-obtener el balance real en cada compra para evitar sobrecompra
+                    balance_usdt_actual = self.exchange.get_usdt_balance()
+                    amount_usdt = balance_usdt_actual * config.RISK_PER_TRADE
+
+                    if amount_usdt < 1.0:  # Guard mínimo: no comprar si quedan menos de 1 USDT
+                        self.log_message(f"⚠️ Balance USDT insuficiente ({balance_usdt_actual:.2f}) para comprar {symbol}")
+                        continue
                     amount_coin = amount_usdt / current_price
                     res = self.exchange.execute_order(symbol, 'buy', amount_coin, current_price)
                     if res.get('status') in ['closed', 'simulated']:

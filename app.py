@@ -131,10 +131,10 @@ with st.sidebar:
 
 # RENDERIZAR VISTAS
 if selected == "Dashboard":
+    from streamlit_autorefresh import st_autorefresh
+    # Refresca cada 30 segundos (30000 ms), máximo 1000 veces
+    st_autorefresh(interval=30_000, limit=1000, key="dashboard_refresh")
     render_dashboard()
-    # Auto-refrescar cada 30 segundos si estamos en el dashboard
-    time.sleep(30)
-    st.rerun()
 elif selected == "Terminal de Trading":
     render_terminal()
     # Auto-refrescar si el interruptor del terminal está activado

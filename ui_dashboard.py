@@ -34,13 +34,21 @@ def render_dashboard():
     current_symbols = [s.strip() for s in saved_watchlist.split(',') if s.strip()] if saved_watchlist else SYMBOLS
 
     portfolio = {}
-    if not exchange.modo_simulacion:
+    if exchange.modo_simulacion:
+        # Modo simulación: leer el portfolio virtual
+        virtual = exchange.get_virtual_portfolio()
+        for sym, amount in virtual.items():
+            if amount > 0:
+                portfolio[sym] = amount
+    else:
+        # Modo real: leer balances del exchange
         try:
             raw_balances = exchange.exchange.fetch_balance()['free']
             for coin, amount in raw_balances.items():
                 if amount > 0 and coin not in ['USDT', 'USD']:
                     portfolio[f"{coin}/USDT"] = amount
-        except: pass
+        except Exception as e:
+            st.warning(f"No se pudo obtener el balance real: {e}")
 
     pnl = total_value - PRESUPUESTO_INICIAL
     pnl_pct = (pnl / PRESUPUESTO_INICIAL) * 100 if PRESUPUESTO_INICIAL else 0

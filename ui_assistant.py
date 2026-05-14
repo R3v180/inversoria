@@ -1,7 +1,5 @@
 import streamlit as st
-import json
 import time
-import pandas as pd
 
 def render_assistant():
     st.title("💬 Asistente IA Inversor")
