@@ -43,6 +43,12 @@ class DatabaseManager:
                 )
             ''')
             
+            # Migración: Añadir extra_data si la tabla es antigua
+            try:
+                cursor.execute('ALTER TABLE open_positions ADD COLUMN extra_data TEXT')
+            except sqlite3.OperationalError:
+                pass
+            
             # Cooldowns
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS cooldowns (
@@ -140,8 +146,8 @@ class DatabaseManager:
     def add_log(self, message):
         with self._get_connection() as conn:
             conn.execute('INSERT INTO logs (timestamp, message) VALUES (?, ?)', (time.time(), message))
-            # Keep only last 50
-            conn.execute('DELETE FROM logs WHERE id NOT IN (SELECT id FROM logs ORDER BY timestamp DESC LIMIT 50)')
+            # Keep only last 100
+            conn.execute('DELETE FROM logs WHERE id NOT IN (SELECT id FROM logs ORDER BY timestamp DESC LIMIT 100)')
             conn.commit()
 
     def get_logs(self):

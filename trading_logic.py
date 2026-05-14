@@ -48,31 +48,85 @@ class TradingLogic:
 
     def check_sell_conditions(self, symbol, current_price, position, ai_decision):
         """
-        Evalúa si se debe cerrar una posición.
-        Retorna {'should_sell': bool, 'reason': str}
+        Condiciones de venta ADAPTATIVAS según el régimen de mercado detectado.
+        Los parámetros de stop y trailing cambian dinámicamente según el contexto.
         """
-        import config # Hot reload support
-        
+        import config
+
         entry_price = position.get('entry_price', 0)
         highest_price = position.get('highest_price', entry_price)
-        
-        # 1. Stop Loss Fijo (Configurable)
-        stop_loss_price = entry_price * (1 - config.STOP_LOSS_PCT)
-        if current_price <= stop_loss_price:
-            return {'should_sell': True, 'reason': f"STOP LOSS Fijo ({config.STOP_LOSS_PCT*100}%)"}
-            
-        # 2. Trailing Stop Loss
-        # Si el precio actual es mayor al máximo registrado, actualizamos el máximo (esto se hace en el Daemon)
-        # Aquí comprobamos si ha caído desde el pico
-        trailing_activation_price = entry_price * (1 + 0.05) # Activar a partir de +5%
-        if current_price >= trailing_activation_price:
-            # Si cae un 1.5% desde el máximo histórico del trade, vendemos
-            if current_price <= highest_price * (1 - 0.015):
-                return {'should_sell': True, 'reason': "TRAILING STOP (Caja asegurada)"}
+        regime = ai_decision.get('regime', 'RANGING') if ai_decision else 'RANGING'
+        strategy = ai_decision.get('best_strategy', 'TREND_FOLLOWING') if ai_decision else 'TREND_FOLLOWING'
+        atr = position.get('atr', 0) or 0  # ATR en el momento de la entrada (si disponible)
 
-        # 3. Take Profit por AI (Si la IA dice SELL con alta confianza)
+        # ─── Parámetros adaptativos por régimen ───
+        # En tendencia fuerte: stops más holgados para dejar correr ganancias
+        # En lateral: stops ajustados, tomar ganancias rápido
+        # En alta volatilidad: stops amplios pero activación de trailing antes
+
+        regime_params = {
+            'TRENDING_UP': {
+                'sl_pct': config.STOP_LOSS_PCT,          # Stop normal
+                'trailing_activation': 0.04,              # Activar trailing a +4%
+                'trailing_distance': 0.025,               # Trailing de 2.5% desde máximo
+            },
+            'RANGING': {
+                'sl_pct': config.STOP_LOSS_PCT * 0.7,    # Stop más ajustado en lateral
+                'trailing_activation': 0.025,             # Activar trailing antes a +2.5%
+                'trailing_distance': 0.012,               # Trailing más ajustado 1.2%
+            },
+            'HIGH_VOLATILITY': {
+                'sl_pct': config.STOP_LOSS_PCT * 1.3,    # Stop más amplio por volatilidad
+                'trailing_activation': 0.06,              # Esperar +6% antes de trailing
+                'trailing_distance': 0.030,               # Trailing más holgado 3%
+            },
+            'TRENDING_DOWN': {
+                'sl_pct': config.STOP_LOSS_PCT * 0.8,    # Stop más ajustado: salir rápido
+                'trailing_activation': 0.02,
+                'trailing_distance': 0.010,
+            },
+        }
+
+        params = regime_params.get(regime, regime_params['RANGING'])
+
+        # ─── 1. Stop Loss adaptativo ───
+        stop_loss_price = entry_price * (1 - params['sl_pct'])
+        if current_price <= stop_loss_price:
+            return {
+                'should_sell': True,
+                'reason': f"STOP LOSS [{regime}] ({params['sl_pct']*100:.1f}%)"
+            }
+
+        # ─── 2. Trailing Stop adaptativo ───
+        trailing_activation = entry_price * (1 + params['trailing_activation'])
+        if current_price >= trailing_activation:
+            trailing_stop = highest_price * (1 - params['trailing_distance'])
+            if current_price <= trailing_stop:
+                profit_locked = ((highest_price - entry_price) / entry_price) * 100
+                return {
+                    'should_sell': True,
+                    'reason': f"TRAILING STOP [{strategy}] | Máx asegurado: +{profit_locked:.1f}%"
+                }
+
+        # ─── 3. Señal SELL de la IA con confianza suficiente ───
         if ai_decision and ai_decision.get('action') == 'SELL':
-            if ai_decision.get('confidence', 0) >= 0.80:
-                return {'should_sell': True, 'reason': "IA SELL Signal (Alta Confianza)"}
-        
-        return {'should_sell': False, 'reason': ""}
+            confidence = ai_decision.get('confidence', 0)
+            # En tendencia fuerte necesitamos más convicción para salir antes de tiempo
+            sell_threshold = 0.75 if regime == 'TRENDING_UP' else 0.65
+            if confidence >= sell_threshold:
+                return {
+                    'should_sell': True,
+                    'reason': f"IA SELL [{ai_decision.get('provider', 'IA')}] conf:{confidence:.0%}"
+                }
+
+        # ─── 4. Cambio de régimen macro (si la IA detecta un giro) ───
+        if regime == 'TRENDING_DOWN' and ai_decision:
+            profit_pct = ((current_price - entry_price) / entry_price) * 100
+            # Si estamos en pérdidas y el régimen giró a bajista → salir
+            if profit_pct < -1.0:
+                return {
+                    'should_sell': True,
+                    'reason': f"REGIME CHANGE: {regime} con P&L {profit_pct:.1f}%"
+                }
+
+        return {'should_sell': False, 'reason': ''}

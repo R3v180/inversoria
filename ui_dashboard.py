@@ -50,8 +50,15 @@ def render_dashboard():
         except Exception as e:
             st.warning(f"No se pudo obtener el balance real: {e}")
 
-    pnl = total_value - PRESUPUESTO_INICIAL
-    pnl_pct = (pnl / PRESUPUESTO_INICIAL) * 100 if PRESUPUESTO_INICIAL else 0
+    # Baseline para el cálculo de PnL (Presupuesto inicial de config o Saldo inicial real)
+    baseline = PRESUPUESTO_INICIAL
+    if not exchange.modo_simulacion:
+        real_start = db.get_system_status('real_start_balance')
+        if real_start:
+            baseline = float(real_start)
+
+    pnl = total_value - baseline
+    pnl_pct = (pnl / baseline) * 100 if baseline else 0
     open_positions = db.get_open_positions()
 
     # --- TOP METRICS ---
@@ -76,7 +83,14 @@ def render_dashboard():
     with col_market:
         c1, c2 = st.columns([2, 1])
         with c1: st.markdown("### 🕯️ Mercado")
-        with c2: selected_sym = st.selectbox("Activo", current_symbols, label_visibility="collapsed")
+        
+        if "selected_chart_symbol" not in st.session_state:
+            st.session_state.selected_chart_symbol = current_symbols[0] if current_symbols else "BTC/USDT"
+        if st.session_state.selected_chart_symbol not in current_symbols:
+            current_symbols.insert(0, st.session_state.selected_chart_symbol)
+            
+        with c2: selected_sym = st.selectbox("Activo", current_symbols, key="selected_chart_symbol", label_visibility="collapsed")
+
         
         ohlcv = exchange.get_historical_data(selected_sym, limit=150)
         if ohlcv:
@@ -109,7 +123,16 @@ def render_dashboard():
                 color = "#00FFAA" if u_pnl >= 0 else "#FF4444"
                 current_value = pos.get('amount', 0) * current_price
                 with st.container():
-                    st.markdown(f'<div class="position-card"><div style="display:flex; justify-content:space-between;"><div><b>{sym}</b><br/><span style="color:gray; font-size:0.8em;">Inversión: ${current_value:.2f}</span></div><div style="text-align:right;"><span style="font-size:1.2em; font-weight:bold; color:{color};">{u_pnl:.2f}%</span><br/><span style="font-size:0.8em;">${current_price:.4f}</span></div></div></div>', unsafe_allow_html=True)
+                    col_info, col_btn = st.columns([5, 1])
+                    with col_info:
+                        st.markdown(f'<div class="position-card" style="margin-bottom: 5px; padding: 15px;"><div style="display:flex; justify-content:space-between;"><div><b>{sym}</b><br/><span style="color:gray; font-size:0.8em;">Inversión: ${current_value:.2f}</span></div><div style="text-align:right;"><span style="font-size:1.2em; font-weight:bold; color:{color};">{u_pnl:.2f}%</span><br/><span style="font-size:0.8em;">${current_price:.4f}</span></div></div></div>', unsafe_allow_html=True)
+                    with col_btn:
+                        st.markdown("<div style='margin-top: 15px;'></div>", unsafe_allow_html=True)
+                        
+                        def update_chart_symbol(s=sym):
+                            st.session_state.selected_chart_symbol = s
+                            
+                        st.button("📈", key=f"btn_chart_{sym}", help=f"Ver gráfico de {sym}", on_click=update_chart_symbol)
         else: st.info("Sin posiciones activas.")
 
     with col_right:
@@ -152,6 +175,64 @@ def render_dashboard():
             for item in radar_data:
                 c_color = "#00FFAA" if (item['Cambio'] or 0) >= 0 else "#FF4444"
                 st.markdown(f'<div class="radar-item"><span>{item["Moneda"]}</span><span style="color:{c_color}; font-weight:bold;">{item["Cambio"]:.2f}%</span></div>', unsafe_allow_html=True)
+
+    # --- PANEL DE INTELIGENCIA ---
+    st.markdown("---")
+    st.markdown("### 🧠 Inteligencia del Sistema")
+
+    col_macro, col_backtest = st.columns(2)
+
+    with col_macro:
+        with st.expander("🌍 Contexto Macro", expanded=True):
+            macro_raw = db.get_system_status('macro_context', '{}')
+            try:
+                macro = json.loads(macro_raw)
+                if macro:
+                    regime = macro.get('macro_regime', 'N/A')
+                    regime_color = {
+                        'RISK_ON': '#00FFAA', 'ALTSEASON': '#00FFAA',
+                        'NEUTRAL': '#FFD700', 'CAUTION': '#FF8C00',
+                        'RISK_OFF': '#FF4444'
+                    }.get(regime, '#888888')
+
+                    st.markdown(
+                        f"<div style='text-align:center; padding:10px; border-radius:8px; "
+                        f"background:#1E1E1E; color:{regime_color}; font-size:1.2em; "
+                        f"font-weight:bold;'>RÉGIMEN: {regime}</div>",
+                        unsafe_allow_html=True
+                    )
+                    st.metric("BTC Dominance", f"{macro.get('btc_dominance', 0):.1f}%")
+                    st.metric("Cap. total 24h", f"{macro.get('market_cap_change_24h', 0):+.2f}%")
+                    st.metric("Sector líder", macro.get('leading_sector', 'N/A').upper())
+                else:
+                    st.info("Contexto macro pendiente (próxima actualización en el siguiente ciclo)")
+            except Exception:
+                st.info("Cargando contexto macro...")
+
+    with col_backtest:
+        with st.expander("📊 Estado del Backtest", expanded=True):
+            try:
+                import sqlite3
+                import os
+                base_dir = os.path.dirname(os.path.abspath(__file__))
+                db_path = os.path.join(base_dir, "iversoria.db")
+                with sqlite3.connect(db_path, timeout=5) as conn:
+                    conn.row_factory = sqlite3.Row
+                    runs = conn.execute(
+                        'SELECT * FROM backtest_runs ORDER BY run_timestamp DESC LIMIT 5'
+                    ).fetchall()
+
+                    if runs:
+                        for run in runs:
+                            st.markdown(
+                                f"**{run['symbol']}** · {run['timeframe']} · "
+                                f"WR {run['win_rate']:.0%} · "
+                                f"Mejor: {run['best_strategy']}"
+                            )
+                    else:
+                        st.info("Sin datos de backtest. El daemon los genera automáticamente en el primer arranque.")
+            except Exception as e:
+                st.info(f"Backtest no disponible: {e}")
 
     # BOTÓN DE EMERGENCIA
     st.markdown("---")

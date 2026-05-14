@@ -14,10 +14,21 @@ class BotDaemon:
         self.exchange = ExchangeHelper()
         self.sentiment = SentimentEngine()
         self.logic = TradingLogic()
-        self.decision_engine = DecisionEngine(sentiment=self.sentiment)
+        
+        # DecisionEngine ahora recibe el exchange para MTF y Backtest
+        self.decision_engine = DecisionEngine(
+            sentiment=self.sentiment,
+            exchange=self.exchange
+        )
+        
         self.active_symbols = config.SYMBOLS
         self.last_watchlist_update = 0
-        self.log_message("Bot Daemon v3.5 [ROTACIÓN INTELIGENTE] Inicializado.")
+
+        # Control del backtest automático semanal
+        self.last_backtest_run = 0
+        self.BACKTEST_INTERVAL = 604800  # 7 días en segundos
+
+        self.log_message("Bot Daemon v5.1 [INTELLIGENCE UPGRADE] Inicializado.")
 
     def log_message(self, msg):
         print(f"[DAEMON] {msg}")
@@ -47,8 +58,47 @@ class BotDaemon:
         else:
             self.active_symbols = config.SYMBOLS
 
+    def run_weekly_backtest(self):
+        """
+        Corre el backtest completo para todos los símbolos activos.
+        Se ejecuta automáticamente una vez por semana.
+        Puede tardar 5-15 minutos dependiendo del número de símbolos.
+        """
+        from backtest_engine import BacktestEngine
+
+        self.log_message("📊 Iniciando backtest semanal automático...")
+        bt = BacktestEngine(self.exchange)
+
+        # Correr backtest para los primeros 5 símbolos de la watchlist activa
+        # (limitar para no tardar demasiado en el primer ciclo)
+        symbols_to_backtest = self.active_symbols[:5]
+
+        for symbol in symbols_to_backtest:
+            try:
+                self.log_message(f"📊 Backtest {symbol} (4h · 2 años)...")
+                results = bt.run_full_backtest(symbol, timeframe='4h', years=2.0)
+                if results:
+                    best = max(results, key=lambda k: results[k].get('profit_factor', 0))
+                    best_wr = results[best].get('win_rate', 0)
+                    self.log_message(
+                        f"✅ {symbol}: mejor estrategia = {best} "
+                        f"(WR: {best_wr:.0%})"
+                    )
+            except Exception as e:
+                self.log_message(f"❌ Error en backtest de {symbol}: {e}")
+
+        self.last_backtest_run = time.time()
+        self.log_message("📊 Backtest semanal completado.")
+
     def run(self):
         self.load_active_watchlist()
+
+        # Correr backtest inicial si no hay datos históricos
+        now = time.time()
+        if now - self.last_backtest_run > self.BACKTEST_INTERVAL:
+            self.run_weekly_backtest()
+            self.last_backtest_run = now
+
         while True:
             try:
                 # Recargar configuración activa cada ciclo para captar cambios en UI
@@ -60,6 +110,10 @@ class BotDaemon:
                 if now - self.last_watchlist_update > 43200:
                     self.update_dynamic_watchlist()
                     self.last_watchlist_update = now
+
+                # Backtest semanal automático
+                if now - self.last_backtest_run > self.BACKTEST_INTERVAL:
+                    self.run_weekly_backtest()
                     
                 is_running = self.db.get_system_status('is_running')
                 if str(is_running).lower() == 'true':
@@ -67,15 +121,29 @@ class BotDaemon:
                     is_sim = str(is_sim_str).lower() == 'true'
                     if self.exchange.modo_simulacion != is_sim:
                         self.exchange = ExchangeHelper(modo_simulacion=is_sim)
+                        # Recrear decision_engine con el nuevo exchange
+                        self.decision_engine = DecisionEngine(
+                            sentiment=self.sentiment,
+                            exchange=self.exchange
+                        )
                         self.log_message(f"Modo cambiado a {'Simulación' if is_sim else 'REAL'}.")
-                    self.bot_iteration()
+                
+                # Asegurar que el saldo inicial REAL esté fijado si estamos en ese modo
+                if not is_sim:
+                    real_start = self.db.get_system_status('real_start_balance')
+                    if not real_start:
+                        current_equity = self.exchange.get_balance()
+                        self.db.set_system_status('real_start_balance', current_equity)
+                        self.log_message(f"🚀 Saldo inicial REAL fijado en: ${current_equity:.2f}")
+
+                self.bot_iteration()
                 time.sleep(60)
             except Exception as e:
                 self.log_message(f"Error crítico en daemon: {e}")
                 time.sleep(30)
 
     def bot_iteration(self):
-        self.log_message("--- Escaneo de Ciclo ---")
+        print("[DAEMON] --- Escaneo de Ciclo ---")
         
         # El balance total ya incluye el valor de todas las criptos en USDT
         total_value = self.exchange.get_balance()

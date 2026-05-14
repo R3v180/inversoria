@@ -1,0 +1,177 @@
+"""
+multi_timeframe.py — Análisis multi-timeframe para confirmación de señales
+Usa CCXT (ya disponible) para descargar velas de 1D y 4H además de las 15M.
+Principio: la señal de entrada solo es válida si NO contradice la tendencia mayor.
+"""
+import pandas as pd
+import pandas_ta as ta
+import numpy as np
+import time
+
+
+class MultiTimeframeAnalyzer:
+    """
+    Analiza el mismo activo en tres timeframes:
+    - 1D (largo plazo): ¿cuál es la tendencia macro del activo?
+    - 4H (medio plazo): ¿en qué fase del ciclo estamos?
+    - 15M (corto plazo): ¿hay señal de entrada ahora? (ya lo hace el bot)
+
+    Principio de confluencia: BUY solo si 1D y 4H no están en BEAR.
+    """
+
+    TIMEFRAMES = ['1d', '4h']
+    CANDLES_NEEDED = {'1d': 200, '4h': 200}
+
+    def __init__(self, exchange_helper):
+        self.exchange = exchange_helper
+        self._cache = {}
+        self.CACHE_TTL = {'1d': 43200, '4h': 14400}  # 12h y 4h respectivamente
+
+    def get_timeframe_analysis(self, symbol: str, timeframe: str) -> dict:
+        """Descarga y analiza un timeframe específico para un símbolo."""
+        cache_key = f"{symbol}_{timeframe}"
+        cached = self._cache.get(cache_key)
+        if cached and time.time() - cached['ts'] < self.CACHE_TTL[timeframe]:
+            return cached['data']
+
+        try:
+            limit = self.CANDLES_NEEDED[timeframe]
+            ohlcv = self.exchange.exchange.fetch_ohlcv(symbol, timeframe, limit=limit)
+
+            if not ohlcv or len(ohlcv) < 50:
+                return {'error': 'Datos insuficientes'}
+
+            df = pd.DataFrame(ohlcv, columns=['ts', 'open', 'high', 'low', 'close', 'volume'])
+            df[['open', 'high', 'low', 'close', 'volume']] = df[['open', 'high', 'low', 'close', 'volume']].apply(pd.to_numeric)
+
+            # Indicadores (usando solo velas cerradas: iloc[:-1])
+            df_closed = df.iloc[:-1].copy()
+
+            df_closed['rsi'] = ta.rsi(df_closed['close'], length=14)
+            df_closed['ema50'] = ta.ema(df_closed['close'], length=50)
+            df_closed['ema200'] = ta.ema(df_closed['close'], length=200)
+            df_closed['atr'] = ta.atr(df_closed['high'], df_closed['low'], df_closed['close'], length=14)
+
+            adx_df = ta.adx(df_closed['high'], df_closed['low'], df_closed['close'], length=14)
+            df_closed['adx'] = adx_df['ADX_14'] if adx_df is not None else 0
+
+            last = df_closed.iloc[-1]
+
+            # Análisis de la vela actual
+            trend = 'BULL' if last['ema50'] > last['ema200'] else 'BEAR'
+            rsi = round(last['rsi'], 1)
+            adx = round(last['adx'], 1)
+
+            # Momentum: ¿está el precio acelerando o desacelerando?
+            recent_closes = df_closed['close'].tail(5)
+            momentum = 'ACCELERATING' if recent_closes.iloc[-1] > recent_closes.mean() else 'DECELERATING'
+
+            # Soporte y resistencia dinámicos (últimos 20 períodos)
+            recent_20 = df_closed.tail(20)
+            dynamic_support = recent_20['low'].min()
+            dynamic_resistance = recent_20['high'].max()
+            current_price = last['close']
+            position_in_range = (current_price - dynamic_support) / (dynamic_resistance - dynamic_support) if dynamic_resistance != dynamic_support else 0.5
+
+            result = {
+                'timeframe': timeframe,
+                'trend': trend,
+                'rsi': rsi,
+                'adx': adx,
+                'ema50': round(last['ema50'], 6),
+                'ema200': round(last['ema200'], 6),
+                'atr': round(last['atr'], 6),
+                'momentum': momentum,
+                'dynamic_support': round(dynamic_support, 6),
+                'dynamic_resistance': round(dynamic_resistance, 6),
+                'position_in_range': round(position_in_range, 2),  # 0=soporte, 1=resistencia
+                'regime': self._classify_regime(trend, adx, rsi),
+            }
+
+            self._cache[cache_key] = {'data': result, 'ts': time.time()}
+            return result
+
+        except Exception as e:
+            print(f"[MTF] Error analizando {symbol} {timeframe}: {e}")
+            return {'error': str(e)}
+
+    def _classify_regime(self, trend: str, adx: float, rsi: float) -> str:
+        if adx > 30 and trend == 'BULL':
+            return 'STRONG_UPTREND'
+        elif adx > 30 and trend == 'BEAR':
+            return 'STRONG_DOWNTREND'
+        elif adx > 20 and trend == 'BULL':
+            return 'MODERATE_UPTREND'
+        elif adx > 20 and trend == 'BEAR':
+            return 'MODERATE_DOWNTREND'
+        elif adx < 15:
+            return 'CONSOLIDATION'
+        else:
+            return 'RANGING'
+
+    def get_full_mtf_analysis(self, symbol: str) -> dict:
+        """
+        Analiza el símbolo en todos los timeframes y devuelve:
+        - Análisis por timeframe
+        - Señal de confluencia (¿los timeframes están alineados?)
+        - Recomendación de posicionamiento
+        - Texto para el prompt de la IA
+        """
+        analyses = {}
+        for tf in self.TIMEFRAMES:
+            analyses[tf] = self.get_timeframe_analysis(symbol, tf)
+            time.sleep(0.3)  # Pequeña pausa entre llamadas
+
+        # ─── Lógica de confluencia ───
+        tf_1d = analyses.get('1d', {})
+        tf_4h = analyses.get('4h', {})
+
+        daily_trend = tf_1d.get('trend', 'BULL')
+        h4_trend = tf_4h.get('trend', 'BULL')
+        daily_regime = tf_1d.get('regime', 'RANGING')
+        h4_regime = tf_4h.get('regime', 'RANGING')
+
+        # Niveles de confluencia
+        if daily_trend == 'BULL' and h4_trend == 'BULL':
+            confluence = 'STRONG_BUY_BIAS'
+            confluence_score = 0.85
+        elif daily_trend == 'BULL' and h4_trend == 'BEAR':
+            confluence = 'PULLBACK'  # Corrección en tendencia alcista mayor
+            confluence_score = 0.55  # Puede ser oportunidad de compra
+        elif daily_trend == 'BEAR' and h4_trend == 'BULL':
+            confluence = 'COUNTER_TREND'  # Rebote en tendencia bajista mayor
+            confluence_score = 0.30  # Peligroso
+        else:
+            confluence = 'STRONG_SELL_BIAS'
+            confluence_score = 0.10
+
+        # ─── Recomendación de estrategia por contexto MTF ───
+        if confluence == 'STRONG_BUY_BIAS' and tf_4h.get('adx', 0) > 25:
+            recommended_strategy = 'TREND_FOLLOWING'
+        elif confluence == 'PULLBACK' and tf_4h.get('rsi', 50) < 45:
+            recommended_strategy = 'MEAN_REVERSION'  # Comprar el pullback
+        elif confluence == 'STRONG_BUY_BIAS' and tf_4h.get('position_in_range', 0.5) > 0.7:
+            recommended_strategy = 'BREAKOUT'  # Cerca de resistencia → esperar ruptura
+        else:
+            recommended_strategy = 'MOMENTUM'
+
+        # ─── Texto para el prompt ───
+        mtf_text = f"""
+=== ANÁLISIS MULTI-TIMEFRAME ===
+1D  → Tendencia: {daily_trend} | Régimen: {daily_regime} | RSI: {tf_1d.get('rsi', 'N/A')} | ADX: {tf_1d.get('adx', 'N/A')}
+4H  → Tendencia: {h4_trend} | Régimen: {h4_regime} | RSI: {tf_4h.get('rsi', 'N/A')} | ADX: {tf_4h.get('adx', 'N/A')}
+Confluencia: {confluence} (score: {confluence_score:.0%})
+Posición en rango 4H: {tf_4h.get('position_in_range', 0.5):.0%} (0=soporte, 100%=resistencia)
+Estrategia sugerida por MTF: {recommended_strategy}
+""".strip()
+
+        return {
+            'timeframes': analyses,
+            'confluence': confluence,
+            'confluence_score': confluence_score,
+            'recommended_strategy': recommended_strategy,
+            'daily_trend': daily_trend,
+            'h4_trend': h4_trend,
+            'allow_long': confluence not in ['STRONG_SELL_BIAS', 'COUNTER_TREND'],
+            'mtf_text': mtf_text
+        }

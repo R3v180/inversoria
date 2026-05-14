@@ -210,7 +210,9 @@ class ExchangeHelper:
                     order = self.exchange.create_market_order(symbol, side, formatted_amount)
                     
                     # Validar estado
-                    if order.get('status') in ['closed', 'open']:
+                    if order.get('status') in ['closed', 'open'] or order.get('id'):
+                        if not order.get('status'):
+                            order['status'] = 'closed'
                         return order
                     else:
                         return {"status": "failed", "reason": f"Order status fallido: {order.get('status')}"}

@@ -12,7 +12,7 @@ DEFAULT_SETTINGS = {
     'PRESUPUESTO_INICIAL': 60.0,
     'MONEDAS': 'BTC/USDT,ETH/USDT,SOL/USDT,ADA/USDT,DOT/USDT',
     'RISK_PER_TRADE': 0.10,
-    'MAX_OPEN_POSITIONS': 3,
+    'MAX_OPEN_POSITIONS': 5,
     'MIN_PROFIT_NET': 1.0,
     'STOP_LOSS_PERCENT': 3.0,
     # Parámetros de Rotación
@@ -74,7 +74,7 @@ monedas_raw = get_setting('MONEDAS', 'BTC/USDT,ETH/USDT,SOL/USDT,ADA/USDT,DOT/US
 SYMBOLS = [s.strip() for s in (monedas_raw if isinstance(monedas_raw, list) else monedas_raw.split(',')) if s.strip()]
 
 RISK_PER_TRADE = get_setting('RISK_PER_TRADE', 0.10, float)
-MAX_OPEN_POSITIONS = get_setting('MAX_OPEN_POSITIONS', 3, int)
+MAX_OPEN_POSITIONS = get_setting('MAX_OPEN_POSITIONS', 5, int)
 PROFIT_OBJETIVO = get_setting('MIN_PROFIT_NET', 1.0, float) / 100.0
 STOP_LOSS_PCT = get_setting('STOP_LOSS_PERCENT', 3.0, float) / 100.0
 
