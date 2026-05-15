@@ -92,12 +92,46 @@ def _explain_precheck(err: str, pv: dict) -> str:
     return _("WALLET_ERR_GENERIC").format(err)
 
 
+def _evaluate_sell_candidate(ex, row: dict, open_pos: dict) -> dict:
+    """Pre-chequeo con saldo libre completo; marca polvo recuperable (OK y sin fila en bot)."""
+    sym = row.get("symbol")
+    free = float(row.get("free") or 0)
+    in_bot = bool(sym and sym in open_pos)
+    if not sym or free <= 0:
+        return {
+            "in_bot": in_bot,
+            "pv": {"ok": False, "errors": ["ZERO_AMOUNT"], "info": [], "amount_after_precision": None},
+            "sell_ok": False,
+            "is_recoverable": False,
+        }
+    px = ex.get_ticker(sym) or 0.0
+    pv = ex.prevalidate_market_sell(sym, free, px, free_override=free)
+    sell_ok = bool(pv.get("ok"))
+    is_recoverable = sell_ok and not in_bot
+    return {
+        "in_bot": in_bot,
+        "pv": pv,
+        "sell_ok": sell_ok,
+        "is_recoverable": is_recoverable,
+        "px": px,
+    }
+
+
 def render_wallet():
     st.markdown(
         """
         <style>
         .wallet-box { background-color: #161B22; padding: 14px; border-radius: 10px;
         border: 1px solid #30363D; margin-bottom: 12px; }
+        .wallet-recover-chip {
+            display: inline-block; margin: 4px 6px 4px 0; padding: 6px 12px;
+            border-radius: 8px; background: rgba(0, 255, 170, 0.15);
+            border: 1px solid #00FFAA; color: #00FFAA; font-weight: 600; font-size: 0.9em;
+        }
+        .wallet-recover-panel {
+            background: rgba(0, 255, 170, 0.08); border: 1px solid #00FFAA;
+            border-radius: 10px; padding: 12px 14px; margin-bottom: 16px;
+        }
         </style>
         """,
         unsafe_allow_html=True,
@@ -169,21 +203,84 @@ def render_wallet():
         st.info(_("WALLET_ERR_NO_FREE"))
         return
 
+    enriched = []
     for r in sellable:
+        ev = _evaluate_sell_candidate(ex, r, open_pos)
+        enriched.append({**r, **ev})
+
+    recoverable = [e for e in enriched if e["is_recoverable"]]
+    enriched.sort(
+        key=lambda e: (
+            0 if e["is_recoverable"] else (1 if e["sell_ok"] else 2),
+            -float(e.get("usd_free") or 0),
+        )
+    )
+
+    st.markdown('<div class="wallet-recover-panel">', unsafe_allow_html=True)
+    st.markdown(f"**{_('WALLET_RECOVERABLE_TITLE')}**")
+    st.caption(_("WALLET_RECOVERABLE_HINT"))
+    if recoverable:
+        chips = "".join(
+            f'<span class="wallet-recover-chip">{e["coin"]} · ~{_fmt_usd_val(e["usd_free"])} USDT</span>'
+            for e in recoverable
+        )
+        st.markdown(chips, unsafe_allow_html=True)
+    else:
+        st.info(_("WALLET_RECOVERABLE_NONE"))
+    st.markdown("</div>", unsafe_allow_html=True)
+
+    only_recover = st.checkbox(_("WALLET_FILTER_RECOVERABLE"), value=False, key="wallet_filter_recover")
+    to_show = [e for e in enriched if e["is_recoverable"]] if only_recover else enriched
+
+    for e in to_show:
+        r = e
         sym = r["symbol"]
         coin = r["coin"]
         free = float(r["free"])
-        px = ex.get_ticker(sym) or 0.0
+        px = e.get("px") or ex.get_ticker(sym) or 0.0
+        in_bot = e["in_bot"]
+        sell_ok = e["sell_ok"]
+        is_recoverable = e["is_recoverable"]
+        pv_full = e["pv"]
         key = f"w_{coin.replace(' ', '_')}"
-        with st.expander(f"{coin} ({sym}) — {_('WALLET_COL_FREE')}: {free:.8g} (~{_('WALLET_COL_USD')}: {_fmt_usd_val(r['usd_free'])})"):
-            in_bot = sym in open_pos
+
+        if is_recoverable:
+            badge = f"🟢 {_('WALLET_BADGE_RECOVERABLE')}"
+        elif in_bot:
+            badge = f"🤖 {_('WALLET_BADGE_BOT_POS')}" if sell_ok else f"🤖 ⛔ {_('WALLET_BADGE_BOT_POS')}"
+        else:
+            badge = f"⛔ {_('WALLET_BADGE_BLOCKED')}"
+
+        bot_lbl = _("WALLET_BADGE_BOT_POS") if in_bot else _("WALLET_BADGE_NO_BOT")
+        header = (
+            f"{badge} · **{coin}** ({sym}) · "
+            f"{_('WALLET_COL_FREE')}: {free:.8g} (~{_fmt_usd_val(r['usd_free'])} USDT) · {bot_lbl}"
+        )
+        with st.expander(header, expanded=is_recoverable):
+            c1, c2, c3 = st.columns(3)
+            with c1:
+                st.metric(_("WALLET_BOT_STATUS"), _("WALLET_YES") if in_bot else _("WALLET_NO"))
+            with c2:
+                st.metric(_("WALLET_PRECHECK"), _("WALLET_YES") if sell_ok else _("WALLET_NO"))
+            with c3:
+                st.metric(_("WALLET_BADGE_RECOVERABLE"), _("WALLET_YES") if is_recoverable else _("WALLET_NO"))
+
+            if is_recoverable:
+                st.success(_("WALLET_RECOVERABLE_HINT"))
+            elif in_bot:
+                st.warning(
+                    f"{_('WALLET_BADGE_BOT_POS')}: "
+                    + (_("WALLET_YES") if sell_ok else _("WALLET_BADGE_BLOCKED"))
+                )
+            elif not sell_ok:
+                for er in pv_full.get("errors", []):
+                    st.warning(_explain_precheck(er, pv_full))
+
             db_amt = float(open_pos[sym]["amount"]) if in_bot else None
-            default_qty = min(free, db_amt) if in_bot and db_amt is not None else free
-            default_qty = min(default_qty, free)
-            st.caption(
-                f"Bot DB: {_('WALLET_YES') if in_bot else _('WALLET_NO')}"
-                + (f" | amount_db={db_amt:.8g}" if in_bot else "")
+            default_qty = free if is_recoverable else (
+                min(free, db_amt) if in_bot and db_amt is not None else free
             )
+            default_qty = min(default_qty, free)
             cons_e = ex.get_market_sell_constraints(sym)
             if cons_e:
                 ma = cons_e.get("min_amount")

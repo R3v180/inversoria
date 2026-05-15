@@ -87,6 +87,15 @@ TRANSLATIONS = {
         'en': 'On Crypto.com, CCXT leaves «min amount / min USDT» empty in the market catalog (the exchange enforces minimums when you submit). Use **Pre-check** in each expanded row. «Qty step» is the quantity tick (not the minimum order size).',
     },
     'WALLET_MARKET_META': {'es': 'Catálogo CCXT · paso qty {0} · mín. cant. {1} · mín. coste USDT {2}', 'en': 'CCXT catalog · qty step {0} · min amount {1} · min cost USDT {2}'},
+    'WALLET_RECOVERABLE_TITLE': {'es': '🟢 Polvo recuperable (vendible y sin posición del bot)', 'en': '🟢 Recoverable dust (sellable, not a bot position)'},
+    'WALLET_RECOVERABLE_HINT': {'es': 'Puedes vender el saldo libre completo sin cerrar una posición activa del bot. Abre el desplegable y pulsa «Enviar venta».', 'en': 'You can sell the full free balance without closing an active bot position. Open the row and submit the market sell.'},
+    'WALLET_RECOVERABLE_NONE': {'es': 'Ningún activo cumple ahora (mínimo, slippage o todo está en posiciones del bot).', 'en': 'No asset qualifies right now (minimum, slippage, or all tied to bot positions).'},
+    'WALLET_FILTER_RECOVERABLE': {'es': 'Mostrar solo polvo recuperable', 'en': 'Show recoverable dust only'},
+    'WALLET_BADGE_RECOVERABLE': {'es': 'RECUPERABLE', 'en': 'RECOVERABLE'},
+    'WALLET_BADGE_BOT_POS': {'es': 'Posición bot: Sí', 'en': 'Bot position: Yes'},
+    'WALLET_BADGE_NO_BOT': {'es': 'Posición bot: No', 'en': 'Bot position: No'},
+    'WALLET_BADGE_BLOCKED': {'es': 'No vendible (mínimo/slippage)', 'en': 'Not sellable (min/slippage)'},
+    'WALLET_BOT_STATUS': {'es': '¿Usa posición del bot?', 'en': 'Uses bot position?'},
     
     # --- Assistant ---
     'ASSISTANT_TITLE': {'es': 'Asistente IA', 'en': 'AI Assistant'},
