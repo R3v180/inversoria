@@ -28,7 +28,8 @@ logging.basicConfig(
 )
 
 # --- INICIALIZACIÓN ---
-if 'db' not in st.session_state:
+# Recrear DB si el código se actualizó en caliente (Streamlit conserva instancias viejas en session_state)
+if 'db' not in st.session_state or not hasattr(st.session_state.db, 'get_cost_basis'):
     st.session_state.db = DatabaseManager()
 
 if 'exchange' not in st.session_state:

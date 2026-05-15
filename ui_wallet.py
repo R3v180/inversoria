@@ -210,6 +210,9 @@ def render_wallet():
     st.title(_("WALLET_TITLE"))
     st.caption(_("WALLET_INTRO"))
 
+    from database_manager import DatabaseManager
+    if not hasattr(st.session_state.db, 'get_cost_basis'):
+        st.session_state.db = DatabaseManager()
     db = st.session_state.db
     ex = st.session_state.exchange
     open_pos = db.get_open_positions()
