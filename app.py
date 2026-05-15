@@ -2,11 +2,15 @@ import streamlit as st
 import time
 import os
 import logging
+
+from runtime_bootstrap import ensure_i18n_module, new_database_manager
+
+ensure_i18n_module()
+
 from config import SYMBOLS, MODO_SIMULACION
 from exchange_helper import ExchangeHelper
 from sentiment_engine import SentimentEngine
 from trading_logic import TradingLogic
-from database_manager import DatabaseManager
 
 # --- CONFIGURACIÓN DE STREAMLIT ---
 st.set_page_config(page_title="InversorIA Terminal", layout="wide", page_icon="📈")
@@ -30,7 +34,7 @@ logging.basicConfig(
 # --- INICIALIZACIÓN ---
 # Recrear DB si el código se actualizó en caliente (Streamlit conserva instancias viejas en session_state)
 if 'db' not in st.session_state or not hasattr(st.session_state.db, 'get_cost_basis'):
-    st.session_state.db = DatabaseManager()
+    st.session_state.db = new_database_manager()
 
 if 'exchange' not in st.session_state:
     db_sim_str = st.session_state.db.get_system_status('simulacion', 'true')

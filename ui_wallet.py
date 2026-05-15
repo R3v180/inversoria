@@ -131,10 +131,18 @@ def _estimate_sell_economics(qty: float, sell_price: float, entry_price: float, 
     }
 
 
+def _get_cost_basis(db, sym: str, open_pos: dict):
+    if hasattr(db, 'get_cost_basis'):
+        return db.get_cost_basis(sym, open_pos)
+    from runtime_bootstrap import new_database_manager
+    st.session_state.db = new_database_manager()
+    return st.session_state.db.get_cost_basis(sym, open_pos)
+
+
 def _render_sell_pnl_panel(db, sym: str, qty: float, sell_price: float, open_pos: dict, fee_rate: float):
     st.markdown(f"**{_('WALLET_PNL_TITLE')}**")
     st.caption(_('WALLET_FEE_NOTE'))
-    basis = db.get_cost_basis(sym, open_pos)
+    basis = _get_cost_basis(db, sym, open_pos)
     entry = basis.get('entry_price')
     if not entry or entry <= 0:
         st.info(_('WALLET_PNL_UNKNOWN'))
@@ -210,9 +218,10 @@ def render_wallet():
     st.title(_("WALLET_TITLE"))
     st.caption(_("WALLET_INTRO"))
 
-    from database_manager import DatabaseManager
+    from runtime_bootstrap import new_database_manager
+
     if not hasattr(st.session_state.db, 'get_cost_basis'):
-        st.session_state.db = DatabaseManager()
+        st.session_state.db = new_database_manager()
     db = st.session_state.db
     ex = st.session_state.exchange
     open_pos = db.get_open_positions()
@@ -298,7 +307,7 @@ def render_wallet():
         chip_parts = []
         for e in recoverable:
             sym_c = e["symbol"]
-            basis = db.get_cost_basis(sym_c, open_pos)
+            basis = _get_cost_basis(db, sym_c, open_pos)
             ep = basis.get("entry_price")
             pnl_txt = ""
             if ep and e.get("px"):
