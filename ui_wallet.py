@@ -7,6 +7,15 @@ import pandas as pd
 from i18n import _
 
 
+def _fmt_usd_val(v: float) -> str:
+    v = float(v or 0)
+    if abs(v) < 0.000001:
+        return "0"
+    if abs(v) < 0.01:
+        return f"{v:.4f}"
+    return f"{v:.2f}"
+
+
 def build_inventory_snapshot_text(exchange, db) -> str:
     """Texto plano para pegar en el asistente IA."""
     lines = [
@@ -45,7 +54,7 @@ def build_inventory_snapshot_text(exchange, db) -> str:
         if c:
             lines.append(
                 f"{sym} | min_cantidad={c.get('min_amount')} | "
-                f"min_coste_USDT={c.get('min_cost')} | precision_amt={c.get('amount_precision')}"
+                f"min_coste_USDT={c.get('min_cost')} | qty_step={c.get('qty_step')}"
             )
     lines.append("")
     lines.append(
@@ -129,18 +138,22 @@ def render_wallet():
         cons = ex.get_market_sell_constraints(sym) if sym else None
         min_a = cons.get("min_amount") if cons else None
         min_c = cons.get("min_cost") if cons else None
+        qty_step = cons.get("qty_step") if cons else None
         table.append(
             {
                 _("WALLET_COL_COIN"): r["coin"],
+                _("WALLET_COL_PAIR"): sym or "—",
                 _("WALLET_COL_FREE"): f"{r['free']:.8g}",
                 _("WALLET_COL_TOTAL"): f"{r['total']:.8g}",
-                _("WALLET_COL_USD"): f"{r['usd_total']:.2f}",
+                _("WALLET_COL_USD"): _fmt_usd_val(r["usd_total"]),
                 _("WALLET_COL_TRACKED"): _("WALLET_YES") if in_bot else _("WALLET_NO"),
                 _("WALLET_COL_MIN"): str(min_a) if min_a is not None else "—",
                 _("WALLET_COL_MINCOST"): str(min_c) if min_c is not None else "—",
+                _("WALLET_COL_QTYSTEP"): str(qty_step) if qty_step is not None else "—",
             }
         )
     st.dataframe(pd.DataFrame(table), width="stretch", hide_index=True)
+    st.caption(_("WALLET_TABLE_FOOTNOTE"))
 
     st.markdown("---")
     st.subheader(_("WALLET_SELL_SECTION"))
@@ -162,7 +175,7 @@ def render_wallet():
         free = float(r["free"])
         px = ex.get_ticker(sym) or 0.0
         key = f"w_{coin.replace(' ', '_')}"
-        with st.expander(f"{coin} ({sym}) — {_('WALLET_COL_FREE')}: {free:.8g} (~${r['usd_free']:.2f})"):
+        with st.expander(f"{coin} ({sym}) — {_('WALLET_COL_FREE')}: {free:.8g} (~{_('WALLET_COL_USD')}: {_fmt_usd_val(r['usd_free'])})"):
             in_bot = sym in open_pos
             db_amt = float(open_pos[sym]["amount"]) if in_bot else None
             default_qty = min(free, db_amt) if in_bot and db_amt is not None else free
@@ -171,6 +184,17 @@ def render_wallet():
                 f"Bot DB: {_('WALLET_YES') if in_bot else _('WALLET_NO')}"
                 + (f" | amount_db={db_amt:.8g}" if in_bot else "")
             )
+            cons_e = ex.get_market_sell_constraints(sym)
+            if cons_e:
+                ma = cons_e.get("min_amount")
+                mc = cons_e.get("min_cost")
+                st.caption(
+                    _("WALLET_MARKET_META").format(
+                        cons_e.get("qty_step") if cons_e.get("qty_step") is not None else "—",
+                        ma if ma is not None else "—",
+                        mc if mc is not None else "—",
+                    )
+                )
             qty = st.number_input(
                 _("WALLET_SELL_QTY"),
                 min_value=0.0,

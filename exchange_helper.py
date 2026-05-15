@@ -403,14 +403,36 @@ class ExchangeHelper:
             lim = m.get("limits") or {}
             amt_l = lim.get("amount") or {}
             cost_l = lim.get("cost") or {}
+            prec = m.get("precision") or {}
+            qty_step = prec.get("amount")
+            info = m.get("info") or {}
+            raw_min_qty = info.get("min_quantity") or info.get("minimum_order_quantity")
+            raw_min_quote = (
+                info.get("min_quote")
+                or info.get("minimum_order_quote")
+                or info.get("min_notional")
+            )
+            min_amount = amt_l.get("min")
+            min_cost = cost_l.get("min")
+            try:
+                if min_amount is None and raw_min_qty is not None:
+                    min_amount = float(raw_min_qty)
+            except (TypeError, ValueError):
+                pass
+            try:
+                if min_cost is None and raw_min_quote is not None:
+                    min_cost = float(raw_min_quote)
+            except (TypeError, ValueError):
+                pass
             return {
                 "symbol": symbol,
-                "min_amount": amt_l.get("min"),
+                "min_amount": min_amount,
                 "max_amount": amt_l.get("max"),
-                "min_cost": cost_l.get("min"),
+                "min_cost": min_cost,
                 "max_cost": cost_l.get("max"),
-                "amount_precision": (m.get("precision") or {}).get("amount"),
-                "price_precision": (m.get("precision") or {}).get("price"),
+                "qty_step": qty_step,
+                "amount_precision": prec.get("amount"),
+                "price_precision": prec.get("price"),
             }
         except Exception:
             return None

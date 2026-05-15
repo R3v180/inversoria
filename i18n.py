@@ -80,6 +80,13 @@ TRANSLATIONS = {
     'WALLET_SNAPSHOT_BTN': {'es': '📋 Generar resumen para el asistente', 'en': '📋 Build summary for assistant'},
     'WALLET_SNAPSHOT_HINT': {'es': 'Copia el bloque de abajo y pégalo en el chat del asistente para analizar retales y mínimos.', 'en': 'Copy the block below and paste it into the assistant chat to analyze dust and limits.'},
     'WALLET_TABLE_TITLE': {'es': '📋 Inventario completo (exchange)', 'en': '📋 Full exchange inventory'},
+    'WALLET_COL_PAIR': {'es': 'Par', 'en': 'Pair'},
+    'WALLET_COL_QTYSTEP': {'es': 'Paso qty', 'en': 'Qty step'},
+    'WALLET_TABLE_FOOTNOTE': {
+        'es': 'En Crypto.com, CCXT deja «mín. cantidad / mín. USDT» vacíos en el catálogo (el exchange aplica mínimos al enviar la orden). Usa la **comprobación previa** en cada fila desplegable: ahí se valida con precio, redondeo y slippage. «Paso qty» es el tick de cantidad (no es el mínimo de orden).',
+        'en': 'On Crypto.com, CCXT leaves «min amount / min USDT» empty in the market catalog (the exchange enforces minimums when you submit). Use **Pre-check** in each expanded row. «Qty step» is the quantity tick (not the minimum order size).',
+    },
+    'WALLET_MARKET_META': {'es': 'Catálogo CCXT · paso qty {0} · mín. cant. {1} · mín. coste USDT {2}', 'en': 'CCXT catalog · qty step {0} · min amount {1} · min cost USDT {2}'},
     
     # --- Assistant ---
     'ASSISTANT_TITLE': {'es': 'Asistente IA', 'en': 'AI Assistant'},
