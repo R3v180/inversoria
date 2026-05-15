@@ -271,6 +271,63 @@ class DatabaseManager:
             ''', (symbol, side, price, amount, reason, pnl_pct, timestamp))
             conn.commit()
 
+    def get_cost_basis(self, symbol: str, open_positions=None):
+        """
+        Precio medio de compra estimado (USDT por moneda base) y origen del dato.
+        open_positions: dict opcional {symbol: row} para evitar reconsulta.
+        """
+        if open_positions is None:
+            open_positions = self.get_open_positions()
+        if symbol in open_positions:
+            ep = float(open_positions[symbol].get('entry_price') or 0)
+            if ep > 0:
+                return {
+                    'entry_price': ep,
+                    'source': 'open_position',
+                    'qty_tracked': float(open_positions[symbol].get('amount') or 0),
+                }
+
+        with self._get_connection() as conn:
+            cursor = conn.execute(
+                'SELECT side, price, amount, timestamp FROM trades WHERE symbol = ? ORDER BY timestamp ASC',
+                (symbol,),
+            )
+            rows = cursor.fetchall()
+
+        if not rows:
+            return {'entry_price': None, 'source': None, 'qty_tracked': 0.0}
+
+        running_qty = 0.0
+        running_cost = 0.0
+        last_buy_price = None
+        for row in rows:
+            side = str(row['side']).lower()
+            price = float(row['price'] or 0)
+            amount = float(row['amount'] or 0)
+            if side == 'buy' and amount > 0 and price > 0:
+                running_cost += price * amount
+                running_qty += amount
+                last_buy_price = price
+            elif side == 'sell' and amount > 0 and running_qty > 0:
+                sold = min(amount, running_qty)
+                share = sold / running_qty
+                running_cost -= running_cost * share
+                running_qty -= sold
+
+        if running_qty > 1e-12 and running_cost > 0:
+            return {
+                'entry_price': running_cost / running_qty,
+                'source': 'avg_trades',
+                'qty_tracked': running_qty,
+            }
+        if last_buy_price:
+            return {
+                'entry_price': last_buy_price,
+                'source': 'last_buy',
+                'qty_tracked': 0.0,
+            }
+        return {'entry_price': None, 'source': None, 'qty_tracked': 0.0}
+
     def get_trades_history(self):
         with self._get_connection() as conn:
             df = pd.read_sql_query('SELECT * FROM trades ORDER BY timestamp ASC', conn)

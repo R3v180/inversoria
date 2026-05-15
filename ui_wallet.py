@@ -4,6 +4,7 @@ límites CCXT y venta manual con pre-chequeo.
 """
 import streamlit as st
 import pandas as pd
+import config
 from i18n import _
 
 
@@ -90,6 +91,76 @@ def _explain_precheck(err: str, pv: dict) -> str:
     if err.startswith("BALANCE:"):
         return _("WALLET_ERR_GENERIC").format(err)
     return _("WALLET_ERR_GENERIC").format(err)
+
+
+def _trading_fee_rate() -> float:
+    return float(config.get_setting('TRADING_FEE_RATE', 0.001, float))
+
+
+def _cost_basis_source_label(source: str) -> str:
+    if source == 'open_position':
+        return _('WALLET_PNL_SOURCE_POS')
+    if source == 'avg_trades':
+        return _('WALLET_PNL_SOURCE_AVG')
+    if source == 'last_buy':
+        return _('WALLET_PNL_SOURCE_LAST')
+    return "—"
+
+
+def _estimate_sell_economics(qty: float, sell_price: float, entry_price: float, fee_rate: float):
+    if not entry_price or entry_price <= 0 or qty <= 0 or sell_price <= 0:
+        return None
+    cost_base = entry_price * qty
+    buy_fee = cost_base * fee_rate
+    total_cost = cost_base + buy_fee
+    gross = sell_price * qty
+    sell_fee = gross * fee_rate
+    net_receive = gross - sell_fee
+    pnl_usd = net_receive - total_cost
+    pnl_pct = (pnl_usd / total_cost * 100.0) if total_cost > 0 else 0.0
+    return {
+        'cost_base': cost_base,
+        'buy_fee': buy_fee,
+        'total_cost': total_cost,
+        'gross_sell': gross,
+        'sell_fee': sell_fee,
+        'net_receive': net_receive,
+        'pnl_usd': pnl_usd,
+        'pnl_pct': pnl_pct,
+        'fee_pct_display': fee_rate * 100.0,
+    }
+
+
+def _render_sell_pnl_panel(db, sym: str, qty: float, sell_price: float, open_pos: dict, fee_rate: float):
+    st.markdown(f"**{_('WALLET_PNL_TITLE')}**")
+    st.caption(_('WALLET_FEE_NOTE'))
+    basis = db.get_cost_basis(sym, open_pos)
+    entry = basis.get('entry_price')
+    if not entry or entry <= 0:
+        st.info(_('WALLET_PNL_UNKNOWN'))
+        return
+    eco = _estimate_sell_economics(qty, sell_price, entry, fee_rate)
+    if not eco:
+        return
+    st.caption(f"{_('WALLET_PNL_BUY_SOURCE')}: {_cost_basis_source_label(basis.get('source'))}")
+
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric(_('WALLET_PNL_BUY_PRICE'), f"${entry:.6g}")
+    c2.metric(_('WALLET_PNL_GROSS_SELL'), f"${eco['gross_sell']:.2f}")
+    c3.metric(_('WALLET_PNL_NET_RECEIVE'), f"${eco['net_receive']:.2f}")
+    pnl_color = "normal" if eco['pnl_usd'] >= 0 else "inverse"
+    c4.metric(_('WALLET_PNL_PCT'), f"{eco['pnl_pct']:+.2f}%", f"${eco['pnl_usd']:+.2f}", delta_color=pnl_color)
+
+    d1, d2, d3 = st.columns(3)
+    d1.metric(
+        _('WALLET_PNL_FEE_BUY').format(f"{eco['fee_pct_display']:.3f}"),
+        f"${eco['buy_fee']:.4f}",
+    )
+    d2.metric(
+        _('WALLET_PNL_FEE_SELL').format(f"{eco['fee_pct_display']:.3f}"),
+        f"${eco['sell_fee']:.4f}",
+    )
+    d3.metric(_('WALLET_PNL_COST_TOTAL'), f"${eco['total_cost']:.2f}")
 
 
 def _evaluate_sell_candidate(ex, row: dict, open_pos: dict) -> dict:
@@ -208,6 +279,7 @@ def render_wallet():
         ev = _evaluate_sell_candidate(ex, r, open_pos)
         enriched.append({**r, **ev})
 
+    fee_rate = _trading_fee_rate()
     recoverable = [e for e in enriched if e["is_recoverable"]]
     enriched.sort(
         key=lambda e: (
@@ -220,10 +292,20 @@ def render_wallet():
     st.markdown(f"**{_('WALLET_RECOVERABLE_TITLE')}**")
     st.caption(_("WALLET_RECOVERABLE_HINT"))
     if recoverable:
-        chips = "".join(
-            f'<span class="wallet-recover-chip">{e["coin"]} · ~{_fmt_usd_val(e["usd_free"])} USDT</span>'
-            for e in recoverable
-        )
+        chip_parts = []
+        for e in recoverable:
+            sym_c = e["symbol"]
+            basis = db.get_cost_basis(sym_c, open_pos)
+            ep = basis.get("entry_price")
+            pnl_txt = ""
+            if ep and e.get("px"):
+                eco = _estimate_sell_economics(float(e["free"]), float(e["px"]), float(ep), fee_rate)
+                if eco:
+                    pnl_txt = f" · {eco['pnl_pct']:+.1f}%"
+            chip_parts.append(
+                f'<span class="wallet-recover-chip">{e["coin"]} · ~{_fmt_usd_val(e["usd_free"])} USDT{pnl_txt}</span>'
+            )
+        chips = "".join(chip_parts)
         st.markdown(chips, unsafe_allow_html=True)
     else:
         st.info(_("WALLET_RECOVERABLE_NONE"))
@@ -313,6 +395,11 @@ def render_wallet():
                 for inf in pv.get("info", []):
                     if inf.startswith("NOTIONAL_EST:"):
                         st.caption(inf.replace("NOTIONAL_EST:", "Notional ~ ") + " USDT")
+
+            sell_px = float(px) if px else 0.0
+            fmt_qty = float(pv.get("amount_after_precision") or qty) if pv.get("ok") else float(qty)
+            if sell_px > 0 and fmt_qty > 0:
+                _render_sell_pnl_panel(db, sym, fmt_qty, sell_px, open_pos, fee_rate)
 
             if st.button(_("WALLET_BTN_SELL"), key=f"sell_{key}", type="primary", disabled=not pv["ok"]):
                 res = ex.execute_order(sym, "sell", qty, px)

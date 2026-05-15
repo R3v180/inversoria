@@ -26,7 +26,9 @@ DEFAULT_SETTINGS = {
     'PROMPT_SENTIMENT': "Eres un analista senior de criptomonedas. Responde solo BULLISH, BEARISH o NEUTRAL y una frase corta.",
     'PROMPT_DECISION': "Eres un analista senior de criptomonedas. Responde SOLO con JSON válido.",
     'PROMPT_CURATION': "Analiza esta lista de símbolos con alto volumen. Devuelve los nombres (separados por comas) de las monedas que tengan un proyecto sólido o sean tendencia legítima. Incluye Blue Chips y proyectos con utilidad. Solo ELIMINA memecoins sin volumen o estafas evidentes. Queremos una lista amplia (aprox 15-20 monedas).",
-    'AI_ANALYSIS_INTERVAL': 1200 # 20 minutos por defecto
+    'AI_ANALYSIS_INTERVAL': 1200, # 20 minutos por defecto
+    # Comisión estimada por lado (compra y venta) para simular PnL en cartera — Crypto.com spot ~0.075–0.4%
+    'TRADING_FEE_RATE': 0.001,
 }
 
 def get_setting(key, default, cast_type=str):
@@ -91,6 +93,7 @@ PROMPT_SENTIMENT = get_setting('PROMPT_SENTIMENT', DEFAULT_SETTINGS['PROMPT_SENT
 PROMPT_DECISION = get_setting('PROMPT_DECISION', DEFAULT_SETTINGS['PROMPT_DECISION'])
 PROMPT_CURATION = get_setting('PROMPT_CURATION', DEFAULT_SETTINGS['PROMPT_CURATION'])
 AI_ANALYSIS_INTERVAL = get_setting('AI_ANALYSIS_INTERVAL', 1200, int)
+TRADING_FEE_RATE = get_setting('TRADING_FEE_RATE', 0.001, float)
 
 def get_dynamic_max_positions(balance_usdt: float) -> int:
     """Escala dinámica de posiciones basada en el balance total (v6.1)"""
