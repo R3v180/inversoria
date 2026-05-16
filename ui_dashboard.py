@@ -7,6 +7,101 @@ import time
 import json
 import pandas_ta as ta
 from config import PRESUPUESTO_INICIAL, SYMBOLS, get_effective_max_positions
+from i18n import _
+
+
+def _execute_dashboard_manual_sell(db, exchange, sym: str, qty: float, current_price: float):
+    if qty <= 0:
+        st.error(_('MANUAL_SELL_ZERO'))
+        return
+
+    res = exchange.execute_order(sym, "sell", qty, current_price, force_market=True)
+    if res.get("status") in ("closed", "simulated", "open"):
+        exit_p = res.get("average") or res.get("price") or current_price
+        try:
+            exit_p = float(exit_p)
+        except (TypeError, ValueError):
+            exit_p = float(current_price)
+
+        try:
+            sold = float(res.get("filled") or 0)
+        except (TypeError, ValueError):
+            sold = 0.0
+        if sold <= 0:
+            sold = float(res.get("amount") or qty)
+        sold = min(sold, float(qty))
+
+        reason = _("MANUAL_SELL_REASON")
+        if db.close_position(sym, exit_p, reason, sold_amount=sold):
+            db.add_log(f"{reason}: {sym} qty={sold:.10g} @ {exit_p:.6f}")
+            st.success(_("MANUAL_SELL_OK"))
+            st.rerun()
+        else:
+            st.warning(_("MANUAL_SELL_FAIL"))
+        return
+
+    err = res.get("reason", str(res))
+    st.error(f"{_('MANUAL_SELL_FAIL')}: {err}")
+
+
+def _render_dashboard_sell_options(db, exchange, sym: str, pos: dict, current_price: float, safe_key: str):
+    panel_key = f"dash_sell_panel_{safe_key}"
+    if not st.session_state.get(panel_key):
+        return
+
+    pos_amount = float(pos.get("amount") or 0)
+    real_amount = float(exchange.get_coin_balance(sym) or 0)
+    max_sell = min(pos_amount, real_amount) if real_amount > 0 else pos_amount
+    max_sell = max(0.0, float(max_sell or 0))
+
+    with st.container(border=True):
+        st.markdown(f"**{_('MANUAL_SELL_OPTIONS')} · `{sym}`**")
+        st.caption(_("MANUAL_SELL_MAX").format(f"{max_sell:.10g}"))
+
+        if max_sell <= 0:
+            st.warning(_("MANUAL_SELL_ZERO"))
+            if st.button(_("MANUAL_SELL_CANCEL"), key=f"dash_sell_cancel_empty_{safe_key}"):
+                st.session_state[panel_key] = False
+                st.rerun()
+            return
+
+        mode = st.radio(
+            _("MANUAL_SELL_MODE"),
+            [_("MANUAL_SELL_ALL"), _("MANUAL_SELL_CUSTOM")],
+            horizontal=True,
+            key=f"dash_sell_mode_{safe_key}",
+        )
+        if mode == _("MANUAL_SELL_ALL"):
+            qty = max_sell
+        else:
+            qty = st.number_input(
+                _("MANUAL_SELL_QTY"),
+                min_value=0.0,
+                max_value=float(max_sell),
+                value=float(max_sell),
+                step=1e-8 if max_sell < 1 else 1e-6,
+                key=f"dash_sell_qty_{safe_key}",
+            )
+
+        pv = exchange.prevalidate_market_sell(sym, qty, current_price, free_override=max_sell)
+        hard_errors = [
+            er for er in pv.get("errors", [])
+            if not str(er).startswith("SLIPPAGE:")
+        ]
+        if pv.get("errors"):
+            for er in pv.get("errors", []):
+                st.warning(str(er))
+        else:
+            amt_ok = pv.get("amount_after_precision") or qty
+            st.success(f"{_('WALLET_PRECHECK')}: OK · {float(amt_ok):.10g} (~{float(amt_ok) * float(current_price):.2f} USDT)")
+
+        c1, c2 = st.columns(2)
+        if c1.button(_("MANUAL_SELL_SUBMIT"), key=f"dash_sell_submit_{safe_key}", type="primary", disabled=bool(hard_errors)):
+            _execute_dashboard_manual_sell(db, exchange, sym, float(qty), float(current_price))
+        if c2.button(_("MANUAL_SELL_CANCEL"), key=f"dash_sell_cancel_{safe_key}"):
+            st.session_state[panel_key] = False
+            st.rerun()
+
 
 def render_dashboard():
     # Estilos CSS Avanzados
@@ -61,7 +156,6 @@ def render_dashboard():
     pnl_pct = (pnl / baseline) * 100 if baseline else 0
     open_positions = db.get_open_positions()
 
-    from i18n import _, TRANSLATIONS
     # --- TOP METRICS ---
     dynamic_max = get_effective_max_positions(total_value)
     m1, m2, m3, m4 = st.columns(4)
@@ -154,34 +248,10 @@ def render_dashboard():
                             help=_('MANUAL_SELL_HELP'),
                             type="secondary",
                         ):
-                            amt = float(pos.get("amount") or 0)
-                            if amt <= 0:
-                                st.error(_('MANUAL_SELL_FAIL'))
-                            else:
-                                res = exchange.execute_order(sym, "sell", amt, current_price, force_market=True)
-                                if res.get("status") in ("closed", "simulated"):
-                                    exit_p = res.get("average") or res.get("price") or current_price
-                                    try:
-                                        exit_p = float(exit_p)
-                                    except (TypeError, ValueError):
-                                        exit_p = float(current_price)
-                                    reason = _("MANUAL_SELL_REASON")
-                                    try:
-                                        sold = float(res.get("filled") or 0)
-                                    except (TypeError, ValueError):
-                                        sold = 0.0
-                                    if sold <= 0:
-                                        sold = float(res.get("amount") or amt)
-                                    sold = min(sold, amt)
-                                    if db.close_position(sym, exit_p, reason, sold_amount=sold):
-                                        db.add_log(f"{reason}: {sym} @ {exit_p:.6f}")
-                                        st.success(_("MANUAL_SELL_OK"))
-                                        st.rerun()
-                                    else:
-                                        st.warning(_("MANUAL_SELL_FAIL"))
-                                else:
-                                    err = res.get("reason", str(res))
-                                    st.error(f"{_('MANUAL_SELL_FAIL')}: {err}")
+                            panel_key = f"dash_sell_panel_{safe_key}"
+                            st.session_state[panel_key] = not st.session_state.get(panel_key, False)
+                            st.rerun()
+                    _render_dashboard_sell_options(db, exchange, sym, pos, current_price, safe_key)
         else: st.info(_('NO_POSITIONS'))
 
     with col_right:

@@ -261,7 +261,7 @@ Shows:
 - PnL vs baseline.
 - Equity curve.
 - Technical chart.
-- Active positions with manual sell.
+- Active positions with manual sell: sell maximum available or choose a partial amount.
 - Portfolio distribution.
 - Opportunity radar.
 - System intelligence:
@@ -1026,7 +1026,7 @@ python -m streamlit run app.py
 
 ### Dashboard
 
-Muestra equity, liquidez, posiciones, PnL, gráfico técnico, distribución, radar, macro, backtest, noticias rápidas, diagnóstico y acciones de emergencia.
+Muestra equity, liquidez, posiciones, PnL, gráfico técnico, distribución, radar, macro, backtest, noticias rápidas, diagnóstico y acciones de emergencia. En posiciones activas, la venta manual permite vender todo lo posible o elegir una cantidad parcial.
 
 ### Cartera Exchange
 
