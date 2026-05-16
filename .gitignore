@@ -2,6 +2,7 @@
 .env
 *.json
 *.db
+*.db-journal
 *.log
 *.txt
 !README.md

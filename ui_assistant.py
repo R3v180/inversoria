@@ -4,6 +4,12 @@ import json
 import os
 import sqlite3
 import config
+from config_importer import (
+    apply_config_changes,
+    diff_config_changes,
+    parse_config_payload,
+    validate_config_payload,
+)
 from i18n import _
 
 
@@ -28,6 +34,31 @@ def _queue_assistant_order(action: str, symbol: str, source_text: str = ""):
 def _remove_pending_order(order_id: str):
     st.session_state.assistant_pending_orders = [
         o for o in _pending_orders() if o.get("id") != order_id
+    ]
+
+
+def _pending_config_changes():
+    if "assistant_pending_config_changes" not in st.session_state:
+        st.session_state.assistant_pending_config_changes = []
+    return st.session_state.assistant_pending_config_changes
+
+
+def _queue_assistant_config_change(changes: dict, warnings=None, blocked=None, source_text: str = ""):
+    change_id = f"{int(time.time() * 1000)}_{len(_pending_config_changes())}_config"
+    _pending_config_changes().append({
+        "id": change_id,
+        "changes": changes,
+        "warnings": warnings or [],
+        "blocked": blocked or [],
+        "created_at": time.strftime('%Y-%m-%d %H:%M:%S'),
+        "source_text": source_text[:800],
+    })
+    return change_id
+
+
+def _remove_pending_config_change(change_id: str):
+    st.session_state.assistant_pending_config_changes = [
+        c for c in _pending_config_changes() if c.get("id") != change_id
     ]
 
 
@@ -139,6 +170,44 @@ def _render_pending_orders(db, exchange):
                 _execute_pending_order(order, db, exchange)
             if c2.button(_("ASSIST_CANCEL_ORDER"), key=f"cancel_{order['id']}"):
                 _remove_pending_order(order["id"])
+                st.rerun()
+
+
+def _render_pending_config_changes():
+    pending = _pending_config_changes()
+    if not pending:
+        return
+
+    st.warning(_("ASSIST_CONFIG_PENDING_WARNING"))
+    for item in list(pending):
+        changes = item.get("changes", {})
+        rows = diff_config_changes(changes)
+        with st.container(border=True):
+            st.markdown(f"**{_('ASSIST_PENDING_CONFIG')}**")
+            st.caption(_("ASSIST_PENDING_CREATED").format(item.get("created_at", "-")))
+            if rows:
+                st.dataframe(rows, width="stretch", hide_index=True)
+            else:
+                st.info(_("CONFIG_NO_EFFECTIVE_DIFF"))
+            if item.get("warnings"):
+                with st.expander(_("CONFIG_WARNINGS")):
+                    for warning in item.get("warnings", []):
+                        st.caption(f"- {warning}")
+            if item.get("blocked"):
+                st.info(_("CONFIG_BLOCKED_KEYS").format(", ".join(item.get("blocked", []))))
+
+            c1, c2 = st.columns(2)
+            if c1.button(_("ASSIST_CONFIRM_CONFIG"), key=f"confirm_config_{item['id']}", type="primary"):
+                backup = apply_config_changes(changes)
+                _remove_pending_config_change(item["id"])
+                if backup:
+                    st.success(_("CONFIG_APPLIED_BACKUP").format(backup))
+                else:
+                    st.success(_("CONFIG_APPLIED"))
+                time.sleep(0.5)
+                st.rerun()
+            if c2.button(_("ASSIST_CANCEL_ORDER"), key=f"cancel_config_{item['id']}"):
+                _remove_pending_config_change(item["id"])
                 st.rerun()
 
 
@@ -395,6 +464,7 @@ NOTICIAS RELEVANTES:
 
 REGLAS DE SEGURIDAD:
 - No ejecutes órdenes directamente: si el usuario confirma una operación, emite el bloque [EXECUTE_ORDER]; la app creará una orden pendiente con botón de confirmación.
+- Si el usuario pide cambiar configuración, puedes proponer un bloque [CONFIG_CHANGE] con JSON. La app solo creará una tarjeta pendiente y el usuario tendrá que confirmarla con botón.
 - Diferencia siempre entre posiciones del bot (open_positions) y saldos/retales del exchange.
 - Si hablas de comprar, considera macro, diagnóstico daemon, slippage, riesgo por trade, posiciones disponibles y noticias.
 """.strip()
@@ -416,7 +486,8 @@ def render_assistant():
         st.code(st.session_state["_asst_wallet_clip"], language=None)
     st.markdown("---")
     _render_pending_orders(db, exchange)
-    if _pending_orders():
+    _render_pending_config_changes()
+    if _pending_orders() or _pending_config_changes():
         st.markdown("---")
 
     # Inicializar chat si está vacío
@@ -468,6 +539,18 @@ def render_assistant():
                 ACTION: BUY o SELL
                 SYMBOL: moneda/USDT
                 [/EXECUTE_ORDER]
+
+                Si el usuario te pide cambiar la configuración, puedes proponer cambios con este bloque exacto al final.
+                IMPORTANTE: la aplicación NO aplicará la configuración automáticamente; solo creará una tarjeta pendiente para confirmación manual mediante botón.
+                No incluyas claves API ni secretos.
+
+                [CONFIG_CHANGE]
+                {{
+                  "MAX_OPEN_POSITIONS": 3,
+                  "MANUAL_MAX_POSITIONS_PRIORITY": true,
+                  "RISK_PER_TRADE": 0.10
+                }}
+                [/CONFIG_CHANGE]
                 """
                 
                 raw_response, provider = sentiment.call_ai_hybrid(
@@ -493,11 +576,35 @@ def render_assistant():
                     queued.append(f"{action} {symbol}")
                 if queued:
                     st.warning(_("ASSIST_ORDER_QUEUED").format(", ".join(queued)))
+
+                config_matches = re.finditer(r'\[CONFIG_CHANGE\](.*?)\[/CONFIG_CHANGE\]', full_response, re.IGNORECASE | re.DOTALL)
+                queued_configs = 0
+                config_errors = []
+                for config_match in config_matches:
+                    block = config_match.group(1)
+                    try:
+                        payload = parse_config_payload(block)
+                        changes, warnings, blocked, errors = validate_config_payload(payload)
+                    except Exception as exc:
+                        config_errors.append(str(exc))
+                        continue
+                    if errors:
+                        config_errors.extend(errors)
+                        continue
+                    if changes:
+                        _queue_assistant_config_change(changes, warnings, blocked, full_response)
+                        queued_configs += 1
+                if config_errors:
+                    st.error(f"{_('CONFIG_IMPORT_ERROR')}: {'; '.join(config_errors[:3])}")
+                if queued_configs:
+                    st.warning(_("ASSIST_CONFIG_QUEUED"))
+                if queued or queued_configs:
                     st.rerun()
 
     # Botón para limpiar chat
     if st.sidebar.button("🧹 Limpiar Chat"):
         db.clear_chat_history()
         st.session_state.assistant_pending_orders = []
+        st.session_state.assistant_pending_config_changes = []
         del st.session_state.messages
         st.rerun()

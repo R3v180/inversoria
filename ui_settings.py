@@ -2,7 +2,105 @@ import streamlit as st
 import json
 import os
 from config import get_setting, USER_SETTINGS_FILE, save_settings, reset_to_defaults, DEFAULT_SETTINGS
+from config_importer import (
+    apply_config_changes,
+    config_example_json,
+    current_safe_config_json,
+    diff_config_changes,
+    parse_config_payload,
+    validate_config_payload,
+)
 from i18n import _
+
+
+def _render_config_import_export():
+    st.markdown("---")
+    st.subheader(_("CONFIG_IO_TITLE"))
+    st.caption(_("CONFIG_IO_HELP"))
+
+    c1, c2 = st.columns(2)
+    with c1:
+        st.download_button(
+            _("CONFIG_DOWNLOAD_EXAMPLE"),
+            data=config_example_json(),
+            file_name="inversoria_config_example.json",
+            mime="application/json",
+            width="stretch",
+        )
+    with c2:
+        st.download_button(
+            _("CONFIG_DOWNLOAD_CURRENT"),
+            data=current_safe_config_json(),
+            file_name="inversoria_config_actual_safe.json",
+            mime="application/json",
+            width="stretch",
+        )
+
+    raw_config = st.text_area(
+        _("CONFIG_IMPORT_LABEL"),
+        height=220,
+        placeholder=config_example_json(),
+        help=_("CONFIG_IMPORT_HELP"),
+    )
+
+    if st.button(_("CONFIG_VALIDATE"), type="secondary"):
+        try:
+            payload = parse_config_payload(raw_config)
+            changes, warnings, blocked, errors = validate_config_payload(payload)
+        except Exception as exc:
+            st.error(f"{_('CONFIG_IMPORT_ERROR')}: {exc}")
+            return
+
+        if errors:
+            st.error(_("CONFIG_IMPORT_ERROR"))
+            for err in errors:
+                st.caption(f"- {err}")
+            return
+        if not changes:
+            st.warning(_("CONFIG_NO_CHANGES"))
+            return
+
+        st.session_state.pending_config_import = {
+            "changes": changes,
+            "warnings": warnings,
+            "blocked": blocked,
+        }
+        st.rerun()
+
+    pending = st.session_state.get("pending_config_import")
+    if not pending:
+        return
+
+    changes = pending.get("changes", {})
+    warnings = pending.get("warnings", [])
+    blocked = pending.get("blocked", [])
+    rows = diff_config_changes(changes)
+
+    with st.container(border=True):
+        st.warning(_("CONFIG_PENDING_WARNING"))
+        if rows:
+            st.dataframe(rows, width="stretch", hide_index=True)
+        else:
+            st.info(_("CONFIG_NO_EFFECTIVE_DIFF"))
+        if warnings:
+            with st.expander(_("CONFIG_WARNINGS")):
+                for warning in warnings:
+                    st.caption(f"- {warning}")
+        if blocked:
+            st.info(_("CONFIG_BLOCKED_KEYS").format(", ".join(blocked)))
+
+        a1, a2 = st.columns(2)
+        if a1.button(_("CONFIG_APPLY"), type="primary", width="stretch"):
+            backup = apply_config_changes(changes)
+            st.session_state.pop("pending_config_import", None)
+            if backup:
+                st.success(_("CONFIG_APPLIED_BACKUP").format(backup))
+            else:
+                st.success(_("CONFIG_APPLIED"))
+            st.rerun()
+        if a2.button(_("CONFIG_DISCARD"), width="stretch"):
+            st.session_state.pop("pending_config_import", None)
+            st.rerun()
 
 def render_settings():
     st.title(_('SETTINGS_TITLE'))
@@ -105,3 +203,5 @@ def render_settings():
             save_settings(new_data)
             st.success(_('SUCCESS_SETTINGS'))
             st.balloons()
+
+    _render_config_import_export()

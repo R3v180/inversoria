@@ -91,6 +91,8 @@ Available today:
 - News feed with images, sentiment, impact and manual buy workflow.
 - Dashboard quick-news widget.
 - AI assistant with mandatory explicit UI confirmation before any order.
+- Safe configuration import/export with validation, backups and secret blocking.
+- AI assistant can propose configuration changes, but the UI requires explicit confirmation before applying them.
 - Historical backtesting engine with SQLite priors.
 - Incremental global macro refresh with Alpha Vantage.
 - Daemon telemetry in the dashboard.
@@ -146,6 +148,7 @@ Main modules:
 | `backtest_engine.py` | Historical strategy simulations and priors. |
 | `multi_timeframe.py` | 1D / 4H / 15M confluence. |
 | `sentiment_engine.py` | Gemini / Groq / SambaNova calls and fallback logic. |
+| `config_importer.py` | Safe configuration import/export validation and backups. |
 | `news_service.py` | RSS news, images, symbol matching, sentiment and impact. |
 | `ui_dashboard.py` | Main dashboard. |
 | `ui_wallet.py` | Exchange wallet, dust, PnL and manual sell. |
@@ -374,6 +377,16 @@ Hot-editable settings:
 - AI analysis frequency.
 - AI prompts.
 
+Safe configuration import/export:
+
+- Download a clean example JSON for AI review.
+- Download the current safe configuration without API keys or secrets.
+- Paste JSON from an AI recommendation.
+- Validate fields against an allowlist before applying.
+- Preview before/after values.
+- Block API keys and sensitive fields automatically.
+- Create a `user_settings.json.backup-*.json` backup before applying.
+
 ---
 
 ## Exchange Wallet And Dust
@@ -472,6 +485,15 @@ Current flow:
 5. UI shows action, symbol, current price and estimated size.
 6. User clicks Confirm or Cancel.
 7. Only Confirm executes.
+
+Configuration changes follow the same safety model:
+
+1. User asks the assistant for configuration changes.
+2. AI may output `[CONFIG_CHANGE]` with JSON.
+3. App validates allowed fields and blocks secrets.
+4. UI creates a pending configuration card with a diff.
+5. User clicks Apply configuration or Cancel.
+6. Only Apply writes to `user_settings.json`, after creating a backup.
 
 This protects against:
 
@@ -621,11 +643,20 @@ ALPHA_VANTAGE_API_KEY=...
 
 `user_settings.json` is created/updated by the UI. It is local and ignored by Git.
 
+The settings screen also includes safe import/export:
+
+- **Download AI example**: exports a clean JSON template without secrets.
+- **Download current safe config**: exports only allowed non-secret settings.
+- **Paste JSON configuration**: validates and previews changes before applying.
+
+The importer accepts plain JSON or a fenced `json` block. Sensitive keys are ignored even if they are present.
+
 Ignored sensitive/local files:
 
 - `.env`
 - `*.json`
 - `*.db`
+- `*.db-journal`
 - `*.log`
 - `*.txt`
 - `__pycache__/`
@@ -887,10 +918,11 @@ Modos disponibles:
 - Noticias RSS con imágenes, sentimiento, impacto y compra manual.
 - Widget de noticias rápidas en dashboard.
 - Asistente IA con confirmación obligatoria antes de ejecutar.
+- Importación/exportación segura de configuración con validación, backups y bloqueo de secretos.
+- El asistente IA puede proponer cambios de configuración, pero la UI exige confirmación explícita antes de aplicarlos.
 - Backtesting histórico guardado en SQLite.
 - Macro global incremental con Alpha Vantage.
 - Diagnóstico del daemon en UI.
-- Exportador de código seguro que excluye `.env`.
 
 ---
 
@@ -932,6 +964,7 @@ Módulos principales:
 | `market_context.py` | Contexto macro cripto/global. |
 | `macro_analyzer.py` | Alpha Vantage incremental. |
 | `backtest_engine.py` | Backtesting y priors. |
+| `config_importer.py` | Importación/exportación segura de configuración. |
 | `news_service.py` | Noticias RSS. |
 | `ui_*.py` | Vistas Streamlit. |
 
@@ -1013,7 +1046,7 @@ Gráfico técnico por activo, indicadores, decisión reciente y logs.
 
 ### Asistente IA
 
-Chat contextual. Las órdenes propuestas pasan a una tarjeta pendiente y requieren botón de confirmación.
+Chat contextual. Las órdenes propuestas pasan a una tarjeta pendiente y requieren botón de confirmación. Los cambios de configuración propuestos por IA siguen el mismo modelo: se muestran como tarjeta pendiente con diff y solo se aplican si el usuario confirma.
 
 ### Historial
 
@@ -1022,6 +1055,16 @@ Trades, win rate, profit factor, curva aproximada y journal.
 ### Configuración
 
 Permite editar modo, riesgo, posiciones, rotación, frecuencia IA, APIs y prompts.
+
+También incluye importación/exportación segura:
+
+- descargar ejemplo JSON limpio para pasarlo a una IA,
+- descargar la configuración actual sin claves ni secretos,
+- pegar un JSON recomendado por una IA,
+- validar campos permitidos,
+- previsualizar valores antes/después,
+- bloquear claves API automáticamente,
+- crear backup `user_settings.json.backup-*.json` antes de aplicar.
 
 ---
 
@@ -1087,6 +1130,14 @@ Flujo:
 3. La UI muestra acción, símbolo, precio y tamaño estimado.
 4. Usuario confirma o cancela.
 5. Solo confirmar ejecuta.
+
+Para configuración:
+
+1. IA propone `[CONFIG_CHANGE]` con JSON.
+2. La app valida claves permitidas y bloquea secretos.
+3. La UI muestra una tarjeta pendiente con cambios antes/después.
+4. Usuario aplica o cancela.
+5. Solo aplicar escribe en `user_settings.json`, con backup previo.
 
 ---
 
@@ -1194,6 +1245,14 @@ ALPHA_VANTAGE_API_KEY=...
 ```
 
 `user_settings.json` es local y está ignorado.
+
+La UI permite importar/exportar configuración segura:
+
+- ejemplo para IA,
+- config actual sin secretos,
+- validación de JSON pegado,
+- preview de cambios,
+- backup automático antes de aplicar.
 
 ---
 
