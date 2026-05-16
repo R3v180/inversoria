@@ -141,7 +141,7 @@ def render_assistant():
                             real_amount = exchange.get_coin_balance(symbol)
                             sell_amount = min(pos['amount'], real_amount) if real_amount > 0 else pos['amount']
                             
-                            res = exchange.execute_order(symbol, 'sell', sell_amount, current_price)
+                            res = exchange.execute_order(symbol, 'sell', sell_amount, current_price, force_market=True)
                             if res.get('status') in ['closed', 'open', 'simulated']:
                                 try:
                                     sold = float(res.get('filled') or 0)

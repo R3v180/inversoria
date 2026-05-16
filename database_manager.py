@@ -1,6 +1,7 @@
 import sqlite3
 import time
 import os
+import re
 import pandas as pd
 
 class DatabaseManager:
@@ -157,7 +158,7 @@ class DatabaseManager:
         with self._get_connection() as conn:
             conn.execute('INSERT INTO logs (timestamp, message) VALUES (?, ?)', (time.time(), message))
             # Keep only last 100
-            conn.execute('DELETE FROM logs WHERE id NOT IN (SELECT id FROM logs ORDER BY timestamp DESC LIMIT 100)')
+            conn.execute('DELETE FROM logs WHERE id NOT IN (SELECT id FROM logs ORDER BY timestamp DESC LIMIT 300)')
             conn.commit()
 
     def get_logs(self):
@@ -326,7 +327,76 @@ class DatabaseManager:
                 'source': 'last_buy',
                 'qty_tracked': 0.0,
             }
+
+        log_basis = self._cost_basis_from_logs(symbol)
+        if log_basis:
+            return log_basis
+
+        sell_basis = self._cost_basis_from_sell_pnl(symbol)
+        if sell_basis:
+            return sell_basis
+
         return {'entry_price': None, 'source': None, 'qty_tracked': 0.0}
+
+    def _cost_basis_from_logs(self, symbol: str):
+        """Último precio en logs del daemon (🚀 COMPRA / BUY SYMBOL @ price)."""
+        sym = symbol.strip()
+        pattern = re.compile(
+            rf'(?:COMPRA|BUY)\s+{re.escape(sym)}\s+@\s+([0-9.eE+-]+)',
+            re.IGNORECASE,
+        )
+        with self._get_connection() as conn:
+            cursor = conn.execute(
+                'SELECT message FROM logs WHERE message LIKE ? ORDER BY timestamp DESC LIMIT 80',
+                (f'%{sym}%',),
+            )
+            for row in cursor.fetchall():
+                msg = row['message'] or ''
+                m = pattern.search(msg)
+                if m:
+                    try:
+                        price = float(m.group(1))
+                    except (TypeError, ValueError):
+                        continue
+                    if price > 0:
+                        return {
+                            'entry_price': price,
+                            'source': 'log',
+                            'qty_tracked': 0.0,
+                        }
+        return None
+
+    def _cost_basis_from_sell_pnl(self, symbol: str):
+        """Infiere entry desde la última venta del bot (close_position guarda pnl_pct)."""
+        with self._get_connection() as conn:
+            row = conn.execute(
+                '''
+                SELECT price, pnl_pct FROM trades
+                WHERE symbol = ? AND lower(side) = 'sell' AND price > 0
+                ORDER BY timestamp DESC LIMIT 1
+                ''',
+                (symbol,),
+            ).fetchone()
+        if not row or row['pnl_pct'] is None:
+            return None
+        try:
+            exit_p = float(row['price'])
+            pnl_pct = float(row['pnl_pct'])
+        except (TypeError, ValueError):
+            return None
+        if exit_p <= 0:
+            return None
+        denom = 1.0 + (pnl_pct / 100.0)
+        if denom <= 0:
+            return None
+        entry = exit_p / denom
+        if entry <= 0:
+            return None
+        return {
+            'entry_price': entry,
+            'source': 'sell_pnl',
+            'qty_tracked': 0.0,
+        }
 
     def get_trades_history(self):
         with self._get_connection() as conn:

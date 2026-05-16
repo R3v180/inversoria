@@ -104,7 +104,58 @@ def _cost_basis_source_label(source: str) -> str:
         return _('WALLET_PNL_SOURCE_AVG')
     if source == 'last_buy':
         return _('WALLET_PNL_SOURCE_LAST')
+    if source == 'log':
+        return _('WALLET_PNL_SOURCE_LOG')
+    if source == 'sell_pnl':
+        return _('WALLET_PNL_SOURCE_SELL_PNL')
     return "—"
+
+
+def _estimate_sell_pnl_for_row(db, row: dict, open_pos: dict, fee_rate: float):
+    """PnL % y USD estimados al vender todo el saldo libre al precio actual."""
+    sym = row.get("symbol")
+    free = float(row.get("free") or 0)
+    px = float(row.get("px") or 0)
+    if not sym or free <= 0 or px <= 0:
+        return None, None
+    basis = _get_cost_basis(db, sym, open_pos)
+    ep = basis.get("entry_price")
+    if not ep or ep <= 0:
+        return None, None
+    eco = _estimate_sell_economics(free, px, float(ep), fee_rate)
+    if not eco:
+        return None, None
+    return eco["pnl_pct"], eco["pnl_usd"]
+
+
+def _vendible_pnl_sort_key(e: dict):
+    """Solo filas con sell_ok: mejor PnL % primero (ascendente sobre -pnl)."""
+    usd = float(e.get("usd_free") or 0)
+    pnl = e.get("est_pnl_pct")
+    if pnl is None:
+        return (1, 0.0, -usd)
+    return (0, -float(pnl), -usd)
+
+
+def _partition_sell_rows(enriched: list) -> tuple:
+    """
+    Tres bloques: vendible sin posición bot, vendible en posición bot, no vendible.
+    Dentro de cada bloque vendible, mejor PnL % estimado primero.
+    """
+    free_vendible = []
+    bot_vendible = []
+    blocked = []
+    for e in enriched:
+        if not e.get("sell_ok"):
+            blocked.append(e)
+        elif e.get("in_bot"):
+            bot_vendible.append(e)
+        else:
+            free_vendible.append(e)
+    free_vendible.sort(key=_vendible_pnl_sort_key)
+    bot_vendible.sort(key=_vendible_pnl_sort_key)
+    blocked.sort(key=lambda e: -float(e.get("usd_free") or 0))
+    return free_vendible, bot_vendible, blocked
 
 
 def _estimate_sell_economics(qty: float, sell_price: float, entry_price: float, fee_rate: float):
@@ -274,6 +325,7 @@ def render_wallet():
 
     st.markdown("---")
     st.subheader(_("WALLET_SELL_SECTION"))
+    st.caption(_("WALLET_SELL_ORDER_HINT"))
 
     sellable = [
         r
@@ -286,19 +338,18 @@ def render_wallet():
         st.info(_("WALLET_ERR_NO_FREE"))
         return
 
+    fee_rate = _trading_fee_rate()
     enriched = []
     for r in sellable:
         ev = _evaluate_sell_candidate(ex, r, open_pos)
-        enriched.append({**r, **ev})
+        item = {**r, **ev}
+        pnl_pct, pnl_usd = _estimate_sell_pnl_for_row(db, item, open_pos, fee_rate)
+        item["est_pnl_pct"] = pnl_pct
+        item["est_pnl_usd"] = pnl_usd
+        enriched.append(item)
 
-    fee_rate = _trading_fee_rate()
-    recoverable = [e for e in enriched if e["is_recoverable"]]
-    enriched.sort(
-        key=lambda e: (
-            0 if e["is_recoverable"] else (1 if e["sell_ok"] else 2),
-            -float(e.get("usd_free") or 0),
-        )
-    )
+    free_vendible, bot_vendible, blocked_rows = _partition_sell_rows(enriched)
+    recoverable = free_vendible
 
     st.markdown('<div class="wallet-recover-panel">', unsafe_allow_html=True)
     st.markdown(f"**{_('WALLET_RECOVERABLE_TITLE')}**")
@@ -306,14 +357,9 @@ def render_wallet():
     if recoverable:
         chip_parts = []
         for e in recoverable:
-            sym_c = e["symbol"]
-            basis = _get_cost_basis(db, sym_c, open_pos)
-            ep = basis.get("entry_price")
             pnl_txt = ""
-            if ep and e.get("px"):
-                eco = _estimate_sell_economics(float(e["free"]), float(e["px"]), float(ep), fee_rate)
-                if eco:
-                    pnl_txt = f" · {eco['pnl_pct']:+.1f}%"
+            if e.get("est_pnl_pct") is not None:
+                pnl_txt = f" · {e['est_pnl_pct']:+.1f}%"
             chip_parts.append(
                 f'<span class="wallet-recover-chip">{e["coin"]} · ~{_fmt_usd_val(e["usd_free"])} USDT{pnl_txt}</span>'
             )
@@ -324,118 +370,146 @@ def render_wallet():
     st.markdown("</div>", unsafe_allow_html=True)
 
     only_recover = st.checkbox(_("WALLET_FILTER_RECOVERABLE"), value=False, key="wallet_filter_recover")
-    to_show = [e for e in enriched if e["is_recoverable"]] if only_recover else enriched
+    if only_recover:
+        sell_sections = [(_("WALLET_SELL_FREE_SECTION"), free_vendible)]
+    else:
+        sell_sections = []
+        if free_vendible:
+            sell_sections.append((_("WALLET_SELL_FREE_SECTION"), free_vendible))
+        if bot_vendible:
+            sell_sections.append((_("WALLET_SELL_BOT_SECTION"), bot_vendible))
+        if blocked_rows:
+            sell_sections.append((_("WALLET_BLOCKED_SECTION"), blocked_rows))
 
-    for e in to_show:
-        r = e
-        sym = r["symbol"]
-        coin = r["coin"]
-        free = float(r["free"])
-        px = e.get("px") or ex.get_ticker(sym) or 0.0
-        in_bot = e["in_bot"]
-        sell_ok = e["sell_ok"]
-        is_recoverable = e["is_recoverable"]
-        pv_full = e["pv"]
-        key = f"w_{coin.replace(' ', '_')}"
-
-        if is_recoverable:
-            badge = f"🟢 {_('WALLET_BADGE_RECOVERABLE')}"
-        elif in_bot:
-            badge = f"🤖 {_('WALLET_BADGE_BOT_POS')}" if sell_ok else f"🤖 ⛔ {_('WALLET_BADGE_BOT_POS')}"
-        else:
-            badge = f"⛔ {_('WALLET_BADGE_BLOCKED')}"
-
-        bot_lbl = _("WALLET_BADGE_BOT_POS") if in_bot else _("WALLET_BADGE_NO_BOT")
-        header = (
-            f"{badge} · **{coin}** ({sym}) · "
-            f"{_('WALLET_COL_FREE')}: {free:.8g} (~{_fmt_usd_val(r['usd_free'])} USDT) · {bot_lbl}"
-        )
-        with st.expander(header, expanded=is_recoverable):
-            c1, c2, c3 = st.columns(3)
-            with c1:
-                st.metric(_("WALLET_BOT_STATUS"), _("WALLET_YES") if in_bot else _("WALLET_NO"))
-            with c2:
-                st.metric(_("WALLET_PRECHECK"), _("WALLET_YES") if sell_ok else _("WALLET_NO"))
-            with c3:
-                st.metric(_("WALLET_BADGE_RECOVERABLE"), _("WALLET_YES") if is_recoverable else _("WALLET_NO"))
+    for sec_title, sec_rows in sell_sections:
+        if not sec_rows:
+            continue
+        st.markdown("---")
+        st.markdown(f"#### {sec_title}")
+        for e in sec_rows:
+            r = e
+            sym = r["symbol"]
+            coin = r["coin"]
+            free = float(r["free"])
+            px = e.get("px") or ex.get_ticker(sym) or 0.0
+            in_bot = e["in_bot"]
+            sell_ok = e["sell_ok"]
+            is_recoverable = e["is_recoverable"]
+            pv_full = e["pv"]
+            key = f"w_{coin.replace(' ', '_')}"
 
             if is_recoverable:
-                st.success(_("WALLET_RECOVERABLE_HINT"))
+                badge = f"🟢 {_('WALLET_BADGE_RECOVERABLE')}"
             elif in_bot:
-                st.warning(
-                    f"{_('WALLET_BADGE_BOT_POS')}: "
-                    + (_("WALLET_YES") if sell_ok else _("WALLET_BADGE_BLOCKED"))
-                )
-            elif not sell_ok:
-                for er in pv_full.get("errors", []):
-                    st.warning(_explain_precheck(er, pv_full))
-
-            db_amt = float(open_pos[sym]["amount"]) if in_bot else None
-            default_qty = free if is_recoverable else (
-                min(free, db_amt) if in_bot and db_amt is not None else free
-            )
-            default_qty = min(default_qty, free)
-            cons_e = ex.get_market_sell_constraints(sym)
-            if cons_e:
-                ma = cons_e.get("min_amount")
-                mc = cons_e.get("min_cost")
-                st.caption(
-                    _("WALLET_MARKET_META").format(
-                        cons_e.get("qty_step") if cons_e.get("qty_step") is not None else "—",
-                        ma if ma is not None else "—",
-                        mc if mc is not None else "—",
-                    )
-                )
-            qty = st.number_input(
-                _("WALLET_SELL_QTY"),
-                min_value=0.0,
-                max_value=float(free),
-                value=float(min(default_qty, free)),
-                step=1e-8 if free < 1 else 1e-6,
-                key=f"qty_{key}",
-            )
-            pv = ex.prevalidate_market_sell(sym, qty, px, free_override=free)
-            st.markdown(f"**{_('WALLET_PRECHECK')}**")
-            if pv["errors"]:
-                for er in pv["errors"]:
-                    st.warning(_explain_precheck(er, pv))
+                badge = f"🤖 {_('WALLET_BADGE_BOT_POS')}" if sell_ok else f"🤖 ⛔ {_('WALLET_BADGE_BOT_POS')}"
             else:
-                st.success(
-                    f"OK → ~{pv.get('amount_after_precision')} {coin} "
-                    f"({_('WALLET_COL_USD')}: ~{pv.get('amount_after_precision', 0) * px:.2f})"
+                badge = f"⛔ {_('WALLET_BADGE_BLOCKED')}"
+
+            bot_lbl = _("WALLET_BADGE_BOT_POS") if in_bot else _("WALLET_BADGE_NO_BOT")
+            pnl_hdr = ""
+            if sell_ok and e.get("est_pnl_pct") is not None:
+                pnl_hdr = f" · **{e['est_pnl_pct']:+.2f}%**"
+            header = (
+                f"{badge} · **{coin}** ({sym}) · "
+                f"{_('WALLET_COL_FREE')}: {free:.8g} (~{_fmt_usd_val(r['usd_free'])} USDT){pnl_hdr} · {bot_lbl}"
+            )
+            with st.expander(header, expanded=is_recoverable):
+                c1, c2, c3 = st.columns(3)
+                with c1:
+                    st.metric(_("WALLET_BOT_STATUS"), _("WALLET_YES") if in_bot else _("WALLET_NO"))
+                with c2:
+                    st.metric(_("WALLET_PRECHECK"), _("WALLET_YES") if sell_ok else _("WALLET_NO"))
+                with c3:
+                    st.metric(_("WALLET_BADGE_RECOVERABLE"), _("WALLET_YES") if is_recoverable else _("WALLET_NO"))
+
+                if is_recoverable:
+                    st.success(_("WALLET_RECOVERABLE_HINT"))
+                elif in_bot:
+                    st.warning(
+                        f"{_('WALLET_BADGE_BOT_POS')}: "
+                        + (_("WALLET_YES") if sell_ok else _("WALLET_BADGE_BLOCKED"))
+                    )
+                elif not sell_ok:
+                    for er in pv_full.get("errors", []):
+                        st.warning(_explain_precheck(er, pv_full))
+
+                db_amt = float(open_pos[sym]["amount"]) if in_bot else None
+                default_qty = free if is_recoverable else (
+                    min(free, db_amt) if in_bot and db_amt is not None else free
                 )
-                for inf in pv.get("info", []):
-                    if inf.startswith("NOTIONAL_EST:"):
-                        st.caption(inf.replace("NOTIONAL_EST:", "Notional ~ ") + " USDT")
-
-            sell_px = float(px) if px else 0.0
-            fmt_qty = float(pv.get("amount_after_precision") or qty) if pv.get("ok") else float(qty)
-            if sell_px > 0 and fmt_qty > 0:
-                _render_sell_pnl_panel(db, sym, fmt_qty, sell_px, open_pos, fee_rate)
-
-            if st.button(_("WALLET_BTN_SELL"), key=f"sell_{key}", type="primary", disabled=not pv["ok"]):
-                res = ex.execute_order(sym, "sell", qty, px)
-                if res.get("status") in ("closed", "simulated", "open"):
-                    exit_p = res.get("average") or res.get("price") or px
-                    try:
-                        exit_p = float(exit_p)
-                    except (TypeError, ValueError):
-                        exit_p = float(px)
-                    try:
-                        sold = float(res.get("filled") or 0)
-                    except (TypeError, ValueError):
-                        sold = 0.0
-                    if sold <= 0:
-                        sold = float(res.get("amount") or qty)
-                    sold = min(sold, float(qty), free)
-                    reason = _("WALLET_REASON_WALLET")
-                    if in_bot:
-                        db.close_position(sym, exit_p, reason, sold_amount=sold)
-                    db.add_log(f"{reason}: {sym} qty={sold} @ {exit_p}")
-                    st.success(_("WALLET_SELL_OK"))
-                    st.rerun()
+                default_qty = min(default_qty, free)
+                cons_e = ex.get_market_sell_constraints(sym)
+                if cons_e:
+                    ma = cons_e.get("min_amount")
+                    mc = cons_e.get("min_cost")
+                    st.caption(
+                        _("WALLET_MARKET_META").format(
+                            cons_e.get("qty_step") if cons_e.get("qty_step") is not None else "—",
+                            ma if ma is not None else "—",
+                            mc if mc is not None else "—",
+                        )
+                    )
+                qty = st.number_input(
+                    _("WALLET_SELL_QTY"),
+                    min_value=0.0,
+                    max_value=float(free),
+                    value=float(min(default_qty, free)),
+                    step=1e-8 if free < 1 else 1e-6,
+                    key=f"qty_{key}",
+                )
+                pv = ex.prevalidate_market_sell(sym, qty, px, free_override=free)
+                st.markdown(f"**{_('WALLET_PRECHECK')}**")
+                if pv["errors"]:
+                    for er in pv["errors"]:
+                        st.warning(_explain_precheck(er, pv))
                 else:
-                    st.error(f"{_('WALLET_SELL_FAIL')}: {res.get('reason', res)}")
+                    amt_ok = pv.get('amount_after_precision')
+                    st.success(
+                        _('WALLET_PRECHECK_OK').format(
+                            amt_ok,
+                            coin,
+                            f"{float(amt_ok or 0) * float(px or 0):.2f}",
+                        )
+                    )
+                    for inf in pv.get("info", []):
+                        if inf.startswith("NOTIONAL_EST:"):
+                            st.caption(inf.replace("NOTIONAL_EST:", "Notional ~ ") + " USDT")
+
+                sell_px = float(px) if px else 0.0
+                fmt_qty = float(pv.get("amount_after_precision") or qty) if pv.get("ok") else float(qty)
+                if sell_px > 0 and fmt_qty > 0:
+                    _render_sell_pnl_panel(db, sym, fmt_qty, sell_px, open_pos, fee_rate)
+
+                hard_errors = [
+                    er for er in pv.get("errors", [])
+                    if not str(er).startswith("SLIPPAGE:")
+                ]
+                if pv.get("errors") and not hard_errors:
+                    st.warning(_("WALLET_SLIPPAGE_FORCE_HINT"))
+
+                if st.button(_("WALLET_BTN_SELL"), key=f"sell_{key}", type="primary", disabled=bool(hard_errors)):
+                    res = ex.execute_order(sym, "sell", qty, px, force_market=True)
+                    if res.get("status") in ("closed", "simulated", "open"):
+                        exit_p = res.get("average") or res.get("price") or px
+                        try:
+                            exit_p = float(exit_p)
+                        except (TypeError, ValueError):
+                            exit_p = float(px)
+                        try:
+                            sold = float(res.get("filled") or 0)
+                        except (TypeError, ValueError):
+                            sold = 0.0
+                        if sold <= 0:
+                            sold = float(res.get("amount") or qty)
+                        sold = min(sold, float(qty), free)
+                        reason = _("WALLET_REASON_WALLET")
+                        if in_bot:
+                            db.close_position(sym, exit_p, reason, sold_amount=sold)
+                        db.add_log(f"{reason}: {sym} qty={sold} @ {exit_p}")
+                        st.success(_("WALLET_SELL_OK"))
+                        st.rerun()
+                    else:
+                        st.error(f"{_('WALLET_SELL_FAIL')}: {res.get('reason', res)}")
 
     st.markdown("---")
     if st.button(_("WALLET_SNAPSHOT_BTN")):

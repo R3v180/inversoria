@@ -330,6 +330,10 @@ class BotDaemon:
                         decision['entry_confidence'] = decision.get('confidence', 0.7)
                         self.db.add_open_position(symbol, current_price, current_price, amount_coin, extra_data=json.dumps(decision))
                         open_positions[symbol] = {'entry_price': current_price, 'amount': amount_coin}
+                        self.db.save_trade(
+                            symbol, 'buy', float(current_price), float(amount_coin),
+                            f"BOT [{provider}]", 0.0,
+                        )
                         self.log_message(f"{ _('LOG_BUY', lang=self.u_lang) } {symbol} @ {current_price} [{provider}]")
 
 if __name__ == "__main__":

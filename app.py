@@ -54,10 +54,10 @@ from ui_onboarding import render_onboarding, is_onboarding_done
 from ui_dashboard import render_dashboard
 from ui_terminal import render_terminal
 from ui_wallet import render_wallet
+from ui_news import render_news
 from ui_history import render_history
 from ui_settings import render_settings
 from ui_assistant import render_assistant
-from streamlit_option_menu import option_menu
 
 # --- CONTROL DE FLUJO (ONBOARDING) ---
 if not is_onboarding_done():
@@ -74,19 +74,26 @@ with st.sidebar:
     st.markdown("### 🚀 InversorIA")
     st.markdown(_('WELCOME_SUBTITLE'))
     st.markdown("---")
-    
-    selected = option_menu(
-        menu_title=None,
-        options=[_('NAV_DASHBOARD'), _('NAV_WALLET'), _('NAV_TERMINAL'), _('NAV_ASSISTANT'), _('NAV_HISTORY'), _('NAV_SETTINGS')],
-        icons=["pie-chart-fill", "wallet2", "graph-up-arrow", "chat-dots-fill", "journal-text", "gear-fill"],
-        menu_icon="cast",
-        default_index=0,
-        styles={
-            "container": {"padding": "0!important", "background-color": "transparent"},
-            "icon": {"color": "#00FFAA", "font-size": "18px"}, 
-            "nav-link": {"font-size": "15px", "text-align": "left", "margin":"0px"},
-            "nav-link-selected": {"background-color": "#1E1E1E"},
-        }
+
+    nav_items = [
+        ("dashboard", f"📊 {_('NAV_DASHBOARD')}"),
+        ("wallet", _('NAV_WALLET')),
+        ("news", _('NAV_NEWS')),
+        ("terminal", f"⚡ {_('NAV_TERMINAL')}"),
+        ("assistant", f"💬 {_('NAV_ASSISTANT')}"),
+        ("history", f"🧾 {_('NAV_HISTORY')}"),
+        ("settings", f"⚙️ {_('NAV_SETTINGS')}"),
+    ]
+    nav_routes = [route for route, _ in nav_items]
+    nav_labels = dict(nav_items)
+    if st.session_state.get("main_nav_route") not in nav_routes:
+        st.session_state.main_nav_route = "dashboard"
+    selected_route = st.radio(
+        "NAVEGACIÓN",
+        nav_routes,
+        format_func=lambda route: nav_labels.get(route, route),
+        key="main_nav_route",
+        label_visibility="collapsed",
     )
     
     st.markdown("---")
@@ -162,22 +169,23 @@ with st.sidebar:
                 st.rerun()
 
 # RENDERIZAR VISTAS
-if selected == _('NAV_DASHBOARD'):
+if selected_route == "dashboard":
     from streamlit_autorefresh import st_autorefresh
     # Refresca cada 30 segundos (30000 ms), máximo 1000 veces
     st_autorefresh(interval=30_000, limit=1000, key="dashboard_refresh")
     render_dashboard()
-elif selected == _('NAV_WALLET'):
+elif selected_route == "wallet":
     render_wallet()
-elif selected == _('NAV_TERMINAL'):
-    render_terminal()
-    # Auto-refrescar si el interruptor del terminal está activado
+elif selected_route == "news":
+    render_news()
+elif selected_route == "terminal":
     if st.session_state.get('terminal_refresh', False):
-        time.sleep(30)
-        st.rerun()
-elif selected == _('NAV_ASSISTANT'):
+        from streamlit_autorefresh import st_autorefresh
+        st_autorefresh(interval=30_000, limit=1000, key="terminal_refresh_timer")
+    render_terminal()
+elif selected_route == "assistant":
     render_assistant()
-elif selected == _('NAV_HISTORY'):
+elif selected_route == "history":
     render_history()
-elif selected == _('NAV_SETTINGS'):
+elif selected_route == "settings":
     render_settings()

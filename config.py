@@ -29,6 +29,9 @@ DEFAULT_SETTINGS = {
     'AI_ANALYSIS_INTERVAL': 1200, # 20 minutos por defecto
     # Comisión estimada por lado (compra y venta) para simular PnL en cartera — Crypto.com spot ~0.075–0.4%
     'TRADING_FEE_RATE': 0.001,
+    # Protección de spread/slippage antes de enviar órdenes a mercado
+    'BUY_SLIPPAGE_LIMIT': 0.005,   # 0.5%
+    'SELL_SLIPPAGE_LIMIT': 0.010,  # 1.0%
 }
 
 def get_setting(key, default, cast_type=str):
@@ -94,6 +97,8 @@ PROMPT_DECISION = get_setting('PROMPT_DECISION', DEFAULT_SETTINGS['PROMPT_DECISI
 PROMPT_CURATION = get_setting('PROMPT_CURATION', DEFAULT_SETTINGS['PROMPT_CURATION'])
 AI_ANALYSIS_INTERVAL = get_setting('AI_ANALYSIS_INTERVAL', 1200, int)
 TRADING_FEE_RATE = get_setting('TRADING_FEE_RATE', 0.001, float)
+BUY_SLIPPAGE_LIMIT = get_setting('BUY_SLIPPAGE_LIMIT', 0.005, float)
+SELL_SLIPPAGE_LIMIT = get_setting('SELL_SLIPPAGE_LIMIT', 0.010, float)
 
 def get_dynamic_max_positions(balance_usdt: float) -> int:
     """Escala dinámica de posiciones basada en el balance total (v6.1)"""

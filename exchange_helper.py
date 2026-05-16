@@ -3,7 +3,14 @@ import time
 import datetime
 import json
 import os
-from config import CRYPTO_API_KEY, CRYPTO_API_SECRET, MODO_SIMULACION, PRESUPUESTO_INICIAL
+from config import (
+    CRYPTO_API_KEY,
+    CRYPTO_API_SECRET,
+    MODO_SIMULACION,
+    PRESUPUESTO_INICIAL,
+    BUY_SLIPPAGE_LIMIT,
+    SELL_SLIPPAGE_LIMIT,
+)
 
 class ExchangeHelper:
     def __init__(self, modo_simulacion=True):
@@ -140,10 +147,11 @@ class ExchangeHelper:
                     return []
                 time.sleep(1.5) # Esperar 1.5s antes de reintentar
 
-    def execute_order(self, symbol, side, amount, price=None):
+    def execute_order(self, symbol, side, amount, price=None, force_market=False):
         """
         Ejecuta una orden. Si es simulación, actualiza los saldos virtuales.
         En simulación siempre asumimos que la orden se ejecuta al precio de mercado (ticker) actual.
+        force_market=True omite el bloqueo de slippage para ventas manuales.
         """
         if self.modo_simulacion:
             if price is None:
@@ -209,7 +217,7 @@ class ExchangeHelper:
 
                     # Control de Slippage: Comprobar el orderbook en lugar de ir a ciegas a mercado
                     ticker_price = price if price else self.get_ticker(symbol)
-                    if ticker_price:
+                    if ticker_price and not (force_market and side == "sell"):
                         orderbook = self.exchange.fetch_order_book(symbol, limit=5)
                         if side == 'buy':
                             asks = orderbook['asks']
@@ -217,7 +225,7 @@ class ExchangeHelper:
                                 raise Exception("Orderbook vacío en asks")
                             best_ask = asks[0][0]
                             slippage = abs(best_ask - ticker_price) / ticker_price
-                            if slippage > 0.005: # > 0.5%
+                            if slippage > BUY_SLIPPAGE_LIMIT:
                                 return {"status": "failed", "reason": f"Slippage demasiado alto ({slippage*100:.2f}%)"}
                         elif side == 'sell':
                             bids = orderbook['bids']
@@ -225,7 +233,7 @@ class ExchangeHelper:
                                 raise Exception("Orderbook vacío en bids")
                             best_bid = bids[0][0]
                             slippage = abs(ticker_price - best_bid) / ticker_price
-                            if slippage > 0.005:
+                            if slippage > SELL_SLIPPAGE_LIMIT:
                                 return {"status": "failed", "reason": f"Slippage demasiado alto ({slippage*100:.2f}%)"}
 
                     # Ejecutar orden real
@@ -508,7 +516,7 @@ class ExchangeHelper:
                     if bids:
                         best_bid = float(bids[0][0])
                         slip = abs(px - best_bid) / px
-                        if slip > 0.005:
+                        if slip > SELL_SLIPPAGE_LIMIT:
                             out["errors"].append(f"SLIPPAGE:{slip*100:.2f}%")
                 except Exception:
                     pass

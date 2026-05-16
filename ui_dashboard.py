@@ -158,7 +158,7 @@ def render_dashboard():
                             if amt <= 0:
                                 st.error(_('MANUAL_SELL_FAIL'))
                             else:
-                                res = exchange.execute_order(sym, "sell", amt, current_price)
+                                res = exchange.execute_order(sym, "sell", amt, current_price, force_market=True)
                                 if res.get("status") in ("closed", "simulated"):
                                     exit_p = res.get("average") or res.get("price") or current_price
                                     try:
@@ -285,7 +285,8 @@ def render_dashboard():
                 st.info("Cargando contexto macro...")
 
     with col_backtest:
-        with st.expander(f"📊 { _('BACKTEST_STATUS') }", expanded=True):
+        with st.container(border=True):
+            st.markdown(f"**📊 { _('BACKTEST_STATUS') }**")
             try:
                 import sqlite3
                 import os
@@ -308,6 +309,14 @@ def render_dashboard():
                         st.info(_('NO_BACKTEST_DATA'))
             except Exception as e:
                 st.info(f"Backtest no disponible: {e}")
+
+            st.markdown("---")
+            try:
+                from ui_news import render_news_widget
+                widget_symbols = list({*current_symbols[:12], *open_positions.keys()})
+                render_news_widget(widget_symbols, limit=4)
+            except Exception as e:
+                st.info(f"{_('NEWS_WIDGET_TITLE')}: {e}")
 
     # BOTÓN DE EMERGENCIA
     st.markdown("---")
