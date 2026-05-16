@@ -34,6 +34,8 @@ TRANSLATIONS = {
     'AVAILABLE': {'es': 'Disponible', 'en': 'Available'},
     'POSITIONS': {'es': 'Posiciones', 'en': 'Positions'},
     'PNL_USD': {'es': 'PnL USD', 'en': 'PnL USD'},
+    'DASH_MODE': {'es': 'Modo', 'en': 'Mode'},
+    'DASH_LIVE_EVENTS': {'es': 'Eventos del Bot', 'en': 'Bot Events'},
     'EQUITY_CHART': {'es': 'Patrimonio', 'en': 'Equity Curve'},
     'MARKET_CHART': {'es': 'Mercado', 'en': 'Market View'},
     'ACTIVE_POSITIONS': {'es': 'Posiciones Activas', 'en': 'Active Positions'},

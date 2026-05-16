@@ -259,16 +259,18 @@ Shows:
 - Available USDT.
 - Open positions vs effective maximum.
 - PnL vs baseline.
+- Mode and daemon state summary.
+- Active positions with quick manual sell plus detailed sell options for max or partial amounts.
+- Recent bot events.
 - Equity curve.
 - Technical chart.
-- Active positions with quick manual sell plus detailed sell options for max or partial amounts.
-- Portfolio distribution.
-- Opportunity radar.
 - System intelligence:
   - macro context,
   - backtest status,
   - quick news,
   - daemon diagnostics.
+- Portfolio distribution.
+- Opportunity radar.
 - Emergency actions.
 
 ### Exchange Wallet
@@ -1026,7 +1028,7 @@ python -m streamlit run app.py
 
 ### Dashboard
 
-Muestra equity, liquidez, posiciones, PnL, gráfico técnico, distribución, radar, macro, backtest, noticias rápidas, diagnóstico y acciones de emergencia. En posiciones activas, el botón **Vender** funciona como venta rápida de todo lo posible y el desplegable de opciones permite vender total o parcialmente.
+Muestra primero estado operativo, modo, daemon, posiciones activas y eventos recientes. Después muestra gráfico técnico, curva de patrimonio, inteligencia del sistema, diagnóstico, distribución, radar y acciones de emergencia. En posiciones activas, el botón **Vender** funciona como venta rápida de todo lo posible y el desplegable de opciones permite vender total o parcialmente.
 
 ### Cartera Exchange
 

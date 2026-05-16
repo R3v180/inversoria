@@ -161,13 +161,77 @@ def render_dashboard():
 
     # --- TOP METRICS ---
     dynamic_max = get_effective_max_positions(total_value)
-    m1, m2, m3, m4 = st.columns(4)
+    diag_raw = db.get_system_status("daemon_diagnostics", "{}")
+    try:
+        diag_top = json.loads(diag_raw or "{}")
+    except Exception:
+        diag_top = {}
+    mode_label = "SIM" if exchange.modo_simulacion else "REAL"
+    state_label = diag_top.get("state", "-")
+
+    m1, m2, m3, m4, m5, m6 = st.columns(6)
     m1.metric(_('EQUITY_TOTAL'), f"${total_value:.2f}", f"{pnl_pct:.2f}%")
     m2.metric(_('AVAILABLE'), f"${available_usdt:.2f}")
     m3.metric(_('POSITIONS'), f"{len(open_positions)} / {dynamic_max}")
     m4.metric(_('PNL_USD'), f"${pnl:.2f}", f"{pnl_pct:.2f}%")
+    m5.metric(_("DASH_MODE"), mode_label)
+    m6.metric(_("DAEMON_STATE"), state_label, f"{diag_top.get('scanned', 0)} scan")
+
+    # --- POSITIONS + LIVE EVENTS FIRST ---
+    col_left, col_right = st.columns([1.5, 1])
+
+    with col_left:
+        st.markdown(f"### 💼 { _('ACTIVE_POSITIONS') }")
+        if open_positions:
+            for sym, pos in open_positions.items():
+                current_price = exchange.get_ticker(sym) or pos['entry_price']
+                u_pnl = ((current_price - pos['entry_price']) / pos['entry_price']) * 100
+                color = "#00FFAA" if u_pnl >= 0 else "#FF4444"
+                current_value = pos.get('amount', 0) * current_price
+                with st.container():
+                    safe_key = sym.replace("/", "_").replace(" ", "_")
+                    col_info, col_chart, col_sell = st.columns([4.2, 0.9, 0.9])
+                    with col_info:
+                        st.markdown(f'<div class="position-card" style="margin-bottom: 5px; padding: 15px;"><div style="display:flex; justify-content:space-between;"><div><b>{sym}</b><br/><span style="color:gray; font-size:0.8em;">{ _("INVESTMENT") }: ${current_value:.2f}</span></div><div style="text-align:right;"><span style="font-size:1.2em; font-weight:bold; color:{color};">{u_pnl:.2f}%</span><br/><span style="font-size:0.8em;">${current_price:.4f}</span></div></div></div>', unsafe_allow_html=True)
+                    with col_chart:
+                        st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
+
+                        def update_chart_symbol(s=sym):
+                            st.session_state.selected_chart_symbol = s
+
+                        st.button("📈", key=f"btn_chart_{safe_key}", help=f"Ver gráfico de {sym}", on_click=update_chart_symbol)
+                    with col_sell:
+                        st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
+                        if st.button(
+                            _('MANUAL_SELL'),
+                            key=f"btn_sell_{safe_key}",
+                            help=_('MANUAL_SELL_HELP'),
+                            type="secondary",
+                        ):
+                            max_sell = _get_dashboard_max_sell(exchange, sym, pos)
+                            _execute_dashboard_manual_sell(db, exchange, sym, max_sell, current_price)
+                    _render_dashboard_sell_options(db, exchange, sym, pos, current_price, safe_key)
+        else:
+            st.info(_('NO_POSITIONS'))
+
+    with col_right:
+        st.markdown(f"### 🤖 { _('DASH_LIVE_EVENTS') }")
+        last_decision_raw = db.get_system_status('last_ia_decision', '{}')
+        try:
+            decision = json.loads(last_decision_raw)
+            if decision:
+                st.markdown(f'<div class="ai-card"><b>{decision.get("symbol", "N/A")}</b> | <span style="color:#00FFAA;">{decision.get("regime", "N/A")}</span><p style="font-size:0.85em; margin-top:5px;">{decision.get("reasoning", "")[:100]}...</p></div>', unsafe_allow_html=True)
+        except Exception:
+            pass
+
+        st.markdown("<br/>", unsafe_allow_html=True)
+        raw_logs = db.get_logs()
+        important_logs = [l for l in raw_logs if "Escaneo" not in l and "Ciclo" not in l][-15:]
+        log_content = "".join([f"<span style='color:#00FFAA;'>>></span> {l}<br/>" for l in important_logs])
+        st.markdown(f'<div class="log-box">{log_content}</div>', unsafe_allow_html=True)
 
     # --- COMMAND CENTER ---
+    st.markdown("---")
     col_equity, col_market = st.columns([1, 1.2])
 
     with col_equity:
@@ -219,92 +283,6 @@ def render_dashboard():
             fig.add_trace(go.Scatter(x=df['ts'], y=df['ATR_14'], line=dict(color='cyan', width=1), name="ATR"), row=3, col=1)
             fig.update_layout(height=400, margin=dict(l=0, r=0, t=0, b=0), paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", xaxis_rangeslider_visible=False)
             st.plotly_chart(fig, width='stretch')
-
-    # --- LOWER SECTION ---
-    col_left, col_right = st.columns([1.5, 1])
-
-    with col_left:
-        st.markdown(f"### 💼 { _('ACTIVE_POSITIONS') }")
-        if open_positions:
-            for sym, pos in open_positions.items():
-                current_price = exchange.get_ticker(sym) or pos['entry_price']
-                u_pnl = ((current_price - pos['entry_price']) / pos['entry_price']) * 100
-                color = "#00FFAA" if u_pnl >= 0 else "#FF4444"
-                current_value = pos.get('amount', 0) * current_price
-                with st.container():
-                    safe_key = sym.replace("/", "_").replace(" ", "_")
-                    col_info, col_chart, col_sell = st.columns([4.2, 0.9, 0.9])
-                    with col_info:
-                        st.markdown(f'<div class="position-card" style="margin-bottom: 5px; padding: 15px;"><div style="display:flex; justify-content:space-between;"><div><b>{sym}</b><br/><span style="color:gray; font-size:0.8em;">{ _("INVESTMENT") }: ${current_value:.2f}</span></div><div style="text-align:right;"><span style="font-size:1.2em; font-weight:bold; color:{color};">{u_pnl:.2f}%</span><br/><span style="font-size:0.8em;">${current_price:.4f}</span></div></div></div>', unsafe_allow_html=True)
-                    with col_chart:
-                        st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
-
-                        def update_chart_symbol(s=sym):
-                            st.session_state.selected_chart_symbol = s
-
-                        st.button("📈", key=f"btn_chart_{safe_key}", help=f"Ver gráfico de {sym}", on_click=update_chart_symbol)
-                    with col_sell:
-                        st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
-                        if st.button(
-                            _('MANUAL_SELL'),
-                            key=f"btn_sell_{safe_key}",
-                            help=_('MANUAL_SELL_HELP'),
-                            type="secondary",
-                        ):
-                            max_sell = _get_dashboard_max_sell(exchange, sym, pos)
-                            _execute_dashboard_manual_sell(db, exchange, sym, max_sell, current_price)
-                    _render_dashboard_sell_options(db, exchange, sym, pos, current_price, safe_key)
-        else: st.info(_('NO_POSITIONS'))
-
-    with col_right:
-        st.markdown(f"### 🤖 { _('ASSISTANT_TITLE') } & Logs")
-        last_decision_raw = db.get_system_status('last_ia_decision', '{}')
-        try:
-            decision = json.loads(last_decision_raw)
-            if decision:
-                st.markdown(f'<div class="ai-card"><b>{decision.get("symbol", "N/A")}</b> | <span style="color:#00FFAA;">{decision.get("regime", "N/A")}</span><p style="font-size:0.85em; margin-top:5px;">{decision.get("reasoning", "")[:100]}...</p></div>', unsafe_allow_html=True)
-        except: pass
-        
-        st.markdown("<br/>", unsafe_allow_html=True)
-        raw_logs = db.get_logs()
-        important_logs = [l for l in raw_logs if "Escaneo" not in l and "Ciclo" not in l][-15:]
-        log_content = "".join([f"<span style='color:#00FFAA;'>>></span> {l}<br/>" for l in important_logs])
-        st.markdown(f'<div class="log-box">{log_content}</div>', unsafe_allow_html=True)
-
-    # --- FINAL SECTION: PIE + RADAR ---
-    st.markdown("---")
-    c_pie, c_radar = st.columns([1, 1])
-    
-    with c_pie:
-        with st.expander(f"🥧 { _('PORTFOLIO_DIST') }", expanded=True):
-            pie_data = [{"Activo": _('CASH'), "Valor": available_usdt}]
-            for sym, amt in portfolio.items():
-                p = exchange.get_ticker(sym)
-                if p: pie_data.append({"Activo": sym, "Valor": amt * p})
-            st.plotly_chart(px.pie(pd.DataFrame(pie_data), values='Valor', names='Activo', hole=0.6, color_discrete_sequence=['#00FFAA', '#3A86FF', '#FF006E']), width='stretch')
-
-    with c_radar:
-        with st.expander(f"🛰️ { _('OPPORTUNITY_RADAR') }", expanded=True):
-            radar_data = []
-            for sym in current_symbols[:8]: # Top 8 del radar
-                stats = exchange.get_market_stats(sym)
-                raw = stats.get('change_24h')
-                try:
-                    change = float(raw) if raw is not None else 0.0
-                except (TypeError, ValueError):
-                    change = 0.0
-                radar_data.append({"Moneda": sym, "Cambio": change})
-
-            # Ordenar por cambio
-            radar_data = sorted(radar_data, key=lambda x: x['Cambio'], reverse=True)
-            for item in radar_data:
-                chg = float(item['Cambio'] or 0)
-                c_color = "#00FFAA" if chg >= 0 else "#FF4444"
-                st.markdown(
-                    f'<div class="radar-item"><span>{item["Moneda"]}</span>'
-                    f'<span style="color:{c_color}; font-weight:bold;">{chg:.2f}%</span></div>',
-                    unsafe_allow_html=True,
-                )
 
     # --- PANEL DE INTELIGENCIA ---
     st.markdown("---")
@@ -429,6 +407,41 @@ def render_dashboard():
                         st.caption(f"{count}× {reason}")
         except Exception as e:
             st.info(f"{_('DAEMON_DIAG_TITLE')}: {e}")
+
+    # --- PORTFOLIO CONTEXT ---
+    st.markdown("---")
+    c_pie, c_radar = st.columns([1, 1])
+    
+    with c_pie:
+        with st.expander(f"🥧 { _('PORTFOLIO_DIST') }", expanded=False):
+            pie_data = [{"Activo": _('CASH'), "Valor": available_usdt}]
+            for sym, amt in portfolio.items():
+                p = exchange.get_ticker(sym)
+                if p:
+                    pie_data.append({"Activo": sym, "Valor": amt * p})
+            st.plotly_chart(px.pie(pd.DataFrame(pie_data), values='Valor', names='Activo', hole=0.6, color_discrete_sequence=['#00FFAA', '#3A86FF', '#FF006E']), width='stretch')
+
+    with c_radar:
+        with st.expander(f"🛰️ { _('OPPORTUNITY_RADAR') }", expanded=False):
+            radar_data = []
+            for sym in current_symbols[:8]: # Top 8 del radar
+                stats = exchange.get_market_stats(sym)
+                raw = stats.get('change_24h')
+                try:
+                    change = float(raw) if raw is not None else 0.0
+                except (TypeError, ValueError):
+                    change = 0.0
+                radar_data.append({"Moneda": sym, "Cambio": change})
+
+            radar_data = sorted(radar_data, key=lambda x: x['Cambio'], reverse=True)
+            for item in radar_data:
+                chg = float(item['Cambio'] or 0)
+                c_color = "#00FFAA" if chg >= 0 else "#FF4444"
+                st.markdown(
+                    f'<div class="radar-item"><span>{item["Moneda"]}</span>'
+                    f'<span style="color:{c_color}; font-weight:bold;">{chg:.2f}%</span></div>',
+                    unsafe_allow_html=True,
+                )
 
     # BOTÓN DE EMERGENCIA
     st.markdown("---")
