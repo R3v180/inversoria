@@ -1,6 +1,144 @@
 import streamlit as st
 import time
+import json
+import config
 from i18n import _
+
+
+def _pending_orders():
+    if "assistant_pending_orders" not in st.session_state:
+        st.session_state.assistant_pending_orders = []
+    return st.session_state.assistant_pending_orders
+
+
+def _queue_assistant_order(action: str, symbol: str, source_text: str = ""):
+    order_id = f"{int(time.time() * 1000)}_{len(_pending_orders())}_{action}_{symbol.replace('/', '_')}"
+    _pending_orders().append({
+        "id": order_id,
+        "action": action.upper(),
+        "symbol": symbol.upper(),
+        "created_at": time.strftime('%Y-%m-%d %H:%M:%S'),
+        "source_text": source_text[:500],
+    })
+    return order_id
+
+
+def _remove_pending_order(order_id: str):
+    st.session_state.assistant_pending_orders = [
+        o for o in _pending_orders() if o.get("id") != order_id
+    ]
+
+
+def _add_or_update_buy_position(db, symbol: str, price: float, amount: float, reason: str):
+    positions = db.get_open_positions()
+    existing = positions.get(symbol)
+    if existing:
+        old_amount = float(existing.get("amount") or 0)
+        old_entry = float(existing.get("entry_price") or price)
+        total_amount = old_amount + amount
+        entry = ((old_entry * old_amount) + (price * amount)) / total_amount if total_amount > 0 else price
+        highest = max(float(existing.get("highest_price") or price), price)
+        entry_time = existing.get("entry_time")
+        amount_to_store = total_amount
+    else:
+        entry = price
+        highest = price
+        entry_time = None
+        amount_to_store = amount
+
+    extra = json.dumps({"provider": "Asistente IA", "reason": reason}, ensure_ascii=False)
+    db.add_open_position(symbol, entry, highest, amount_to_store, entry_time=entry_time, extra_data=extra)
+    db.save_trade(symbol, "buy", price, amount, reason, 0.0)
+    db.add_log(f"{reason}: {symbol} qty={amount} @ {price}")
+
+
+def _execute_pending_order(order: dict, db, exchange):
+    action = order.get("action")
+    symbol = order.get("symbol")
+    current_price = exchange.get_ticker(symbol)
+    if not current_price or current_price <= 0:
+        st.error(_("ASSIST_ORDER_NO_PRICE").format(symbol))
+        return
+
+    if action == "SELL":
+        positions = db.get_open_positions()
+        if symbol not in positions:
+            st.warning(_("ASSIST_ORDER_NO_POSITION").format(symbol))
+            return
+        pos = positions[symbol]
+        real_amount = exchange.get_coin_balance(symbol)
+        sell_amount = min(float(pos["amount"]), float(real_amount)) if real_amount > 0 else float(pos["amount"])
+        res = exchange.execute_order(symbol, "sell", sell_amount, current_price, force_market=True)
+        if res.get("status") in ["closed", "open", "simulated"]:
+            try:
+                sold = float(res.get("filled") or 0)
+            except (TypeError, ValueError):
+                sold = 0.0
+            if sold <= 0:
+                sold = float(res.get("amount") or sell_amount)
+            sold = min(sold, float(pos["amount"]))
+            exit_price = float(res.get("average") or res.get("price") or current_price)
+            db.close_position(symbol, exit_price, _("ASSIST_ORDER_SELL_REASON"), sold_amount=sold)
+            st.success(_("ASSIST_ORDER_SELL_OK").format(symbol, f"{exit_price:.6g}"))
+            _remove_pending_order(order["id"])
+            time.sleep(0.5)
+            st.rerun()
+        else:
+            st.error(f"{_('ASSIST_ORDER_FAIL')}: {res.get('reason', res)}")
+        return
+
+    if action == "BUY":
+        usdt_balance = exchange.get_usdt_balance()
+        amount_usdt = float(usdt_balance) * float(config.RISK_PER_TRADE)
+        if amount_usdt <= 1.0:
+            st.error(_("ASSIST_ORDER_LOW_BALANCE").format(f"{usdt_balance:.2f}"))
+            return
+        amount_coin = amount_usdt / float(current_price)
+        res = exchange.execute_order(symbol, "buy", amount_coin, current_price)
+        if res.get("status") in ["closed", "open", "simulated"]:
+            try:
+                filled = float(res.get("filled") or res.get("amount") or amount_coin)
+            except (TypeError, ValueError):
+                filled = amount_coin
+            _add_or_update_buy_position(db, symbol, float(current_price), filled, _("ASSIST_ORDER_BUY_REASON"))
+            st.success(_("ASSIST_ORDER_BUY_OK").format(symbol, f"{current_price:.6g}"))
+            _remove_pending_order(order["id"])
+            time.sleep(0.5)
+            st.rerun()
+        else:
+            st.error(f"{_('ASSIST_ORDER_FAIL')}: {res.get('reason', res)}")
+
+
+def _render_pending_orders(db, exchange):
+    pending = _pending_orders()
+    if not pending:
+        return
+
+    st.warning(_("ASSIST_PENDING_WARNING"))
+    for order in list(pending):
+        action = order.get("action")
+        symbol = order.get("symbol")
+        price = exchange.get_ticker(symbol) or 0.0
+        with st.container(border=True):
+            st.markdown(f"**{_('ASSIST_PENDING_ORDER')}**: `{action}` `{symbol}`")
+            st.caption(_("ASSIST_PENDING_CREATED").format(order.get("created_at", "-")))
+            if price:
+                st.metric(_("ASSIST_PENDING_PRICE"), f"${float(price):.6g}")
+            if action == "BUY":
+                bal = float(exchange.get_usdt_balance() or 0)
+                st.caption(_("ASSIST_PENDING_BUY_SIZE").format(f"{bal * float(config.RISK_PER_TRADE):.2f}"))
+            elif action == "SELL":
+                pos = db.get_open_positions().get(symbol)
+                qty = float(pos.get("amount") or 0) if pos else 0.0
+                st.caption(_("ASSIST_PENDING_SELL_SIZE").format(f"{qty:.8g}"))
+
+            c1, c2 = st.columns(2)
+            if c1.button(_("ASSIST_CONFIRM_ORDER"), key=f"confirm_{order['id']}", type="primary"):
+                _execute_pending_order(order, db, exchange)
+            if c2.button(_("ASSIST_CANCEL_ORDER"), key=f"cancel_{order['id']}"):
+                _remove_pending_order(order["id"])
+                st.rerun()
+
 
 def render_assistant():
     user_name = st.session_state.get('user_name', 'User')
@@ -17,6 +155,9 @@ def render_assistant():
         st.caption(_("WALLET_SNAPSHOT_HINT"))
         st.code(st.session_state["_asst_wallet_clip"], language=None)
     st.markdown("---")
+    _render_pending_orders(db, exchange)
+    if _pending_orders():
+        st.markdown("---")
 
     # Inicializar chat si está vacío
     if "messages" not in st.session_state:
@@ -105,7 +246,8 @@ def render_assistant():
                 Actúa como un asesor de trading experto. Tu cliente se llama {user_name}.
                 DEBES responder SIEMPRE en idioma {lang_name}.
                 Si estás proponiendo una acción, pide confirmación.
-                Si el usuario TE CONFIRMA claramente que ejecutes una orden (comprar o vender), DEBES incluir al final de tu respuesta este bloque exacto para que el sistema lo procese:
+                Si el usuario TE CONFIRMA claramente que ejecutes una orden (comprar o vender), DEBES incluir al final de tu respuesta este bloque exacto.
+                IMPORTANTE: la aplicación NO ejecutará la orden automáticamente; solo creará una tarjeta pendiente para confirmación manual mediante botón:
                 
                 [EXECUTE_ORDER]
                 ACTION: BUY o SELL
@@ -125,56 +267,22 @@ def render_assistant():
                 st.session_state.messages.append({"role": "assistant", "content": full_response, "timestamp": current_time})
                 db.save_chat_message("assistant", full_response)
                 
-                # 3. Interceptar y ejecutar órdenes
+                # 3. Interceptar órdenes propuestas: quedan pendientes hasta confirmación UI
                 import re
                 order_matches = re.finditer(r'\[EXECUTE_ORDER\]\s*ACTION:\s*(BUY|SELL)\s*SYMBOL:\s*([A-Z0-9/-]+)\s*\[/EXECUTE_ORDER\]', full_response, re.IGNORECASE)
+                queued = []
                 for order_match in order_matches:
                     action = order_match.group(1).upper()
                     symbol = order_match.group(2).upper()
-                    
-                    st.info(f"⚡ Procesando orden automática del asistente: {action} {symbol}")
-                    current_price = exchange.get_ticker(symbol)
-                    
-                    if action == 'SELL':
-                        if symbol in positions:
-                            pos = positions[symbol]
-                            real_amount = exchange.get_coin_balance(symbol)
-                            sell_amount = min(pos['amount'], real_amount) if real_amount > 0 else pos['amount']
-                            
-                            res = exchange.execute_order(symbol, 'sell', sell_amount, current_price, force_market=True)
-                            if res.get('status') in ['closed', 'open', 'simulated']:
-                                try:
-                                    sold = float(res.get('filled') or 0)
-                                except (TypeError, ValueError):
-                                    sold = 0.0
-                                if sold <= 0:
-                                    sold = float(sell_amount)
-                                sold = min(sold, float(pos['amount']))
-                                db.close_position(symbol, current_price, "Venta Manual vía Asistente", sold_amount=sold)
-                                st.success(f"✅ Venta ejecutada exitosamente: {symbol} a {current_price}")
-                                time.sleep(1) # Pausa breve para asegurar que el balance USDT se actualiza en el exchange
-                            else:
-                                st.error(f"❌ Fallo al ejecutar venta: {res.get('reason')}")
-                        else:
-                            st.warning(f"⚠️ No tienes posiciones abiertas en {symbol}")
-                            
-                    elif action == 'BUY':
-                        usdt_balance = exchange.get_usdt_balance()
-                        import config
-                        amount_usdt = usdt_balance * config.RISK_PER_TRADE
-                        if amount_usdt > 1.0:
-                            amount_coin = amount_usdt / current_price
-                            res = exchange.execute_order(symbol, 'buy', amount_coin, current_price)
-                            if res.get('status') in ['closed', 'open', 'simulated']:
-                                db.add_open_position(symbol, current_price, current_price, amount_coin, extra_data='{"provider": "Asistente IA"}')
-                                st.success(f"✅ Compra ejecutada exitosamente: {symbol} a {current_price}")
-                            else:
-                                st.error(f"❌ Fallo al ejecutar compra: {res.get('reason')}")
-                        else:
-                            st.error(f"⚠️ Balance USDT insuficiente para ejecutar compra. Balance: {usdt_balance}")
+                    _queue_assistant_order(action, symbol, full_response)
+                    queued.append(f"{action} {symbol}")
+                if queued:
+                    st.warning(_("ASSIST_ORDER_QUEUED").format(", ".join(queued)))
+                    st.rerun()
 
     # Botón para limpiar chat
     if st.sidebar.button("🧹 Limpiar Chat"):
         db.clear_chat_history()
+        st.session_state.assistant_pending_orders = []
         del st.session_state.messages
         st.rerun()

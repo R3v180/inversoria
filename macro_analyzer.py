@@ -16,7 +16,15 @@ class MacroAnalyzer:
     - WTI (Petróleo)
     - GLD (Oro)
     """
-    
+    ASSETS = {
+        "SPY": "S&P 500",
+        "UUP": "DXY (Dólar)",
+        "GLD": "Oro",
+        "USO": "Petróleo",
+        "VXX": "Volatilidad (VIX)",
+    }
+    STALE_AFTER_SECONDS = 6 * 60 * 60
+
     def __init__(self, lang='es'):
         from dotenv import load_dotenv
         load_dotenv()
@@ -25,27 +33,34 @@ class MacroAnalyzer:
         self.db = DatabaseManager()
         self.u_lang = lang
 
-    def fetch_global_market_status(self):
-        """Actualiza indicadores macro (SP500, Oro, Petróleo, etc.)"""
+    def fetch_global_market_status(self, max_assets=1):
+        """Actualiza indicadores macro sin bloquear el daemon con sleeps largos."""
         msg = "Actualizando indicadores globales..." if self.u_lang == 'es' else "Updating global indicators..."
         print(f"[Macro] {msg}")
-        
-        # Activos macro clave
-        assets = {
-            "SPY": "S&P 500",
-            "UUP": "DXY (Dólar)",
-            "GLD": "Oro",
-            "USO": "Petróleo",
-            "VXX": "Volatilidad (VIX)"
-        }
-        
-        print(f"  [*] Processing {len(assets)} assets...")
-        
+
         if not self.api_key:
             print("[Macro] Error: ALPHA_VANTAGE_API_KEY no configurada.")
             return
-        
-        for symbol, name in assets.items():
+
+        macro_data = self.db.get_all_macro_data()
+        now = time.time()
+        candidates = []
+        for symbol, name in self.ASSETS.items():
+            last_update = float((macro_data.get(symbol) or {}).get('last_update') or 0)
+            age = now - last_update
+            if age >= self.STALE_AFTER_SECONDS:
+                candidates.append((last_update, symbol, name))
+
+        if not candidates:
+            print("  [OK] Macro cache vigente; no hay activos vencidos.")
+            return
+
+        candidates.sort(key=lambda x: x[0])
+        if max_assets is not None:
+            candidates = candidates[:max(1, int(max_assets))]
+        print(f"  [*] Processing {len(candidates)} stale asset(s)...")
+
+        for _, symbol, name in candidates:
             try:
                 params = {
                     "function": "GLOBAL_QUOTE",
@@ -71,10 +86,7 @@ class MacroAnalyzer:
                     print(f"  [{status_ok}] {symbol} ({name}): ${price} ({change_pct:+.2f}%)")
                 else:
                     print(f"  [?] {symbol}: No data in response (Check API Key or Symbol)")
-                
-                # Alpha Vantage Free Tier: 5 calls per minute
-                time.sleep(15) 
-                
+
             except Exception as e:
                 err_msg = "Error fetching" if self.u_lang == "en" else "Error consultando"
                 print(f"  [!] {err_msg} {symbol}: {e}")

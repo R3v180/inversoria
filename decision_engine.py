@@ -290,7 +290,7 @@ Si la confluencia MTF es fuerte ({confluence_score:.0%}), puedes aumentar positi
         if not is_already_open:
             passes, reason = self.quick_technical_filter(indicators, current_price)
             if not passes:
-                return {"action": "HOLD", "reasoning": reason, "confidence": 0.0}
+                return {"action": "HOLD", "reasoning": reason, "confidence": 0.0, "provider": "TechnicalFilter"}
 
         decision = self.analyze_with_ai_hybrid(symbol, current_price, indicators, ohlcv)
         if not decision:
@@ -299,5 +299,9 @@ Si la confluencia MTF es fuerte ({confluence_score:.0%}), puedes aumentar positi
         # Umbral bajado de 0.60 a 0.52 para más operaciones
         if decision.get("confidence", 0) < 0.52:
             decision["action"] = "HOLD"
+            decision["reasoning"] = (
+                f"[LOW CONF] {decision.get('reasoning', '')} "
+                f"(conf {decision.get('confidence', 0):.0%} < 52%)"
+            )
 
         return decision

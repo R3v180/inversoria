@@ -318,6 +318,39 @@ def render_dashboard():
             except Exception as e:
                 st.info(f"{_('NEWS_WIDGET_TITLE')}: {e}")
 
+    diag_raw = db.get_system_status("daemon_diagnostics", "{}")
+    with st.expander(f"🩺 { _('DAEMON_DIAG_TITLE') }", expanded=False):
+        try:
+            diag = json.loads(diag_raw or "{}")
+            if not diag:
+                st.info(_('DAEMON_NO_DIAG'))
+            else:
+                state_age = max(0, int(time.time() - float(diag.get("state_ts", 0))))
+                cycle_ts = float(diag.get("cycle_ts") or 0)
+                cycle_age = max(0, int(time.time() - cycle_ts)) if cycle_ts else None
+                d1, d2, d3, d4 = st.columns(4)
+                d1.metric(_('DAEMON_STATE'), diag.get("state", "-"), f"{state_age}s")
+                d2.metric(_('DAEMON_LAST_CYCLE'), f"{cycle_age}s" if cycle_age is not None else "-")
+                d3.metric(_('DAEMON_SCANNED'), diag.get("scanned", 0))
+                d4.metric(_('DAEMON_OPEN_POS'), f"{diag.get('open_positions', 0)} / {diag.get('dynamic_max', '-')}")
+
+                a1, a2, a3 = st.columns(3)
+                actions = diag.get("actions", {})
+                a1.caption(f"BUY: {actions.get('BUY', 0)}")
+                a2.caption(f"SELL: {actions.get('SELL', 0)}")
+                a3.caption(f"HOLD: {actions.get('HOLD', 0)}")
+
+                if diag.get("providers"):
+                    st.caption("Providers: " + ", ".join(f"{k}: {v}" for k, v in diag["providers"].items()))
+                if diag.get("skipped"):
+                    st.caption("Skipped: " + ", ".join(f"{k}: {v}" for k, v in diag["skipped"].items()))
+                if diag.get("hold_reasons"):
+                    st.markdown(f"**{_('DAEMON_TOP_HOLDS')}**")
+                    for reason, count in diag["hold_reasons"].items():
+                        st.caption(f"{count}× {reason}")
+        except Exception as e:
+            st.info(f"{_('DAEMON_DIAG_TITLE')}: {e}")
+
     # BOTÓN DE EMERGENCIA
     st.markdown("---")
     with st.expander(f"⚠️ { _('EMERGENCY_ACTIONS') }", expanded=False):

@@ -40,13 +40,29 @@ class BotDaemon:
         from macro_analyzer import MacroAnalyzer
         self.macro_analyzer = MacroAnalyzer()
         self.last_macro_update = 0
-        self.MACRO_INTERVAL = 86400 # 24 horas para ahorrar API (Límite 25/día)
+        self.MACRO_INTERVAL = 900 # 15 min: actualiza 1 activo vencido por ciclo, sin bloquear
 
         self.log_message(_('LOG_DAEMON_INIT', lang=self.u_lang))
 
     def log_message(self, msg):
         print(f"[DAEMON] {msg}")
         self.db.add_log(msg)
+
+    def update_daemon_status(self, state, **extra):
+        try:
+            payload = json.loads(self.db.get_system_status("daemon_diagnostics", "{}") or "{}")
+        except Exception:
+            payload = {}
+        payload.update({
+            "state": state,
+            "state_ts": time.time(),
+            "lang": getattr(self, "u_lang", "es"),
+            "watchlist_size": len(getattr(self, "active_symbols", []) or []),
+        })
+        if state == "cycle_done":
+            payload["cycle_ts"] = payload["state_ts"]
+        payload.update(extra)
+        self.db.set_system_status("daemon_diagnostics", json.dumps(payload))
 
     def update_dynamic_watchlist(self):
         self.log_message(_('LOG_SCANNING_RADAR', lang=self.u_lang))
@@ -140,11 +156,12 @@ class BotDaemon:
                 if now - self.last_backtest_run > self.BACKTEST_INTERVAL:
                     self.run_weekly_backtest()
 
-                # Actualización Macro v6.0 (cada 6h)
+                # Actualización macro incremental: 1 activo vencido cada intervalo
                 if now - self.last_macro_update > self.MACRO_INTERVAL:
+                    self.update_daemon_status("macro_refresh")
                     from macro_analyzer import MacroAnalyzer
                     macro = MacroAnalyzer(lang=self.u_lang)
-                    macro.fetch_global_market_status()
+                    macro.fetch_global_market_status(max_assets=1)
                     self.last_macro_update = now
                     
                 is_running = self.db.get_system_status('is_running')
@@ -170,13 +187,22 @@ class BotDaemon:
                         self.log_message(f"{ _('LOG_INITIAL_REAL', lang=self.u_lang) } ${current_equity:.2f}")
 
                 self.bot_iteration()
+                self.update_daemon_status("sleeping", next_cycle_in=60)
                 time.sleep(60)
             except Exception as e:
+                self.update_daemon_status("error", error=str(e))
                 self.log_message(f"Error crítico en daemon: {e}")
                 time.sleep(30)
 
     def bot_iteration(self):
         print("[DAEMON] --- Escaneo de Ciclo ---")
+        cycle_start = time.time()
+        self.update_daemon_status("scanning", cycle_started_at=cycle_start)
+        action_counts = {"BUY": 0, "SELL": 0, "HOLD": 0}
+        providers = {}
+        hold_reasons = {}
+        scanned = 0
+        skipped = {}
         
         # El balance total ya incluye el valor de todas las criptos en USDT
         total_value = self.exchange.get_balance()
@@ -190,7 +216,10 @@ class BotDaemon:
 
         for symbol in self.active_symbols:
             current_price = self.exchange.get_ticker(symbol)
-            if not current_price: continue
+            if not current_price:
+                skipped["NO_PRICE"] = skipped.get("NO_PRICE", 0) + 1
+                continue
+            scanned += 1
             
             # Adopción de posiciones externas
             if symbol not in open_positions:
@@ -203,13 +232,23 @@ class BotDaemon:
             # Análisis
             ohlcv = self.exchange.get_historical_data(symbol)
             indicators = self.logic.calculate_indicators(ohlcv)
-            if not indicators: continue
+            if not indicators:
+                skipped["NO_INDICATORS"] = skipped.get("NO_INDICATORS", 0) + 1
+                continue
             
             is_open = symbol in open_positions
             decision = self.decision_engine.get_decision(symbol, current_price, indicators, ohlcv, len(open_positions), is_open)
-            if not decision: continue
+            if not decision:
+                skipped["NO_DECISION"] = skipped.get("NO_DECISION", 0) + 1
+                continue
             
             provider = decision.get('provider', 'IA')
+            action = decision.get('action', 'HOLD')
+            action_counts[action] = action_counts.get(action, 0) + 1
+            providers[provider] = providers.get(provider, 0) + 1
+            if action == "HOLD":
+                reason = str(decision.get('reasoning', 'HOLD')).split("...")[0][:80]
+                hold_reasons[reason] = hold_reasons.get(reason, 0) + 1
             # Guardar para UI (Global y por Símbolo)
             decision_json = json.dumps({
                 'symbol': symbol,
@@ -335,6 +374,18 @@ class BotDaemon:
                             f"BOT [{provider}]", 0.0,
                         )
                         self.log_message(f"{ _('LOG_BUY', lang=self.u_lang) } {symbol} @ {current_price} [{provider}]")
+
+        diag = {
+            "cycle_duration_s": round(time.time() - cycle_start, 2),
+            "scanned": scanned,
+            "actions": action_counts,
+            "providers": providers,
+            "hold_reasons": dict(sorted(hold_reasons.items(), key=lambda kv: kv[1], reverse=True)[:5]),
+            "skipped": skipped,
+            "open_positions": len(open_positions),
+            "dynamic_max": getattr(self, "dynamic_max", None),
+        }
+        self.update_daemon_status("cycle_done", **diag)
 
 if __name__ == "__main__":
     daemon = BotDaemon()

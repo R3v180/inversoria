@@ -1,12 +1,34 @@
+import argparse
 import os
+import sys
+
+try:
+    sys.stdout.reconfigure(encoding='utf-8')
+except Exception:
+    pass
 
 # Configuraciones de exportación
-allowed_extensions = {'.py', '.env', '.json', '.md', '.txt', '.sql'}
-ignore_items = {'venv', '__pycache__', '.git', 'codigo_completo.txt', 'iversoria.db', 'iversoria_bot.log'}
+parser = argparse.ArgumentParser(description="Exporta el código del proyecto a un TXT.")
+parser.add_argument(
+    "--include-env",
+    action="store_true",
+    help="Incluye .env explícitamente. Peligroso: puede contener claves/API secrets.",
+)
+args = parser.parse_args()
+
+allowed_extensions = {'.py', '.json', '.md', '.txt', '.sql', '.example'}
+ignore_items = {
+    'venv', '__pycache__', '.git', 'codigo_completo.txt', 'iversoria.db',
+    'iversoria_bot.log', '.env',
+}
+if args.include_env:
+    ignore_items.discard('.env')
 
 output_file = "codigo_completo.txt"
 
 print(f"Generando {output_file}...")
+if not args.include_env:
+    print("Modo seguro: .env queda excluido. Usa --include-env solo si sabes lo que haces.")
 
 with open(output_file, 'w', encoding='utf-8') as outfile:
     for root, dirs, files in os.walk(os.getcwd()):
@@ -15,7 +37,7 @@ with open(output_file, 'w', encoding='utf-8') as outfile:
         
         for filename in files:
             ext = os.path.splitext(filename)[1]
-            if filename == '.env' or ext in allowed_extensions:
+            if ext in allowed_extensions or (args.include_env and filename == '.env'):
                 if filename in ignore_items:
                     continue
                 
