@@ -90,6 +90,7 @@ Available today:
   - manual sells can force market execution when the user explicitly clicks.
 - News feed with images, sentiment, impact and manual buy workflow.
 - Dashboard quick-news widget.
+- Dynamic radar hard-filter for fiat/stablecoin pairs before they can enter the watchlist.
 - AI assistant with mandatory explicit UI confirmation before any order.
 - Safe configuration import/export with validation, backups and secret blocking.
 - AI assistant can propose configuration changes, but the UI requires explicit confirmation before applying them.
@@ -171,6 +172,7 @@ bot_daemon.py
 ├── Reload config / user_settings.json
 ├── Sync language and simulation/real mode
 ├── Refresh dynamic watchlist when due
+├── Sanitize dynamic watchlist to exclude fiat/stablecoin pairs
 ├── Run weekly backtest when due
 ├── Refresh one stale macro asset when due
 ├── Check if the bot is enabled
@@ -917,6 +919,7 @@ Modos disponibles:
 - Ventas manuales forzadas por decisión explícita del usuario.
 - Noticias RSS con imágenes, sentimiento, impacto y compra manual.
 - Widget de noticias rápidas en dashboard.
+- Filtro duro del radar dinámico para excluir pares fiat/stablecoin antes de entrar en la watchlist.
 - Asistente IA con confirmación obligatoria antes de ejecutar.
 - Importación/exportación segura de configuración con validación, backups y bloqueo de secretos.
 - El asistente IA puede proponer cambios de configuración, pero la UI exige confirmación explícita antes de aplicarlos.
@@ -980,6 +983,7 @@ bot_daemon.py
 ├── Recarga configuración
 ├── Sincroniza idioma y modo
 ├── Actualiza watchlist si toca
+├── Limpia la watchlist dinámica para excluir pares fiat/stablecoin
 ├── Ejecuta backtest semanal si toca
 ├── Refresca un activo macro vencido si toca
 ├── Comprueba si el bot está activo

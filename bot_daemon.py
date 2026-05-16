@@ -10,6 +10,15 @@ from decision_engine import DecisionEngine
 from market_context import MarketContext
 from i18n import _
 
+
+BLOCKED_RADAR_BASES = {
+    # Fiat / cash-like assets should never consume trading slots.
+    "USD", "EUR", "GBP", "AUD", "CAD", "CHF", "JPY",
+    # Stablecoins and wrapped cash proxies.
+    "USDT", "USDC", "DAI", "TUSD", "FDUSD", "PYUSD", "BUSD", "USDP", "EURC",
+}
+
+
 class BotDaemon:
     def __init__(self):
         self.db = DatabaseManager()
@@ -64,6 +73,31 @@ class BotDaemon:
         payload.update(extra)
         self.db.set_system_status("daemon_diagnostics", json.dumps(payload))
 
+    def is_allowed_radar_symbol(self, symbol):
+        try:
+            base, quote = str(symbol).strip().upper().split("/", 1)
+        except ValueError:
+            return False
+        if quote != "USDT":
+            return False
+        return base not in BLOCKED_RADAR_BASES
+
+    def sanitize_watchlist(self, symbols):
+        cleaned = []
+        blocked = []
+        for symbol in symbols or []:
+            sym = str(symbol).strip().upper()
+            if not sym:
+                continue
+            if "/" not in sym:
+                sym = f"{sym}/USDT"
+            if not self.is_allowed_radar_symbol(sym):
+                blocked.append(sym)
+                continue
+            if sym not in cleaned:
+                cleaned.append(sym)
+        return cleaned, blocked
+
     def update_dynamic_watchlist(self):
         self.log_message(_('LOG_SCANNING_RADAR', lang=self.u_lang))
         try:
@@ -72,6 +106,9 @@ class BotDaemon:
                 self.log_message("⚠️ No se pudo obtener el ranking del exchange.")
                 return
             curated = self.decision_engine.curate_watchlist(raw_top)
+            curated, blocked = self.sanitize_watchlist(curated)
+            if blocked:
+                self.log_message(f"⚠️ Radar filtrado: excluidos {', '.join(blocked[:8])}")
             if curated:
                 self.active_symbols = curated
                 self.db.set_system_status('dynamic_watchlist', ",".join(curated))
@@ -84,9 +121,12 @@ class BotDaemon:
     def load_active_watchlist(self):
         saved = self.db.get_system_status('dynamic_watchlist')
         if saved:
-            self.active_symbols = [s.strip() for s in saved.split(',') if s.strip()]
+            self.active_symbols, blocked = self.sanitize_watchlist(saved.split(','))
+            if blocked:
+                self.db.set_system_status('dynamic_watchlist', ",".join(self.active_symbols))
+                self.log_message(f"⚠️ Radar guardado limpiado: excluidos {', '.join(blocked[:8])}")
         else:
-            self.active_symbols = config.SYMBOLS
+            self.active_symbols, _ = self.sanitize_watchlist(config.SYMBOLS)
 
     def run_weekly_backtest(self):
         # ...
