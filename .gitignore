@@ -8,6 +8,10 @@
 !.env.example
 !requirements.txt
 
+# Herramientas locales / internas
+export_code.py
+export_code.bat
+
 # Python
 __pycache__/
 *.pyc

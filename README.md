@@ -11,6 +11,8 @@
 
 ### Autonomous crypto trading bot with hybrid AI, global macro filters, historical backtesting, exchange wallet intelligence, news catalysts and safe human confirmation.
 
+![InversorIA Dashboard](docs/dashboard.png)
+
 **🇬🇧 [English](#english-documentation) | 🇪🇸 [Español](#documentación-en-español)**
 
 > Disclaimer: InversorIA is not financial advice. Real mode can place real orders on Crypto.com. Use minimal API permissions, start in simulation, and verify every behavior before trading real funds.
@@ -39,10 +41,9 @@
 14. [Important Files](#important-files)
 15. [SQLite Database](#sqlite-database)
 16. [Security](#security)
-17. [Code Export](#code-export)
-18. [Troubleshooting](#troubleshooting)
-19. [Operational Guidelines](#operational-guidelines)
-20. [Suggested Roadmap](#suggested-roadmap)
+17. [Troubleshooting](#troubleshooting)
+18. [Operational Guidelines](#operational-guidelines)
+19. [Suggested Roadmap](#suggested-roadmap)
 
 ---
 
@@ -93,7 +94,6 @@ Available today:
 - Historical backtesting engine with SQLite priors.
 - Incremental global macro refresh with Alpha Vantage.
 - Daemon telemetry in the dashboard.
-- Safe code export that excludes `.env` by default.
 
 ---
 
@@ -155,8 +155,6 @@ Main modules:
 | `ui_terminal.py` | Technical terminal and logs. |
 | `ui_history.py` | Trade history and analytics. |
 | `runtime_bootstrap.py` | Defensive Streamlit hot-reload helpers. |
-| `export_code.py` | Safe code exporter. |
-| `export_code.bat` | Windows launcher for code export. |
 
 ---
 
@@ -674,7 +672,6 @@ Recommended workflow:
 | `iversoria.db` | Local SQLite DB | Ignored |
 | `simulated_account.json` | Paper account state | Ignored |
 | `iversoria_bot.log` | Local log | Ignored |
-| `codigo_completo.txt` | Exported code dump | Ignored |
 
 ---
 
@@ -703,7 +700,6 @@ Never commit or share:
 
 - `.env`
 - `user_settings.json`
-- `codigo_completo.txt`
 - `iversoria.db`
 - logs
 
@@ -718,30 +714,6 @@ Assistant safety:
 
 - AI proposals require explicit UI confirmation.
 - No order is executed by free text alone.
-
----
-
-## Code Export
-
-Safe export:
-
-```bash
-python export_code.py
-```
-
-This creates `codigo_completo.txt` and excludes `.env`.
-
-Explicitly include `.env` only if you know what you are doing:
-
-```bash
-python export_code.py --include-env
-```
-
-Windows launcher:
-
-```bat
-export_code.bat
-```
 
 ---
 
@@ -802,10 +774,6 @@ Use:
 chcp 65001
 set PYTHONIOENCODING=utf-8
 ```
-
-The included `export_code.bat` already handles this.
-
----
 
 ## Operational Guidelines
 
@@ -877,10 +845,9 @@ Possible future improvements:
 14. [Archivos Importantes](#archivos-importantes)
 15. [Base De Datos SQLite](#base-de-datos-sqlite)
 16. [Seguridad](#seguridad-1)
-17. [Exportar Código](#exportar-código)
-18. [Solución De Problemas](#solución-de-problemas)
-19. [Buenas Prácticas](#buenas-prácticas)
-20. [Roadmap Sugerido](#roadmap-sugerido-1)
+17. [Solución De Problemas](#solución-de-problemas)
+18. [Buenas Prácticas](#buenas-prácticas)
+19. [Roadmap Sugerido](#roadmap-sugerido-1)
 
 ---
 
@@ -1255,7 +1222,6 @@ python bot_daemon.py
 | `iversoria.db` | SQLite | Ignorado |
 | `simulated_account.json` | Cuenta sim | Ignorado |
 | `iversoria_bot.log` | Log local | Ignorado |
-| `codigo_completo.txt` | Export | Ignorado |
 
 ---
 
@@ -1282,7 +1248,6 @@ No compartas ni subas:
 
 - `.env`
 - `user_settings.json`
-- `codigo_completo.txt`
 - `iversoria.db`
 - logs
 
@@ -1292,28 +1257,6 @@ Recomendación Crypto.com:
 - Sin permisos de retiro.
 - IP whitelist si existe.
 - Probar primero en simulación.
-
----
-
-## Exportar Código
-
-Seguro:
-
-```bash
-python export_code.py
-```
-
-Incluyendo `.env` explícitamente:
-
-```bash
-python export_code.py --include-env
-```
-
-Windows:
-
-```bat
-export_code.bat
-```
 
 ---
 
@@ -1360,7 +1303,6 @@ pip install pandas-ta
 - No uses la IA como autoridad final.
 - Compra manual solo con catalizador + gráfico + macro.
 - Mantén riesgo bajo en real.
-- No compartas exports con claves.
 
 ---
 
