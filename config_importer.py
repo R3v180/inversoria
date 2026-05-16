@@ -183,7 +183,11 @@ def diff_config_changes(changes: dict):
     for key, new_value in changes.items():
         old_value = get_setting(key, None)
         if old_value != new_value:
-            rows.append({"Campo": key, "Antes": old_value, "Después": new_value})
+            rows.append({
+                "Campo": str(key),
+                "Antes": "" if old_value is None else str(old_value),
+                "Después": "" if new_value is None else str(new_value),
+            })
     return rows
 
 
