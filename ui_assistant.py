@@ -1,6 +1,8 @@
 import streamlit as st
 import time
 import json
+import os
+import sqlite3
 import config
 from i18n import _
 
@@ -140,6 +142,264 @@ def _render_pending_orders(db, exchange):
                 st.rerun()
 
 
+def _safe_float(value, default=0.0):
+    try:
+        return float(value or default)
+    except (TypeError, ValueError):
+        return default
+
+
+def _compact_daemon_context(db):
+    try:
+        diag = json.loads(db.get_system_status("daemon_diagnostics", "{}") or "{}")
+    except Exception:
+        diag = {}
+    if not diag:
+        return "Sin diagnóstico del daemon todavía."
+
+    state = diag.get("state", "-")
+    scanned = diag.get("scanned", 0)
+    actions = diag.get("actions", {})
+    providers = diag.get("providers", {})
+    holds = diag.get("hold_reasons", {})
+    skipped = diag.get("skipped", {})
+    open_pos = diag.get("open_positions", 0)
+    dyn_max = diag.get("dynamic_max", "-")
+    cycle_age = "-"
+    if diag.get("cycle_ts"):
+        cycle_age = f"{max(0, int(time.time() - float(diag.get('cycle_ts'))))}s"
+
+    lines = [
+        f"Estado={state}; último ciclo={cycle_age}; escaneados={scanned}; posiciones={open_pos}/{dyn_max}",
+        "Acciones ciclo: " + ", ".join(f"{k}:{v}" for k, v in actions.items()) if actions else "Acciones ciclo: N/A",
+        "Providers: " + ", ".join(f"{k}:{v}" for k, v in providers.items()) if providers else "Providers: N/A",
+    ]
+    if skipped:
+        lines.append("Skipped: " + ", ".join(f"{k}:{v}" for k, v in skipped.items()))
+    if diag.get("top_buy_candidates"):
+        lines.append(
+            "Top BUY candidates: " + " | ".join(
+                f"{c.get('symbol')} score={c.get('score')} conf={float(c.get('confidence', 0)):.0%}"
+                for c in diag.get("top_buy_candidates", [])[:5]
+            )
+        )
+    if holds:
+        top = list(holds.items())[:5]
+        lines.append("Top HOLD reasons: " + " | ".join(f"{v}x {k}" for k, v in top))
+    return "\n".join(lines)
+
+
+def _compact_settings_context(exchange):
+    mode = "simulación" if exchange.modo_simulacion else "REAL"
+    effective = config.get_effective_max_positions(_safe_float(exchange.get_balance()))
+    return "\n".join([
+        f"Modo={mode}",
+        f"RISK_PER_TRADE={config.RISK_PER_TRADE:.2%}",
+        f"MAX_OPEN_POSITIONS={config.MAX_OPEN_POSITIONS}; límite efectivo={effective}; prioridad manual={config.get_setting('MANUAL_MAX_POSITIONS_PRIORITY', False, bool)}",
+        f"MIN_PROFIT_NET={config.get_setting('MIN_PROFIT_NET', 1.0, float):.2f}%",
+        f"ROTATION_ENABLED={config.ROTATION_ENABLED}; ROTATION_MIN_PROFIT={config.ROTATION_MIN_PROFIT:.2f}%; GAP={config.ROTATION_CONFIDENCE_GAP:.2f}; MIN_NEW_CONF={config.ROTATION_MIN_NEW_CONFIDENCE:.2f}",
+        f"BUY_SLIPPAGE_LIMIT={config.BUY_SLIPPAGE_LIMIT:.2%}; SELL_SLIPPAGE_LIMIT={config.SELL_SLIPPAGE_LIMIT:.2%}; TRADING_FEE_RATE={config.TRADING_FEE_RATE:.3%}",
+        f"AI_ANALYSIS_INTERVAL={config.AI_ANALYSIS_INTERVAL}s",
+    ])
+
+
+def _compact_positions_context(db, exchange):
+    positions = db.get_open_positions()
+    if not positions:
+        return "Sin posiciones abiertas gestionadas por el bot."
+
+    lines = []
+    for sym, pos in list(positions.items())[:10]:
+        entry = _safe_float(pos.get("entry_price"))
+        amount = _safe_float(pos.get("amount"))
+        px = _safe_float(exchange.get_ticker(sym), entry)
+        value = amount * px
+        pnl = ((px - entry) / entry * 100.0) if entry > 0 else 0.0
+        lines.append(f"{sym}: qty={amount:.8g}; entry={entry:.8g}; px={px:.8g}; valor~{value:.2f} USDT; PnL={pnl:+.2f}%")
+    return "\n".join(lines)
+
+
+def _compact_wallet_context(db, exchange, max_rows=8):
+    try:
+        rows = exchange.get_spot_inventory_rows()
+    except Exception as exc:
+        return f"No se pudo leer cartera exchange: {exc}"
+    if not rows or rows[0].get("error"):
+        return f"Cartera exchange no disponible: {rows[0].get('error') if rows else 'sin datos'}"
+
+    open_pos = db.get_open_positions()
+    recoverable = []
+    bot_assets = []
+    blocked = []
+    untracked_value = 0.0
+
+    for row in rows:
+        sym = row.get("symbol")
+        coin = row.get("coin")
+        if coin in ("USDT", "USD") or not sym:
+            continue
+        free = _safe_float(row.get("free"))
+        usd_free = _safe_float(row.get("usd_free"))
+        if usd_free > 0 and sym not in open_pos:
+            untracked_value += usd_free
+        if free <= 0:
+            continue
+        in_bot = sym in open_pos
+        if in_bot:
+            bot_assets.append((usd_free, f"{sym}: libre~{usd_free:.2f} USDT (posición bot)"))
+            continue
+        px = _safe_float(exchange.get_ticker(sym))
+        pv = exchange.prevalidate_market_sell(sym, free, px, free_override=free)
+        if pv.get("ok"):
+            recoverable.append((usd_free, f"{sym}: recuperable libre~{usd_free:.2f} USDT"))
+        else:
+            errs = ",".join(pv.get("errors", [])[:2])
+            blocked.append((usd_free, f"{sym}: no vendible ahora libre~{usd_free:.2f} USDT ({errs})"))
+
+    def top_text(items):
+        items = sorted(items, key=lambda x: -x[0])[:max_rows]
+        return "\n".join(x[1] for x in items) if items else "(ninguno)"
+
+    return "\n".join([
+        f"Valor libre no gestionado aprox: {untracked_value:.2f} USDT",
+        "Recuperables sin posición bot:",
+        top_text(recoverable),
+        "Saldos libres en posición bot:",
+        top_text(bot_assets),
+        "No vendibles principales:",
+        top_text(blocked),
+    ])
+
+
+def _compact_decisions_context(db, symbols):
+    lines = []
+    seen = []
+    for sym in symbols:
+        if sym and sym not in seen:
+            seen.append(sym)
+    for sym in seen[:12]:
+        raw = db.get_system_status(f"decision_{sym}")
+        if not raw:
+            continue
+        try:
+            dec = json.loads(raw)
+        except Exception:
+            continue
+        reason = str(dec.get("reasoning", ""))[:100]
+        lines.append(
+            f"{sym}: {dec.get('action', 'HOLD')} conf={_safe_float(dec.get('confidence')):.0%} "
+            f"regime={dec.get('regime', '-')} strategy={dec.get('best_strategy', '-')} reason={reason}"
+        )
+    return "\n".join(lines) if lines else "Sin decisiones recientes por símbolo."
+
+
+def _compact_backtest_context():
+    try:
+        db_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "iversoria.db")
+        with sqlite3.connect(db_path, timeout=5) as conn:
+            conn.row_factory = sqlite3.Row
+            runs = conn.execute(
+                'SELECT symbol, timeframe, win_rate, best_strategy FROM backtest_runs ORDER BY run_timestamp DESC LIMIT 5'
+            ).fetchall()
+        if not runs:
+            return "Sin datos de backtest."
+        return ", ".join(f"{r['symbol']} {r['timeframe']} WR:{r['win_rate']:.0%} best:{r['best_strategy']}" for r in runs)
+    except Exception as exc:
+        return f"Backtest no disponible: {exc}"
+
+
+def _compact_news_context(symbols, limit=5):
+    try:
+        from ui_news import _cached_news
+        items, errors = _cached_news()
+    except Exception as exc:
+        return f"Noticias no disponibles: {exc}"
+    if not items:
+        return "Sin noticias cacheadas."
+    symbol_set = set(symbols or [])
+
+    def score(item):
+        related = set(item.get("related_symbols") or [])
+        impact_weight = {"high": 3, "medium": 2, "low": 1}.get(item.get("impact"), 0)
+        sentiment_weight = {"positive": 1, "neutral": 0, "negative": -1}.get(item.get("sentiment"), 0)
+        relation_weight = 4 if related & symbol_set else 0
+        return relation_weight + impact_weight + sentiment_weight
+
+    ranked = sorted(items, key=score, reverse=True)[:limit]
+    lines = []
+    for item in ranked:
+        related = ",".join(item.get("related_symbols") or []) or "global"
+        lines.append(f"{item.get('source')}: {item.get('title')} [{related}; {item.get('sentiment')}; {item.get('impact')}]")
+    if errors:
+        lines.append("Fuentes con error: " + "; ".join(errors[:2]))
+    return "\n".join(lines)
+
+
+def _build_assistant_context(db, exchange):
+    balance = _safe_float(exchange.get_balance())
+    usdt = _safe_float(exchange.get_usdt_balance())
+    positions = db.get_open_positions()
+    saved_watchlist = db.get_system_status('dynamic_watchlist', '')
+    watchlist = [s.strip() for s in saved_watchlist.split(',') if s.strip()] or list(config.SYMBOLS)
+    focus_symbols = list(dict.fromkeys(list(positions.keys()) + watchlist[:12]))
+
+    try:
+        macro = json.loads(db.get_system_status('macro_context', '{}') or '{}')
+    except Exception:
+        macro = {}
+    macro_db = db.get_all_macro_data()
+    macro_lines = []
+    if macro:
+        macro_lines.append(
+            f"Régimen={macro.get('macro_regime')}; BTC dominance={macro.get('btc_dominance')}%; "
+            f"sector líder={macro.get('leading_sector')}; cap24h={macro.get('market_cap_change_24h')}"
+        )
+    if macro_db:
+        macro_lines.append("Global: " + " | ".join(
+            f"{k} {v['price']} ({v['change_24h']:+.2f}%)" for k, v in macro_db.items()
+        ))
+
+    logs = db.get_logs()[-8:]
+    return f"""
+=== CONTEXTO OPERATIVO COMPACTO INVERSORIA ===
+
+MODO / CONFIG:
+{_compact_settings_context(exchange)}
+
+CARTERA:
+- Equity estimado: {balance:.2f} USDT
+- USDT libre: {usdt:.2f}
+- Posiciones bot: {len(positions)}
+{_compact_positions_context(db, exchange)}
+
+CARTERA EXCHANGE / RETALES:
+{_compact_wallet_context(db, exchange)}
+
+MACRO:
+{chr(10).join(macro_lines) if macro_lines else 'Sin macro_context disponible.'}
+
+BACKTEST:
+{_compact_backtest_context()}
+
+DAEMON:
+{_compact_daemon_context(db)}
+
+DECISIONES RECIENTES:
+{_compact_decisions_context(db, focus_symbols)}
+
+NOTICIAS RELEVANTES:
+{_compact_news_context(focus_symbols)}
+
+ÚLTIMOS LOGS:
+{logs}
+
+REGLAS DE SEGURIDAD:
+- No ejecutes órdenes directamente: si el usuario confirma una operación, emite el bloque [EXECUTE_ORDER]; la app creará una orden pendiente con botón de confirmación.
+- Diferencia siempre entre posiciones del bot (open_positions) y saldos/retales del exchange.
+- Si hablas de comprar, considera macro, diagnóstico daemon, slippage, riesgo por trade, posiciones disponibles y noticias.
+""".strip()
+
+
 def render_assistant():
     user_name = st.session_state.get('user_name', 'User')
     db = st.session_state.db
@@ -192,53 +452,8 @@ def render_assistant():
         # Respuesta de la IA
         with st.chat_message("assistant"):
             with st.spinner("Pensando e investigando..."):
-                # 1. Preparar contexto (Balance, Posiciones, Últimos logs y CAPAS DE INTELIGENCIA)
-                balance = exchange.get_balance()
-                positions = db.get_open_positions()
-                logs = db.get_logs()[-10:]
-                
-                # Extraer conocimiento de las nuevas capas (Macro y Backtest)
-                import json
-                import sqlite3
-                import os
-                
-                macro_info = "Sin datos"
-                try:
-                    macro = json.loads(db.get_system_status('macro_context', '{}'))
-                    macro_db = db.get_all_macro_data()
-                    macro_list = [f"{k}: {v['price']} ({v['change_24h']:+.2f}%)" for k, v in macro_db.items()]
-                    macro_str = " | ".join(macro_list) if macro_list else "N/A"
-                    
-                    if macro:
-                        macro_info = (
-                            f"Régimen: {macro.get('macro_regime')}, "
-                            f"BTC Dominancia: {macro.get('btc_dominance')}%, "
-                            f"Sector Líder: {macro.get('leading_sector')}. "
-                            f"Indicadores Globales: {macro_str}"
-                        )
-                except: pass
-
-                backtest_info = "Sin datos"
-                try:
-                    db_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "iversoria.db")
-                    with sqlite3.connect(db_path, timeout=5) as conn:
-                        conn.row_factory = sqlite3.Row
-                        runs = conn.execute('SELECT symbol, win_rate, best_strategy FROM backtest_runs ORDER BY run_timestamp DESC LIMIT 3').fetchall()
-                        if runs:
-                            backtest_info = ", ".join([f"{r['symbol']} ({r['best_strategy']} WR:{r['win_rate']:.0%})" for r in runs])
-                except: pass
-                
-                context = f"""
-                CONTEXTO DE CARTERA:
-                - Balance Estimado: ${balance:.2f}
-                - Posiciones abiertas: {list(positions.keys())}
-                
-                CONTEXTO MACRO Y ESTRATEGIA (NUEVAS CAPAS):
-                - MacroGlobal: {macro_info}
-                - Top Backtests: {backtest_info}
-                
-                ÚLTIMOS EVENTOS LOG: {logs}
-                """
+                # 1. Preparar contexto compacto con cartera, macro, diagnóstico, noticias y decisiones.
+                context = _build_assistant_context(db, exchange)
                 
                 # 2. Llamada a la IA (Conversacional)
                 lang_name = "Spanish" if st.session_state.get('language') == 'es' else "English"

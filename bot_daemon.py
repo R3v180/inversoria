@@ -213,6 +213,47 @@ class BotDaemon:
         
         # Para el cálculo de cuánto podemos comprar, necesitamos el cash (USDT) disponible
         open_positions = self.db.get_open_positions()
+        buy_candidates = []
+
+        def candidate_score(item):
+            decision = item.get('decision') or {}
+            confidence = float(decision.get('confidence') or 0)
+            confluence = float(decision.get('confluence_score') or 0)
+            size_mult = float(decision.get('position_size_multiplier') or 1.0)
+            # La confianza manda; MTF y sizing desempatan sin dominar.
+            return confidence + (confluence * 0.15) + (size_mult * 0.03)
+
+        def execute_buy_candidate(item):
+            sym = item['symbol']
+            price = float(item['price'])
+            decision = item['decision']
+            provider = item['provider']
+
+            balance_usdt_actual = self.exchange.get_usdt_balance()
+            amount_usdt = balance_usdt_actual * config.RISK_PER_TRADE
+
+            if amount_usdt < 1.0:
+                self.log_message(f"{ _('LOG_INSUFFICIENT', lang=self.u_lang) } ({balance_usdt_actual:.2f}) { _('LOG_FOR', lang=self.u_lang) } {sym}")
+                return False
+
+            amount_coin = amount_usdt / price
+            res = self.exchange.execute_order(sym, 'buy', amount_coin, price)
+            if res.get('status') in ['closed', 'simulated']:
+                decision['entry_confidence'] = decision.get('confidence', 0.7)
+                self.db.add_open_position(sym, price, price, amount_coin, extra_data=json.dumps(decision))
+                open_positions[sym] = {'entry_price': price, 'amount': amount_coin}
+                self.db.save_trade(
+                    sym, 'buy', float(price), float(amount_coin),
+                    f"BOT [{provider}]", 0.0,
+                )
+                self.log_message(
+                    f"{ _('LOG_BUY', lang=self.u_lang) } {sym} @ {price} "
+                    f"[{provider}] score={item['score']:.3f} conf={float(decision.get('confidence') or 0):.2f}"
+                )
+                return True
+
+            self.log_message(f"❌ Fallo compra {sym}: {res.get('reason', res)}")
+            return False
 
         for symbol in self.active_symbols:
             current_price = self.exchange.get_ticker(symbol)
@@ -300,80 +341,83 @@ class BotDaemon:
             # 2. Lógica de COMPRA
             else:
                 if decision['action'] == 'BUY':
-                    # ¿Límite alcanzado? -> Evaluar ROTACIÓN
-                    if len(open_positions) >= self.dynamic_max:
-                        # Guardar estado para la UI (v7.10.1)
-                        limit_reason = _('FILTER_POS_LIMIT', lang=self.u_lang)
-                        limit_json = json.dumps({
-                            'symbol': symbol,
-                            'reasoning': limit_reason,
-                            'regime': 'LIMIT',
-                            'action': 'HOLD'
-                        })
-                        self.db.set_system_status('last_ia_decision', limit_json)
-                        self.db.set_system_status(f'decision_{symbol}', limit_json)
+                    item = {
+                        'symbol': symbol,
+                        'price': current_price,
+                        'decision': decision,
+                        'provider': provider,
+                    }
+                    item['score'] = candidate_score(item)
+                    buy_candidates.append(item)
 
-                        if config.ROTATION_ENABLED:
-                            # Preparar datos de posiciones actuales para comparar
-                            pos_details = {}
-                            for s, p in open_positions.items():
-                                p_ticker = self.exchange.get_ticker(s)
-                                profit_pct = ((p_ticker - p['entry_price']) / p['entry_price']) * 100 if p_ticker else 0
-                                pos_details[s] = {'profit_pct': profit_pct, 'entry_confidence': p.get('entry_confidence', 0.65)}
-                            
-                            to_sacrifice = self.decision_engine.evaluate_rotation_potential(decision, pos_details)
-                            if to_sacrifice:
-                                sym_sac = to_sacrifice['symbol']
-                                self.log_message(f"{ _('LOG_ROTATION', lang=self.u_lang) }: { _('LOG_SACRIFICING', lang=self.u_lang) } {sym_sac} (+{to_sacrifice['profit']:.2f}%) { _('LOG_FOR', lang=self.u_lang) } {symbol} (Conf: {decision['confidence']})")
-                                sac_pos = open_positions[sym_sac]
-                                sac_price = self.exchange.get_ticker(sym_sac)
-                                if sac_price:
-                                    rot_res = self.exchange.execute_order(sym_sac, 'sell', sac_pos['amount'], sac_price)
-                                    if rot_res.get('status') in ['closed', 'simulated']:
-                                        try:
-                                            sold = float(rot_res.get('filled') or 0)
-                                        except (TypeError, ValueError):
-                                            sold = 0.0
-                                        if sold <= 0:
-                                            sold = float(sac_pos['amount'])
-                                        sold = min(sold, float(sac_pos['amount']))
-                                        self.db.close_position(sym_sac, sac_price, "ROTACIÓN IA", sold_amount=sold)
-                                        still_sac = self.db.get_open_positions().get(sym_sac)
-                                        if still_sac:
-                                            open_positions[sym_sac] = still_sac
-                                        else:
-                                            del open_positions[sym_sac]
-                                        self.log_message(f"{ _('LOG_ROTATION', lang=self.u_lang) } { _('LOG_EXECUTED', lang=self.u_lang) }: {sym_sac} { _('LOG_SOLD_AT', lang=self.u_lang) } {sac_price:.4f}")
-                                    else:
-                                        self.log_message(f"❌ Fallo venta rotación {sym_sac}: {rot_res.get('reason', rot_res)}")
-                                        continue
-                                else:
-                                    self.log_message(f"⚠️ No se pudo obtener precio para rotar {sym_sac}, rotación cancelada")
-                                    continue
-                                # Proceder a comprar la nueva
-                            else:
-                                continue # No hubo rotación aprobada
-                        else:
-                            continue # Rotación desactivada
-                    
-                    # Re-obtener el balance real en cada compra para evitar sobrecompra
-                    balance_usdt_actual = self.exchange.get_usdt_balance()
-                    amount_usdt = balance_usdt_actual * config.RISK_PER_TRADE
+        buy_candidates.sort(key=lambda item: item['score'], reverse=True)
+        if buy_candidates:
+            top_preview = ", ".join(
+                f"{c['symbol']}({c['score']:.3f}/{float(c['decision'].get('confidence') or 0):.2f})"
+                for c in buy_candidates[:5]
+            )
+            self.log_message(f"🧮 Candidatos BUY rankeados: {top_preview}")
 
-                    if amount_usdt < 1.0:  # Guard mínimo: no comprar si quedan menos de 1 USDT
-                        self.log_message(f"{ _('LOG_INSUFFICIENT', lang=self.u_lang) } ({balance_usdt_actual:.2f}) { _('LOG_FOR', lang=self.u_lang) } {symbol}")
-                        continue
-                    amount_coin = amount_usdt / current_price
-                    res = self.exchange.execute_order(symbol, 'buy', amount_coin, current_price)
-                    if res.get('status') in ['closed', 'simulated']:
-                        decision['entry_confidence'] = decision.get('confidence', 0.7)
-                        self.db.add_open_position(symbol, current_price, current_price, amount_coin, extra_data=json.dumps(decision))
-                        open_positions[symbol] = {'entry_price': current_price, 'amount': amount_coin}
-                        self.db.save_trade(
-                            symbol, 'buy', float(current_price), float(amount_coin),
-                            f"BOT [{provider}]", 0.0,
-                        )
-                        self.log_message(f"{ _('LOG_BUY', lang=self.u_lang) } {symbol} @ {current_price} [{provider}]")
+        executed_symbols = set()
+        for candidate in buy_candidates:
+            if len(open_positions) >= self.dynamic_max:
+                break
+            if candidate['symbol'] in open_positions:
+                continue
+            if execute_buy_candidate(candidate):
+                executed_symbols.add(candidate['symbol'])
+
+        remaining_candidates = [
+            c for c in buy_candidates
+            if c['symbol'] not in executed_symbols and c['symbol'] not in open_positions
+        ]
+
+        if config.ROTATION_ENABLED and len(open_positions) >= self.dynamic_max and remaining_candidates:
+            pos_details = {}
+            for s, p in open_positions.items():
+                p_ticker = self.exchange.get_ticker(s)
+                profit_pct = ((p_ticker - p['entry_price']) / p['entry_price']) * 100 if p_ticker else 0
+                pos_details[s] = {'profit_pct': profit_pct, 'entry_confidence': p.get('entry_confidence', 0.65)}
+
+            for candidate in remaining_candidates:
+                decision = candidate['decision']
+                to_sacrifice = self.decision_engine.evaluate_rotation_potential(decision, pos_details)
+                if not to_sacrifice:
+                    continue
+
+                sym_sac = to_sacrifice['symbol']
+                self.log_message(
+                    f"{ _('LOG_ROTATION', lang=self.u_lang) }: { _('LOG_SACRIFICING', lang=self.u_lang) } "
+                    f"{sym_sac} (+{to_sacrifice['profit']:.2f}%) { _('LOG_FOR', lang=self.u_lang) } "
+                    f"{candidate['symbol']} (Conf: {decision.get('confidence')})"
+                )
+                sac_pos = open_positions[sym_sac]
+                sac_price = self.exchange.get_ticker(sym_sac)
+                if not sac_price:
+                    self.log_message(f"⚠️ No se pudo obtener precio para rotar {sym_sac}, rotación cancelada")
+                    break
+
+                rot_res = self.exchange.execute_order(sym_sac, 'sell', sac_pos['amount'], sac_price)
+                if rot_res.get('status') not in ['closed', 'simulated']:
+                    self.log_message(f"❌ Fallo venta rotación {sym_sac}: {rot_res.get('reason', rot_res)}")
+                    break
+
+                try:
+                    sold = float(rot_res.get('filled') or 0)
+                except (TypeError, ValueError):
+                    sold = 0.0
+                if sold <= 0:
+                    sold = float(sac_pos['amount'])
+                sold = min(sold, float(sac_pos['amount']))
+                self.db.close_position(sym_sac, sac_price, "ROTACIÓN IA", sold_amount=sold)
+                still_sac = self.db.get_open_positions().get(sym_sac)
+                if still_sac:
+                    open_positions[sym_sac] = still_sac
+                else:
+                    del open_positions[sym_sac]
+                self.log_message(f"{ _('LOG_ROTATION', lang=self.u_lang) } { _('LOG_EXECUTED', lang=self.u_lang) }: {sym_sac} { _('LOG_SOLD_AT', lang=self.u_lang) } {sac_price:.4f}")
+                execute_buy_candidate(candidate)
+                break
 
         diag = {
             "cycle_duration_s": round(time.time() - cycle_start, 2),
@@ -382,6 +426,15 @@ class BotDaemon:
             "providers": providers,
             "hold_reasons": dict(sorted(hold_reasons.items(), key=lambda kv: kv[1], reverse=True)[:5]),
             "skipped": skipped,
+            "buy_candidates": len(buy_candidates),
+            "top_buy_candidates": [
+                {
+                    "symbol": c['symbol'],
+                    "score": round(c['score'], 3),
+                    "confidence": round(float(c['decision'].get('confidence') or 0), 3),
+                }
+                for c in buy_candidates[:5]
+            ],
             "open_positions": len(open_positions),
             "dynamic_max": getattr(self, "dynamic_max", None),
         }

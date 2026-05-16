@@ -344,6 +344,13 @@ def render_dashboard():
                     st.caption("Providers: " + ", ".join(f"{k}: {v}" for k, v in diag["providers"].items()))
                 if diag.get("skipped"):
                     st.caption("Skipped: " + ", ".join(f"{k}: {v}" for k, v in diag["skipped"].items()))
+                if diag.get("top_buy_candidates"):
+                    st.markdown("**Top candidatos BUY**")
+                    for c in diag["top_buy_candidates"]:
+                        st.caption(
+                            f"{c.get('symbol')} · score {c.get('score')} · "
+                            f"conf {float(c.get('confidence', 0)):.0%}"
+                        )
                 if diag.get("hold_reasons"):
                     st.markdown(f"**{_('DAEMON_TOP_HOLDS')}**")
                     for reason, count in diag["hold_reasons"].items():

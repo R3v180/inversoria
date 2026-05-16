@@ -295,7 +295,7 @@ ETH actividad de red: {eth_gas.get('eth_network_activity', 'N/A')} ({eth_gas.get
 
         return result
 
-    def should_trade_altcoins(self, macro_context: dict) -> tuple[bool, str]:
+    def should_trade_altcoins(self, macro_context: dict, symbol: str = None) -> tuple[bool, str]:
         """
         Decisión binaria: ¿es buen momento macro para operar altcoins?
         Retorna (bool, razon_string)
@@ -316,9 +316,11 @@ ETH actividad de red: {eth_gas.get('eth_network_activity', 'N/A')} ({eth_gas.get
         if spy and spy['change_24h'] < -2.0:
             return False, f"{ _('MACRO_VETO_MARKET', lang=self.u_lang) } (SP500: {spy['change_24h']}%)"
 
-        if regime == 'RISK_OFF':
+        is_btc = symbol == 'BTC/USDT'
+
+        if regime == 'RISK_OFF' and not is_btc:
             return False, f"RISK_OFF Mode: BTC Dom {btc_dom}%, risk-off market"
-        if regime == 'CAUTION' and btc_dom > 55:
+        if regime == 'CAUTION' and btc_dom > 60 and not is_btc:
             reason = _('MACRO_VETO_DOM', lang=self.u_lang)
             return False, f"{reason} ({btc_dom}%)"
 

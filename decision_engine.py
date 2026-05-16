@@ -31,8 +31,8 @@ class DecisionEngine:
         rsi = indicators.get('rsi')
         trend = indicators.get('trend', 'UNKNOWN')
         adx = indicators.get('adx', 0)
-        if rsi > 40 and rsi < 60 and adx < 20:
-            return False, f"{ _('FILTER_SIDEWAYS', lang=self.current_lang) } (RSI: {rsi:.1f})"
+        if rsi > 44 and rsi < 56 and adx < 15:
+            return False, f"{ _('FILTER_SIDEWAYS', lang=self.current_lang) } (RSI: {rsi:.1f}, ADX: {adx:.1f})"
         return True, "Filtro OK"
 
     def analyze_with_ai_hybrid(self, symbol, current_price, indicators, ohlcv):
@@ -72,7 +72,7 @@ class DecisionEngine:
         if self._macro_cache:
             macro_text = self._macro_cache.get('context_block', '')
             macro_regime = self._macro_cache.get('macro_regime', 'NEUTRAL')
-            should_trade, no_trade_reason = self.market_context.should_trade_altcoins(self._macro_cache)
+            should_trade, no_trade_reason = self.market_context.should_trade_altcoins(self._macro_cache, symbol=symbol)
 
         # Si el contexto macro dice no operar, devolver HOLD sin consumir tokens de IA
         if not should_trade:
@@ -297,7 +297,7 @@ Si la confluencia MTF es fuerte ({confluence_score:.0%}), puedes aumentar positi
             return {"action": "HOLD", "reasoning": "AI offline", "confidence": 0.0}
 
         # Umbral bajado de 0.60 a 0.52 para más operaciones
-        if decision.get("confidence", 0) < 0.52:
+        if decision.get("action") != "HOLD" and decision.get("confidence", 0) < 0.52:
             decision["action"] = "HOLD"
             decision["reasoning"] = (
                 f"[LOW CONF] {decision.get('reasoning', '')} "
