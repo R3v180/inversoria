@@ -73,6 +73,7 @@ Available today:
 - Simulation and real trading modes.
 - Streamlit dashboard with equity, available cash, open positions, technical chart, radar, macro context and daemon diagnostics.
 - Manual sell button from the dashboard.
+- Buy candidates are collected during the scan, ranked, and only the best ones are executed after the full cycle evaluation.
 - Full exchange wallet view, including balances not tracked by the bot.
 - Dust/recoverable-balance classification.
 - Sell pre-check: free balance, precision, minimums, notional and order-book slippage.
@@ -197,9 +198,13 @@ bot_daemon.py
         │       ├── Take profit
         │       └── High-confidence AI SELL
         └── If not open:
-            ├── BUY if signal is valid and there is a free slot
-            ├── Rotation if slots are full and the new signal is better
+            ├── Collect BUY candidate if signal is valid
             └── HOLD if filters block the trade
+    │
+    ├── Rank all BUY candidates
+    │   └── score = confidence + MTF confluence bonus + position size bonus
+    ├── Execute top-ranked candidates until available slots are filled
+    └── If full, evaluate one rotation using the best remaining candidate
 ```
 
 Decision layers:
@@ -494,6 +499,7 @@ The dashboard includes daemon telemetry:
 - scanned symbols,
 - open positions vs limit,
 - BUY / SELL / HOLD counts,
+- top ranked BUY candidates,
 - providers:
   - `IA`,
   - `MacroFilter`,
@@ -903,6 +909,7 @@ Modos disponibles:
 - Modo simulación y modo real.
 - Dashboard con equity, liquidez, posiciones, gráfico técnico, radar, macro y diagnóstico.
 - Botón de venta manual desde dashboard.
+- Los candidatos BUY se recopilan durante el escaneo, se rankean y solo se ejecutan los mejores al final del ciclo.
 - Vista de cartera exchange completa.
 - Clasificación de retales y polvo recuperable.
 - Pre-chequeo de venta: saldo libre, precisión, mínimos, notional y slippage.
@@ -985,7 +992,13 @@ bot_daemon.py
     ├── Multi-timeframe
     ├── Backtest prior
     ├── IA híbrida
-    └── BUY / SELL / HOLD / rotación
+    ├── Si hay BUY válido, lo guarda como candidato
+    └── HOLD si los filtros bloquean
+│
+├── Rankea todos los candidatos BUY
+│   └── score = confianza + bonus confluencia MTF + bonus sizing
+├── Compra los mejores candidatos hasta llenar huecos
+└── Si está lleno, evalúa una rotación con el mejor candidato restante
 ```
 
 Capas:
@@ -1120,6 +1133,7 @@ Muestra:
 - símbolos escaneados,
 - posiciones,
 - BUY / SELL / HOLD,
+- top candidatos BUY,
 - providers,
 - skipped,
 - principales motivos HOLD.
