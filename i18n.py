@@ -38,7 +38,7 @@ TRANSLATIONS = {
     'MARKET_CHART': {'es': 'Mercado', 'en': 'Market View'},
     'ACTIVE_POSITIONS': {'es': 'Posiciones Activas', 'en': 'Active Positions'},
     'MANUAL_SELL': {'es': 'Vender', 'en': 'Sell'},
-    'MANUAL_SELL_HELP': {'es': 'Abre opciones de venta manual. Modo real: orden real en el exchange.', 'en': 'Open manual sell options. Real mode: real exchange order.'},
+    'MANUAL_SELL_HELP': {'es': 'Venta rápida: vende todo lo posible de esta posición. Modo real: orden real en el exchange.', 'en': 'Quick sell: sells the maximum available amount for this position. Real mode: real exchange order.'},
     'MANUAL_SELL_REASON': {'es': 'Venta manual (dashboard)', 'en': 'Manual sell (dashboard)'},
     'MANUAL_SELL_OK': {'es': 'Venta enviada correctamente.', 'en': 'Sell executed successfully.'},
     'MANUAL_SELL_FAIL': {'es': 'No se pudo vender', 'en': 'Could not sell'},

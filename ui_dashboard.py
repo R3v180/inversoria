@@ -44,12 +44,16 @@ def _execute_dashboard_manual_sell(db, exchange, sym: str, qty: float, current_p
     st.error(f"{_('MANUAL_SELL_FAIL')}: {err}")
 
 
-def _render_dashboard_sell_options(db, exchange, sym: str, pos: dict, current_price: float, safe_key: str):
-    panel_key = f"dash_sell_panel_{safe_key}"
+def _get_dashboard_max_sell(exchange, sym: str, pos: dict) -> float:
     pos_amount = float(pos.get("amount") or 0)
     real_amount = float(exchange.get_coin_balance(sym) or 0)
     max_sell = min(pos_amount, real_amount) if real_amount > 0 else pos_amount
-    max_sell = max(0.0, float(max_sell or 0))
+    return max(0.0, float(max_sell or 0))
+
+
+def _render_dashboard_sell_options(db, exchange, sym: str, pos: dict, current_price: float, safe_key: str):
+    panel_key = f"dash_sell_panel_{safe_key}"
+    max_sell = _get_dashboard_max_sell(exchange, sym, pos)
 
     with st.expander(
         f"{_('MANUAL_SELL_OPTIONS')} · {sym}",
@@ -247,9 +251,8 @@ def render_dashboard():
                             help=_('MANUAL_SELL_HELP'),
                             type="secondary",
                         ):
-                            panel_key = f"dash_sell_panel_{safe_key}"
-                            st.session_state[panel_key] = True
-                            st.rerun()
+                            max_sell = _get_dashboard_max_sell(exchange, sym, pos)
+                            _execute_dashboard_manual_sell(db, exchange, sym, max_sell, current_price)
                     _render_dashboard_sell_options(db, exchange, sym, pos, current_price, safe_key)
         else: st.info(_('NO_POSITIONS'))
 
