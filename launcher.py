@@ -501,10 +501,10 @@ class InversoriaLauncher(ctk.CTk):
         if not profile_id:
             return
         try:
-            self.stop_bot()
             profile = set_active_profile(profile_id)
             self.profile_capital_var.set(str(profile.get("initial_capital", 60)))
-            self._apply_mode(True)
+            self._apply_mode(True, profile_id=profile_id)
+            self._restart_runtime_after_profile_change()
             self.refresh_status()
         except Exception as exc:
             self.status_var.set(f"{self.t('db_error')}: {exc}")
@@ -516,10 +516,14 @@ class InversoriaLauncher(ctk.CTk):
             capital = 60.0
         name = self.profile_name_var.get().strip() or f"{self.t('profile_name')} {time.strftime('%Y%m%d-%H%M')}"
         try:
-            self.stop_bot()
-            create_profile(name, capital, activate=True)
-            self._apply_mode(True)
+            profile = create_profile(name, capital, activate=True)
             self.refresh_profile_menu()
+            for display, profile_id in self._profile_display_to_id.items():
+                if profile_id == profile["id"]:
+                    self.profile_var.set(display)
+                    break
+            self._apply_mode(True, profile_id=profile["id"])
+            self._restart_runtime_after_profile_change()
             self.status_var.set(self.t("profile_created"))
         except Exception as exc:
             self.status_var.set(f"{self.t('db_error')}: {exc}")
@@ -532,12 +536,20 @@ class InversoriaLauncher(ctk.CTk):
         if not messagebox.askyesno(self.t("reset_profile"), self.t("delete_confirm")):
             return
         try:
-            self.stop_bot()
             reset_profile(profile_id)
+            self._apply_mode(True, profile_id=profile_id)
+            self._restart_runtime_after_profile_change()
             self.refresh_profile_menu()
             self.status_var.set(self.t("profile_reset"))
         except Exception as exc:
             self.status_var.set(f"{self.t('db_error')}: {exc}")
+
+    def _restart_runtime_after_profile_change(self):
+        # Streamlit keeps session_state in memory, so changing profiles while the web
+        # is already running requires a restart to avoid showing the previous DB.
+        self._set_system_status("is_running", "false")
+        self._terminate_process("daemon")
+        self._terminate_process("streamlit")
 
     def _prompt_api_config_if_needed(self):
         if self._api_prompt_shown:
@@ -683,6 +695,15 @@ class InversoriaLauncher(ctk.CTk):
         self._daemon_log_handle.write(
             f"[LAUNCHER] Nueva sesión daemon · {time.strftime('%Y-%m-%d %H:%M:%S')}\n"
         )
+        if self._current_simulation_mode():
+            try:
+                profile = get_active_profile()
+                self._daemon_log_handle.write(
+                    f"[LAUNCHER] Perfil simulación activo · {profile.get('name')} "
+                    f"({profile.get('id')}) · capital {float(profile.get('initial_capital', 0)):.2f} USDT\n"
+                )
+            except Exception:
+                pass
         self._set_system_status("is_running", "true")
         self.daemon_process = subprocess.Popen(
             [python, "-u", str(ROOT / "bot_daemon.py")],
@@ -799,9 +820,9 @@ class InversoriaLauncher(ctk.CTk):
     def set_status(self, key):
         self.status_var.set(self.t(key))
 
-    def _apply_mode(self, is_sim):
+    def _apply_mode(self, is_sim, profile_id=None):
         if is_sim:
-            profile_id = self._profile_display_to_id.get(self.profile_var.get())
+            profile_id = profile_id or self._profile_display_to_id.get(self.profile_var.get())
             if profile_id:
                 set_active_profile(profile_id)
         self._save_user_setting("MODO_SIMULACION", bool(is_sim))
