@@ -403,13 +403,14 @@ class InversoriaLauncher(ctk.CTk):
         logs = ctk.CTkFrame(self, corner_radius=24, fg_color="#0B1220", border_width=1, border_color="#1F2937")
         logs.grid(row=3, column=0, padx=20, pady=10, sticky="nsew")
         logs.grid_columnconfigure(0, weight=1)
-        logs.grid_rowconfigure(2, weight=1)
+        logs.grid_rowconfigure(2, weight=1, minsize=180)
         self.logs_label = ctk.CTkLabel(logs, font=ctk.CTkFont(size=15, weight="bold"))
         self.logs_label.grid(row=0, column=0, padx=18, pady=(16, 6), sticky="w")
         self.logs_hint_label = ctk.CTkLabel(logs, text_color="#94A3B8", font=ctk.CTkFont(size=12))
         self.logs_hint_label.grid(row=1, column=0, padx=18, pady=(0, 8), sticky="w")
         self.log_box = ctk.CTkTextbox(
             logs,
+            height=220,
             wrap="word",
             fg_color="#020617",
             text_color="#D1FAE5",
@@ -643,7 +644,9 @@ class InversoriaLauncher(ctk.CTk):
         self._start_streamlit()
         self._start_daemon()
         self._open_web_when_ready()
-        self.refresh_status()
+        self.after(0, self.refresh_status)
+        self.after(750, self._refresh_logs)
+        self.after(2500, self._refresh_logs)
 
     def _start_streamlit(self):
         if self.streamlit_process and self.streamlit_process.poll() is None:
@@ -808,10 +811,15 @@ class InversoriaLauncher(ctk.CTk):
                     pass
 
         text = "\n".join(lines) if lines else self.t("ready")
+        source = daemon_log if daemon_log.exists() else LOG_DIR / "streamlit.log"
+        self.logs_hint_label.configure(
+            text=f"{self.t('logs_hint')} · {len(lines)} líneas · {source}"
+        )
         self.log_box.configure(state="normal")
         self.log_box.delete("1.0", "end")
         self.log_box.insert("1.0", text)
         self.log_box.see("end")
+        self.log_box.update_idletasks()
         self.log_box.configure(state="disabled")
 
     def _paint_metric(self, card, active):
