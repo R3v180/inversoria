@@ -64,6 +64,7 @@ class BotDaemon:
         self.macro_analyzer = MacroAnalyzer()
         self.last_macro_update = 0
         self.MACRO_INTERVAL = 900 # 15 min: actualiza 1 activo vencido por ciclo, sin bloquear
+        self._last_idle_log = 0
 
         self.log_message(_('LOG_DAEMON_INIT', lang=self.u_lang))
 
@@ -474,6 +475,9 @@ class BotDaemon:
                     self.bot_iteration()
                     self.update_daemon_status("sleeping", next_cycle_in=60)
                 else:
+                    if time.time() - getattr(self, "_last_idle_log", 0) > 300:
+                        self.log_message("[IDLE] Trading pausado: is_running=false. Esperando Start/Arrancar bot.")
+                        self._last_idle_log = time.time()
                     self.update_daemon_status(
                         "idle",
                         execution_mode=getattr(config, "TRADING_EXECUTION_MODE", "auto"),

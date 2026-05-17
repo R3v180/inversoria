@@ -646,8 +646,10 @@ class InversoriaLauncher(ctk.CTk):
     def _start_system_worker(self):
         self._prevent_sleep()
         self._start_streamlit()
+        self._set_system_status("is_running", "true")
         self._start_daemon()
         self._open_web_when_ready()
+        self._set_system_status("is_running", "true")
         self.after(0, self.refresh_status)
         self.after(750, self._refresh_logs)
         self.after(2500, self._refresh_logs)
