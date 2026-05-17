@@ -373,6 +373,7 @@ class BotDaemon:
                     free_amount,
                     price_hint=price,
                     free_override=free_amount,
+                    check_slippage=False,
                 )
                 if not validation.get("ok"):
                     skipped["ADOPT_UNSELLABLE"] = skipped.get("ADOPT_UNSELLABLE", 0) + 1

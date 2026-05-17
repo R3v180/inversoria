@@ -460,7 +460,7 @@ class ExchangeHelper:
         except Exception:
             return None
 
-    def prevalidate_market_sell(self, symbol, amount, price_hint=None, free_override=None):
+    def prevalidate_market_sell(self, symbol, amount, price_hint=None, free_override=None, check_slippage=True):
         """
         Comprueba si una venta a mercado es viable (sin enviar orden).
         Devuelve dict: ok, errors[], info[], amount_after_precision (float|None)
@@ -540,7 +540,7 @@ class ExchangeHelper:
             if out["errors"]:
                 return out
 
-            if px and px > 0:
+            if check_slippage and px and px > 0:
                 try:
                     ob = self.exchange.fetch_order_book(symbol, limit=5)
                     bids = ob.get("bids") or []

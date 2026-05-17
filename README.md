@@ -783,7 +783,7 @@ In simulation mode, the launcher and the app can create and switch complete simu
 
 The Streamlit UI reloads the active profile paper account before reading balances, equity, coin inventory or manual orders, so dashboard values stay aligned with daemon writes to `simulated_account.json`.
 
-The daemon separates the buy universe from the protection universe in both real and simulation modes. `MONEDAS` and the radar still limit new buy candidates, but existing balances are adopted into `open_positions` for protection. In real mode, Crypto.com balances must have a listed `COIN/USDT` market and pass sell precision/minimum checks; in simulation, the active profile portfolio is adopted with the same management logic so tests mirror real behavior.
+The daemon separates the buy universe from the protection universe in both real and simulation modes. `MONEDAS` and the radar still limit new buy candidates, but existing balances are adopted into `open_positions` for protection. In real mode, Crypto.com balances must have a listed `COIN/USDT` market and pass sell precision/minimum checks; temporary slippage does not block adoption, but sell execution still enforces slippage protection. In simulation, the active profile portfolio is adopted with the same management logic so tests mirror real behavior.
 
 Developer note: `dist/InversorIA.exe` is the PyInstaller build output. To rebuild and copy the executable to the project root:
 
@@ -1492,7 +1492,7 @@ En modo simulación, el launcher y la app pueden crear y cambiar perfiles comple
 
 La UI de Streamlit recarga la cuenta ficticia del perfil activo antes de leer balances, equity, cartera u órdenes manuales, para que el dashboard se mantenga alineado con lo que escribe el daemon en `simulated_account.json`.
 
-El daemon separa el universo de compra del universo de protección tanto en real como en simulación. `MONEDAS` y el radar siguen limitando nuevas compras, pero los saldos existentes se adoptan en `open_positions` para protección. En real, los saldos de Crypto.com deben tener mercado `COIN/USDT` y pasar precisión/mínimos de venta; en simulación, la cartera del perfil activo se adopta con la misma lógica de gestión para que las pruebas reflejen el comportamiento real.
+El daemon separa el universo de compra del universo de protección tanto en real como en simulación. `MONEDAS` y el radar siguen limitando nuevas compras, pero los saldos existentes se adoptan en `open_positions` para protección. En real, los saldos de Crypto.com deben tener mercado `COIN/USDT` y pasar precisión/mínimos de venta; el slippage temporal no bloquea la adopción, pero la ejecución de venta sigue aplicando protección de slippage. En simulación, la cartera del perfil activo se adopta con la misma lógica de gestión para que las pruebas reflejen el comportamiento real.
 
 Nota para desarrollo: `dist/InversorIA.exe` es la salida de PyInstaller. Para reconstruir y copiar el ejecutable a la raíz:
 
