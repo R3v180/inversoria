@@ -334,6 +334,88 @@ class BotDaemon:
             "capped": capped + 1e-8 < amount_usdt,
         }
 
+    def adopt_sellable_real_positions(self, open_positions):
+        """Adopta saldos reales vendibles aunque no pertenezcan al universo de nuevas compras."""
+        if self.exchange.modo_simulacion:
+            return [], {}
+
+        adopted = []
+        skipped = {}
+        ignored_coins = {"USDT", "USD", "EUR", "USDC", "DAI", "TUSD", "BUSD", "PYUSD"}
+        try:
+            rows = self.exchange.get_spot_inventory_rows()
+        except Exception as exc:
+            self.log_message(f"[WARN] Adoption scan failed | reason={exc}")
+            return adopted, {"ADOPT_SCAN_ERROR": 1}
+
+        for row in rows:
+            coin = str(row.get("coin") or "").upper()
+            symbol = row.get("symbol")
+            if not symbol or coin in ignored_coins:
+                continue
+            if symbol in open_positions:
+                continue
+
+            try:
+                free_amount = float(row.get("free") or 0)
+                usd_free = float(row.get("usd_free") or 0)
+            except (TypeError, ValueError):
+                skipped["ADOPT_BAD_BALANCE"] = skipped.get("ADOPT_BAD_BALANCE", 0) + 1
+                continue
+            price = (usd_free / free_amount) if free_amount > 0 else 0.0
+            if free_amount <= 0 or price <= 0:
+                skipped["ADOPT_NO_VALUE"] = skipped.get("ADOPT_NO_VALUE", 0) + 1
+                continue
+
+            validation = self.exchange.prevalidate_market_sell(
+                symbol,
+                free_amount,
+                price_hint=price,
+                free_override=free_amount,
+            )
+            if not validation.get("ok"):
+                skipped["ADOPT_UNSELLABLE"] = skipped.get("ADOPT_UNSELLABLE", 0) + 1
+                continue
+
+            amount = self._safe_float(validation.get("amount_after_precision"), free_amount)
+            notional = self._safe_float(validation.get("notional"), amount * price)
+            if amount <= 0 or notional <= 0:
+                skipped["ADOPT_ZERO_AFTER_PRECISION"] = skipped.get("ADOPT_ZERO_AFTER_PRECISION", 0) + 1
+                continue
+
+            extra = {
+                "external_adopted": True,
+                "provider": "ExchangeBalance",
+                "reasoning": "Saldo real vendible adoptado para protección automática.",
+                "decision_mode": getattr(config, "DECISION_MODE", "hybrid"),
+                "execution_mode": getattr(config, "TRADING_EXECUTION_MODE", "auto"),
+            }
+            entry_time = time.time()
+            extra_data = json.dumps(extra, ensure_ascii=False)
+            self.db.add_open_position(
+                symbol,
+                price,
+                price,
+                amount,
+                entry_time=entry_time,
+                extra_data=extra_data,
+            )
+            open_positions[symbol] = {
+                "symbol": symbol,
+                "entry_price": price,
+                "highest_price": price,
+                "amount": amount,
+                "entry_time": entry_time,
+                "extra_data": extra_data,
+            }
+            adopted.append(symbol)
+            self.log_message(
+                f"[ADOPT] {symbol} real balance managed | qty={amount:.8g} | "
+                f"value={notional:.2f} USDT | reason=sellable_exchange_balance"
+            )
+
+        return adopted, skipped
+
     def resolve_executable_action(self, decision):
         action = str(decision.get('action', 'HOLD')).upper()
         score = self._safe_float(decision.get('decision_score'), self._safe_float(decision.get('confidence'), 0.0))
@@ -553,6 +635,9 @@ class BotDaemon:
         
         # Para el cálculo de cuánto podemos comprar, necesitamos el cash (USDT) disponible
         open_positions = self.db.get_open_positions()
+        adopted_symbols, adoption_skipped = self.adopt_sellable_real_positions(open_positions)
+        for reason, count in adoption_skipped.items():
+            skipped[reason] = skipped.get(reason, 0) + count
         buy_candidates = []
         cycle_risk = self.evaluate_risk_guards(total_value, open_positions)
         if not cycle_risk["ok"]:
@@ -707,15 +792,21 @@ class BotDaemon:
                 )
             return False
 
-        for symbol in self.active_symbols:
+        scan_symbols = []
+        for symbol in list(self.active_symbols or []) + list(open_positions.keys()):
+            if symbol not in scan_symbols:
+                scan_symbols.append(symbol)
+
+        for symbol in scan_symbols:
             current_price = self.exchange.get_ticker(symbol)
             if not current_price:
                 skipped["NO_PRICE"] = skipped.get("NO_PRICE", 0) + 1
                 continue
             scanned += 1
             
-            # Adopción de posiciones externas
-            if symbol not in open_positions:
+            # Adopción de posiciones externas de simulación o símbolos ya escaneados.
+            # En real, los saldos vendibles se adoptan antes desde toda la cartera.
+            if self.exchange.modo_simulacion and symbol not in open_positions:
                 coin_amount = self.exchange.get_coin_balance(symbol)
                 if (coin_amount * current_price) > 5.0:
                     self.db.add_open_position(symbol, current_price, current_price, coin_amount)
@@ -975,6 +1066,7 @@ class BotDaemon:
             "providers": providers,
             "hold_reasons": dict(sorted(hold_reasons.items(), key=lambda kv: kv[1], reverse=True)[:5]),
             "skipped": skipped,
+            "adopted_real_positions": adopted_symbols,
             "buy_candidates": len(buy_candidates),
             "execution_mode": getattr(config, "TRADING_EXECUTION_MODE", "auto"),
             "decision_mode": getattr(config, "DECISION_MODE", "hybrid"),
