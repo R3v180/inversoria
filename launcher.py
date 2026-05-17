@@ -247,6 +247,10 @@ class InversoriaLauncher(ctk.CTk):
         self.title(APP_NAME)
         self.geometry("1180x820")
         self.minsize(1040, 720)
+        try:
+            self.state("zoomed")
+        except Exception:
+            pass
         self.protocol("WM_DELETE_WINDOW", self.on_close)
 
         self.language_var = ctk.StringVar(value="Español" if self.lang == "es" else "English")
