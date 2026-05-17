@@ -208,7 +208,7 @@ Available today:
 - ATR volatility sizing with configurable caps and portfolio concentration guards.
 - Live analytics for expectancy, rolling drawdown, rolling profit factor, provider stats and regime stats.
 - Full exchange wallet view, including balances not tracked by the bot.
-- Dust/recoverable-balance classification.
+- Dust/recoverable-balance classification that distinguishes non-sellable dust, adoptable real balances and sellable balances whose confidence is still insufficient or whose evaluation is deferred.
 - Sell pre-check: free balance, precision, minimums, notional and order-book slippage.
 - Estimated sell economics: buy reference, fees, gross sell, net receive and PnL.
 - Robust cost basis detection:
@@ -224,11 +224,13 @@ Available today:
 - Dashboard quick-news widget.
 - Dynamic radar hard-filter for fiat/stablecoin pairs before they can enter the watchlist.
 - AI assistant with mandatory explicit UI confirmation before any order.
+- AI assistant can include compact context from recent local logs after sanitizing known secrets.
 - Safe configuration import/export with validation, backups and secret blocking.
+- Safe AI diagnostic package in settings, copyable/downloadable, with sanitized relevant config and recent logs; it excludes `.env` and known secrets.
 - AI assistant can propose configuration changes, but the UI requires explicit confirmation before applying them.
 - Historical backtesting engine with SQLite priors.
 - Incremental global macro refresh with Alpha Vantage.
-- Daemon telemetry in the dashboard.
+- Daemon telemetry in the dashboard, with structured `[SKIP]`, `[BLOCK]`, `[ROTATION]` and `[CYCLE]` logs for executions, skipped actions and blocked BUY/SELL/rotation decisions.
 
 ---
 
@@ -368,7 +370,9 @@ Decision layers:
   - Can veto historically poor conditions
 6. **Hybrid AI**
   - Gemini / Groq / SambaNova fallback.
-  - Returns structured JSON: action, confidence, regime, strategy, reasoning.
+  - If Gemini reaches its daily quota, it enters a cooldown until the next Pacific Time reset plus a small margin, then the system can use Groq fallback when configured.
+  - Prompts request strict JSON: action, confidence, regime, strategy and reasoning.
+  - The parser tries defensive recovery for malformed model output, but it does not invent a trading decision when no valid action can be parsed.
 7. **Decision score**
   - Technical, multi-timeframe, historical and macro components are stored with each decision.
   - Weights adapt by regime: trend, range, high volatility or macro caution.
@@ -481,7 +485,7 @@ The assistant has context about:
 
 - balance,
 - open positions,
-- logs,
+- logs, including a compact sanitized view of recent local logs when available,
 - macro,
 - recent backtests,
 - daemon diagnostics, execution mode, decision mode, risk guards and deterministic decision scores,
@@ -569,6 +573,12 @@ Safe configuration import/export:
 - Block API keys and sensitive fields automatically.
 - Create a `user_settings.json.backup-*.json` backup before applying.
 
+Safe AI diagnostic package:
+
+- Copies or downloads a compact support bundle for AI review.
+- Includes relevant sanitized configuration and recent local logs.
+- Excludes `.env` and known secrets; it is a diagnostic aid, not a guarantee that every possible sensitive value is removed.
+
 ---
 
 ## Exchange Wallet And Dust
@@ -594,6 +604,12 @@ The wallet UI explains non-sellable dust with specific reasons instead of raw ex
 - below minimum notional/cost,
 - rounded to zero by market precision,
 - blocked by slippage.
+
+Balance adoption keeps three cases separate:
+
+- non-sellable dust that cannot currently pass exchange minimums or precision,
+- real exchange balances that are large enough to adopt into bot protection,
+- sellable balances whose confidence is not yet sufficient, so evaluation can be deferred instead of forcing a low-confidence action.
 
 For minimum amount dust, the UI shows current amount, required minimum, approximate missing amount and rounded amount.
 
@@ -734,7 +750,8 @@ Daemon console logs are structured for quick triage:
 
 - `[BACKTEST]` compact strategy summary with `WR`, `PF`, return and `status`.
 - `[DECISION]` per-symbol action with executable action, score, confidence, adaptive adjustment, provider, regime and strategy.
-- `[BLOCK]` explicit reason when a buy is converted to HOLD.
+- `[SKIP]` explicit reason when a BUY, SELL or rotation path is skipped without execution.
+- `[BLOCK]` explicit reason when BUY, SELL or ROTATION is blocked by score, risk, sizing, balance or execution mode.
 - `[BUY]`, `[SELL]`, `[ROTATION]` execution lines with price, size, risk/PnL and provider.
 - `[CYCLE]` one-line cycle summary with counts, top candidates, risk state and mode.
 
@@ -872,6 +889,7 @@ The settings screen also includes safe import/export:
 - **Download AI example**: exports a clean JSON template without secrets.
 - **Download current safe config**: exports only allowed non-secret settings.
 - **Paste JSON configuration**: validates and previews changes before applying.
+- **Copy/download safe AI diagnostic package**: exports compact sanitized config context plus recent logs while excluding `.env` and known secrets.
 
 The importer accepts plain JSON or a fenced `json` block. Sensitive keys are ignored even if they are present.
 
@@ -904,7 +922,7 @@ InversorIA.exe
 
 Open `InversorIA.exe` from the project root. It is the main entry point for normal use.
 
-The launcher provides a bilingual Windows control panel. It starts the web app, controls the daemon, opens the dashboard, switches between simulation and real mode, configures local API keys, prevents system sleep while running, and shows live daemon logs. The bot control button toggles between starting and stopping trading depending on the current paused/active state. Real mode requires explicit confirmation and exchange keys in `.env`.
+The launcher provides a bilingual Windows control panel. It starts the web app, controls the daemon, opens the dashboard, switches between simulation and real mode, configures local API keys, prevents system sleep while running, shows live daemon logs and can copy the visible logs to the clipboard. The bot control button toggles between starting and stopping trading depending on the current paused/active state. Real mode requires explicit confirmation and exchange keys in `.env`.
 
 In simulation mode, the launcher and the app can create and switch complete simulation profiles. Each profile has its own initial capital, virtual account, SQLite DB, trades, equity history and `decision_journal`, so experiments with different risk settings do not contaminate each other.
 
@@ -1005,6 +1023,7 @@ Assistant safety:
 
 - AI proposals require explicit UI confirmation.
 - No order is executed by free text alone.
+- Diagnostic exports and assistant log context are sanitized and exclude `.env` plus known secrets, but they should still be reviewed before sharing outside your machine.
 
 ---
 
@@ -1122,9 +1141,10 @@ Possible future improvements:
 3. Order audit log.
 4. Macro worker thread/process.
 5. Web search for the assistant with a controlled API.
-6. Bot-quality metrics by provider, regime and strategy.
-7. Backtest improvements: fees, slippage, walk-forward, out-of-sample.
-8. Next risk controls: max drawdown kill-switch, correlation and sector exposure caps.
+6. Configurable local AI provider through Ollama or another OpenAI-compatible local endpoint ([issue #12](https://github.com/R3v180/inversoria/issues/12)).
+7. Bot-quality metrics by provider, regime and strategy.
+8. Backtest improvements: fees, slippage, walk-forward, out-of-sample.
+9. Next risk controls: max drawdown kill-switch, correlation and sector exposure caps.
 
 ---
 
@@ -1192,7 +1212,7 @@ Modos disponibles:
 - Sizing por volatilidad ATR con caps configurables y guardrails de concentración de cartera.
 - Analítica viva: expectancy, drawdown rolling, profit factor rolling y métricas por provider/régimen.
 - Vista de cartera exchange completa.
-- Clasificación de retales y polvo recuperable.
+- Clasificación de retales y polvo recuperable que distingue polvo no vendible, saldos reales adoptables y saldos vendibles con confianza insuficiente o evaluación diferida.
 - Pre-chequeo de venta: saldo libre, precisión, mínimos, notional y slippage.
 - Estimación de PnL al vender con comisiones.
 - Cost basis robusto desde posición, trades, logs o inferencia.
@@ -1202,11 +1222,13 @@ Modos disponibles:
 - Widget de noticias rápidas en dashboard.
 - Filtro duro del radar dinámico para excluir pares fiat/stablecoin antes de entrar en la watchlist.
 - Asistente IA con confirmación obligatoria antes de ejecutar.
+- El asistente IA puede incorporar contexto compacto de logs locales recientes tras sanear secretos conocidos.
 - Importación/exportación segura de configuración con validación, backups y bloqueo de secretos.
+- Paquete de diagnóstico seguro para IA en configuración, copiable/descargable, con config relevante saneada y logs recientes; excluye `.env` y secretos conocidos.
 - El asistente IA puede proponer cambios de configuración, pero la UI exige confirmación explícita antes de aplicarlos.
 - Backtesting histórico guardado en SQLite.
 - Macro global incremental con Alpha Vantage.
-- Diagnóstico del daemon en UI.
+- Diagnóstico del daemon en UI, con logs estructurados `[SKIP]`, `[BLOCK]`, `[ROTATION]` y `[CYCLE]` para ejecuciones, skips y bloqueos de BUY/SELL/rotación.
 
 ---
 
@@ -1297,7 +1319,7 @@ Capas:
 3. Filtro técnico rápido.
 4. Multi-timeframe.
 5. Backtest histórico.
-6. IA híbrida.
+6. IA híbrida con fallback Gemini / Groq / SambaNova. Si Gemini agota la cuota diaria, entra en cooldown hasta el siguiente reset Pacific Time con un pequeño margen y puede usar Groq si está configurado.
 7. Score de decisión auditable con pesos dinámicos por régimen.
 8. Edge adaptativo desde resultados reales del `decision_journal`.
 9. Gobernanza de ejecución, sizing por ATR y guardrails de cartera.
@@ -1314,6 +1336,8 @@ El modo de decisión puede ser:
 - `rules`: decide con reglas/score sin pedir a la IA la acción final.
 
 La IA puede sugerir acción en modo híbrido, pero el daemon registra la acción ejecutable después de score, sizing y riesgo.
+
+El prompt pide JSON estricto con acción, confianza, régimen, estrategia y razonamiento. El parser intenta recuperación defensiva ante respuestas mal formadas, pero no inventa una decisión de trading si no puede parsear una acción válida.
 
 Antes de bloquear por exposición, el daemon intenta recortar el importe al hueco disponible por símbolo, alt, bucket y cartera. Solo bloquea si aun recortando no queda tamaño válido.
 
@@ -1355,7 +1379,7 @@ Gráfico técnico por activo, indicadores, decisión reciente y logs.
 
 ### Asistente IA
 
-Chat contextual con cartera, posiciones, macro, backtests, diagnóstico del daemon, modos de ejecución/decisión, guardrails, `decision_score` y métricas del `decision_journal`. Las órdenes propuestas pasan a una tarjeta pendiente y requieren botón de confirmación. Los cambios de configuración propuestos por IA siguen el mismo modelo: se muestran como tarjeta pendiente con diff y solo se aplican si el usuario confirma. Las órdenes confirmadas desde el asistente también quedan auditadas en `decision_journal`.
+Chat contextual con cartera, posiciones, macro, backtests, diagnóstico del daemon, modos de ejecución/decisión, guardrails, `decision_score`, métricas del `decision_journal` y, cuando existe, contexto compacto de logs locales recientes saneados. Las órdenes propuestas pasan a una tarjeta pendiente y requieren botón de confirmación. Los cambios de configuración propuestos por IA siguen el mismo modelo: se muestran como tarjeta pendiente con diff y solo se aplican si el usuario confirma. Las órdenes confirmadas desde el asistente también quedan auditadas en `decision_journal`.
 
 ### Historial
 
@@ -1374,6 +1398,8 @@ También incluye importación/exportación segura:
 - previsualizar valores antes/después,
 - bloquear claves API automáticamente,
 - crear backup `user_settings.json.backup-*.json` antes de aplicar.
+
+También puede copiar o descargar un paquete de diagnóstico seguro para IA con configuración relevante saneada y logs recientes. Excluye `.env` y secretos conocidos; es una ayuda de diagnóstico, no una garantía de que cualquier valor sensible imaginable haya sido eliminado.
 
 ---
 
@@ -1400,6 +1426,12 @@ La UI explica los retales no vendibles con motivos claros en vez de errores crud
 - polvo bajo notional/coste mínimo,
 - cantidad redondeada a cero por precisión,
 - bloqueo por slippage.
+
+La adopción de balances mantiene separados tres casos:
+
+- polvo no vendible que no pasa mínimos o precisión del exchange,
+- saldos reales suficientemente grandes para adoptarse en la protección del bot,
+- saldos vendibles cuya confianza aún no es suficiente, por lo que la evaluación puede diferirse en vez de forzar una acción con baja confianza.
 
 En mínimos de cantidad muestra cantidad actual, mínimo requerido, cuánto falta aproximadamente y cantidad tras redondeo.
 
@@ -1495,7 +1527,8 @@ Los logs de consola del daemon usan formato compacto:
 
 - `[BACKTEST]`: resumen de estrategia con `WR`, `PF`, retorno y `status`.
 - `[DECISION]`: acción por símbolo con acción ejecutable, score, confianza, ajuste adaptativo, provider, régimen y estrategia.
-- `[BLOCK]`: motivo explícito cuando una compra pasa a HOLD.
+- `[SKIP]`: motivo explícito cuando una ruta BUY, SELL o rotación se omite sin ejecutar.
+- `[BLOCK]`: motivo explícito cuando BUY, SELL o ROTATION queda bloqueado por score, riesgo, sizing, balance o modo de ejecución.
 - `[BUY]`, `[SELL]`, `[ROTATION]`: ejecución con precio, tamaño, riesgo/PnL y provider.
 - `[CYCLE]`: resumen del ciclo con conteos, top candidatos, estado de riesgo y modo.
 
@@ -1612,7 +1645,8 @@ La UI permite importar/exportar configuración segura:
 - validación de JSON pegado,
 - compatibilidad con JSON estricto y ajustes copiados en formato Python antiguo (`True`/`False`, comillas simples o buckets guardados como texto),
 - preview de cambios,
-- backup automático antes de aplicar.
+- backup automático antes de aplicar,
+- paquete de diagnóstico seguro para IA, copiable o descargable, con config relevante saneada y logs recientes; excluye `.env` y secretos conocidos.
 
 ---
 
@@ -1626,7 +1660,7 @@ InversorIA.exe
 
 Abre `InversorIA.exe` desde la raíz del proyecto. Es el punto de entrada principal para usar la aplicación.
 
-El launcher ofrece un panel bilingüe para Windows. Inicia la web, controla el daemon, abre el dashboard, cambia entre simulación y real, configura las APIs locales, evita la suspensión del sistema mientras está activo y muestra logs vivos del daemon. El botón del bot alterna entre arrancar y detener el trading según esté pausado o activo. El modo real pide confirmación explícita y exige claves de exchange en `.env`.
+El launcher ofrece un panel bilingüe para Windows. Inicia la web, controla el daemon, abre el dashboard, cambia entre simulación y real, configura las APIs locales, evita la suspensión del sistema mientras está activo, muestra logs vivos del daemon y permite copiar los logs visibles al portapapeles. El botón del bot alterna entre arrancar y detener el trading según esté pausado o activo. El modo real pide confirmación explícita y exige claves de exchange en `.env`.
 
 En modo simulación, el launcher y la app pueden crear y cambiar perfiles completos de simulación. Cada perfil tiene su propio capital inicial, cuenta virtual, SQLite, trades, equity y `decision_journal`, así que los experimentos con configuraciones distintas no se contaminan entre sí.
 
@@ -1711,6 +1745,12 @@ Recomendación Crypto.com:
 - IP whitelist si existe.
 - Probar primero en simulación.
 
+Seguridad del asistente y diagnóstico:
+
+- Las propuestas de IA requieren confirmación explícita en UI.
+- Ninguna orden se ejecuta solo por texto libre.
+- Las exportaciones de diagnóstico y el contexto de logs para el asistente se sanean y excluyen `.env` junto con secretos conocidos, pero conviene revisarlos antes de compartirlos fuera de tu máquina.
+
 ---
 
 ## Licencia Y Contribuciones
@@ -1780,9 +1820,10 @@ pip install pandas-ta
 3. Auditoría de órdenes.
 4. Macro worker dedicado.
 5. Búsqueda web controlada para asistente.
-6. Métricas por provider/régimen/estrategia.
-7. Backtest con slippage, fees reales y walk-forward.
-8. Próximos controles: kill-switch por drawdown, correlación y exposición por sector.
+6. Proveedor IA local configurable mediante Ollama u otro endpoint local compatible con OpenAI ([issue #12](https://github.com/R3v180/inversoria/issues/12)).
+7. Métricas por provider/régimen/estrategia.
+8. Backtest con slippage, fees reales y walk-forward.
+9. Próximos controles: kill-switch por drawdown, correlación y exposición por sector.
 
 ---
 

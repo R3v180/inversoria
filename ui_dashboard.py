@@ -8,6 +8,7 @@ import json
 import pandas_ta as ta
 from config import PRESUPUESTO_INICIAL, SYMBOLS, get_effective_max_positions
 from i18n import _
+from ui_theme import apply_plotly_theme, plotly_theme_values
 
 
 def _execute_dashboard_manual_sell(db, exchange, sym: str, qty: float, current_price: float):
@@ -121,16 +122,25 @@ def _render_refresh_status(diag: dict):
 
 
 def render_dashboard():
-    # Estilos CSS Avanzados
+    # Estilos locales apoyados en las variables globales de tema.
     st.markdown("""
         <style>
-        .main { background-color: #0E1117; }
-        .stMetric { background-color: #161B22; padding: 15px; border-radius: 10px; border: 1px solid #30363D; }
-        .position-card { background-color: #161B22; padding: 20px; border-radius: 12px; border: 1px solid #30363D; margin-bottom: 10px; color: #F9FAFB; }
-        .position-card .muted { color: #B8C0CC; font-size: 0.8em; }
-        .ai-card { background-color: #0D1117; border-left: 5px solid #00FFAA; padding: 20px; border-radius: 0 12px 12px 0; border: 1px solid #30363D; }
-        .log-box { height: 180px; overflow-y: auto; background-color: #0D1117; padding: 10px; border-radius: 8px; border: 1px solid #30363D; font-family: monospace; font-size: 0.8em; }
-        .radar-item { display: flex; justify-content: space-between; padding: 8px; border-bottom: 1px solid #30363D; font-size: 0.9em; }
+        .position-card { padding: 20px; margin-bottom: 10px; }
+        .position-card .muted { color: var(--iv-muted); font-size: 0.8em; }
+        .ai-card {
+            border-left: 5px solid var(--iv-accent);
+            padding: 20px;
+            border-radius: 0 12px 12px 0;
+        }
+        .log-box { height: 180px; overflow-y: auto; padding: 10px; font-size: 0.8em; }
+        .radar-item {
+            display: flex;
+            justify-content: space-between;
+            padding: 8px;
+            border-bottom: 1px solid var(--iv-border);
+            color: var(--iv-text);
+            font-size: 0.9em;
+        }
         </style>
     """, unsafe_allow_html=True)
 
@@ -204,13 +214,13 @@ def render_dashboard():
             for sym, pos in open_positions.items():
                 current_price = exchange.get_ticker(sym) or pos['entry_price']
                 u_pnl = ((current_price - pos['entry_price']) / pos['entry_price']) * 100
-                color = "#00FFAA" if u_pnl >= 0 else "#FF4444"
+                color = "var(--iv-accent)" if u_pnl >= 0 else "var(--iv-danger)"
                 current_value = pos.get('amount', 0) * current_price
                 with st.container():
                     safe_key = sym.replace("/", "_").replace(" ", "_")
                     col_info, col_chart, col_sell = st.columns([4.2, 0.9, 0.9])
                     with col_info:
-                        st.markdown(f'<div class="position-card" style="margin-bottom: 5px; padding: 15px;"><div style="display:flex; justify-content:space-between;"><div><b>{sym}</b><br/><span class="muted">{ _("INVESTMENT") }: ${current_value:.2f}</span></div><div style="text-align:right;"><span style="font-size:1.2em; font-weight:bold; color:{color};">{u_pnl:.2f}%</span><br/><span class="muted">${current_price:.4f}</span></div></div></div>', unsafe_allow_html=True)
+                        st.markdown(f'<div class="position-card iv-card" style="margin-bottom: 5px; padding: 15px;"><div style="display:flex; justify-content:space-between;"><div><b>{sym}</b><br/><span class="muted">{ _("INVESTMENT") }: ${current_value:.2f}</span></div><div style="text-align:right;"><span style="font-size:1.2em; font-weight:bold; color:{color};">{u_pnl:.2f}%</span><br/><span class="muted">${current_price:.4f}</span></div></div></div>', unsafe_allow_html=True)
                     with col_chart:
                         st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
 
@@ -238,15 +248,15 @@ def render_dashboard():
         try:
             decision = json.loads(last_decision_raw)
             if decision:
-                st.markdown(f'<div class="ai-card"><b>{decision.get("symbol", "N/A")}</b> | <span style="color:#00FFAA;">{decision.get("regime", "N/A")}</span><p style="font-size:0.85em; margin-top:5px;">{decision.get("reasoning", "")[:100]}...</p></div>', unsafe_allow_html=True)
+                st.markdown(f'<div class="ai-card iv-card"><b>{decision.get("symbol", "N/A")}</b> | <span class="iv-positive">{decision.get("regime", "N/A")}</span><p style="font-size:0.85em; margin-top:5px;">{decision.get("reasoning", "")[:100]}...</p></div>', unsafe_allow_html=True)
         except Exception:
             pass
 
         st.markdown("<br/>", unsafe_allow_html=True)
         raw_logs = db.get_logs()
         important_logs = [l for l in raw_logs if "Escaneo" not in l and "Ciclo" not in l][-15:]
-        log_content = "".join([f"<span style='color:#00FFAA;'>>></span> {l}<br/>" for l in important_logs])
-        st.markdown(f'<div class="log-box">{log_content}</div>', unsafe_allow_html=True)
+        log_content = "".join([f"<span class='iv-positive'>>></span> {l}<br/>" for l in important_logs])
+        st.markdown(f'<div class="log-box iv-log-box">{log_content}</div>', unsafe_allow_html=True)
 
     # --- COMMAND CENTER ---
     st.markdown("---")
@@ -257,8 +267,9 @@ def render_dashboard():
         equity_df = db.get_equity_history(limit=500)
         if not equity_df.empty:
             fig_equity = go.Figure()
-            fig_equity.add_trace(go.Scatter(x=equity_df['timestamp'], y=equity_df['total_value'], fill='tozeroy', fillcolor='rgba(0, 255, 170, 0.1)', line=dict(color='#00FFAA', width=3)))
-            fig_equity.update_layout(height=400, margin=dict(l=0, r=0, t=0, b=0), paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", xaxis=dict(showgrid=False), yaxis=dict(showgrid=True, gridcolor='#30363D'))
+            fig_equity.add_trace(go.Scatter(x=equity_df['timestamp'], y=equity_df['total_value'], fill='tozeroy', fillcolor='rgba(0, 168, 120, 0.14)', line=dict(color='#008A63', width=3)))
+            apply_plotly_theme(fig_equity, height=400, margin=dict(l=0, r=0, t=0, b=0))
+            fig_equity.update_xaxes(showgrid=False)
             st.plotly_chart(fig_equity, width='stretch')
 
     with col_market:
@@ -285,6 +296,7 @@ def render_dashboard():
         
         ohlcv = exchange.get_historical_data(selected_sym, limit=150)
         if ohlcv:
+            theme_values = plotly_theme_values()
             df = pd.DataFrame(ohlcv, columns=['ts', 'o', 'h', 'l', 'c', 'v'])
             df['ts'] = pd.to_datetime(df['ts'], unit='ms')
             df['c'] = pd.to_numeric(df['c'])
@@ -296,10 +308,10 @@ def render_dashboard():
             fig = make_subplots(rows=3, cols=1, shared_xaxes=True, vertical_spacing=0.02, row_heights=[0.5, 0.25, 0.25])
             fig.add_trace(go.Candlestick(x=df['ts'], open=df['o'], high=df['h'], low=df['l'], close=df['c'], name="Price"), row=1, col=1)
             fig.add_trace(go.Scatter(x=df['ts'], y=df['EMA_50'], line=dict(color='orange', width=1), name="EMA50"), row=1, col=1)
-            fig.add_trace(go.Scatter(x=df['ts'], y=df['EMA_200'], line=dict(color='white', width=1.5), name="EMA200"), row=1, col=1)
+            fig.add_trace(go.Scatter(x=df['ts'], y=df['EMA_200'], line=dict(color=theme_values["ema_slow"], width=1.5), name="EMA200"), row=1, col=1)
             fig.add_trace(go.Scatter(x=df['ts'], y=df['RSI_14'], line=dict(color='purple', width=1), name="RSI"), row=2, col=1)
             fig.add_trace(go.Scatter(x=df['ts'], y=df['ATR_14'], line=dict(color='cyan', width=1), name="ATR"), row=3, col=1)
-            fig.update_layout(height=400, margin=dict(l=0, r=0, t=0, b=0), paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", xaxis_rangeslider_visible=False)
+            apply_plotly_theme(fig, height=400, margin=dict(l=0, r=0, t=0, b=0), xaxis_rangeslider_visible=False)
             st.plotly_chart(fig, width='stretch')
 
     # --- PANEL DE INTELIGENCIA ---
@@ -316,14 +328,14 @@ def render_dashboard():
                 if macro:
                     regime = macro.get('macro_regime', 'N/A')
                     regime_color = {
-                        'RISK_ON': '#00FFAA', 'ALTSEASON': '#00FFAA',
-                        'NEUTRAL': '#FFD700', 'CAUTION': '#FF8C00',
-                        'RISK_OFF': '#FF4444'
-                    }.get(regime, '#888888')
+                        'RISK_ON': 'var(--iv-accent)', 'ALTSEASON': 'var(--iv-accent)',
+                        'NEUTRAL': 'var(--iv-warning)', 'CAUTION': 'var(--iv-warning)',
+                        'RISK_OFF': 'var(--iv-danger)'
+                    }.get(regime, 'var(--iv-muted)')
 
                     st.markdown(
                         f"<div style='text-align:center; padding:10px; border-radius:8px; "
-                        f"background:#1E1E1E; color:{regime_color}; font-size:1.2em; "
+                        f"background:var(--iv-card-bg); border:1px solid var(--iv-border); color:{regime_color}; font-size:1.2em; "
                         f"font-weight:bold;'>{ _('REGIME_LABEL') }: {regime}</div>",
                         unsafe_allow_html=True
                     )
@@ -466,7 +478,9 @@ def render_dashboard():
                 p = exchange.get_ticker(sym)
                 if p:
                     pie_data.append({"Activo": sym, "Valor": amt * p})
-            st.plotly_chart(px.pie(pd.DataFrame(pie_data), values='Valor', names='Activo', hole=0.6, color_discrete_sequence=['#00FFAA', '#3A86FF', '#FF006E']), width='stretch')
+            fig_pie = px.pie(pd.DataFrame(pie_data), values='Valor', names='Activo', hole=0.6, color_discrete_sequence=['#008A63', '#3A86FF', '#C026D3'])
+            apply_plotly_theme(fig_pie)
+            st.plotly_chart(fig_pie, width='stretch')
 
     with c_radar:
         with st.expander(f"🛰️ { _('OPPORTUNITY_RADAR') }", expanded=False):
@@ -483,7 +497,7 @@ def render_dashboard():
             radar_data = sorted(radar_data, key=lambda x: x['Cambio'], reverse=True)
             for item in radar_data:
                 chg = float(item['Cambio'] or 0)
-                c_color = "#00FFAA" if chg >= 0 else "#FF4444"
+                c_color = "var(--iv-accent)" if chg >= 0 else "var(--iv-danger)"
                 st.markdown(
                     f'<div class="radar-item"><span>{item["Moneda"]}</span>'
                     f'<span style="color:{c_color}; font-weight:bold;">{chg:.2f}%</span></div>',

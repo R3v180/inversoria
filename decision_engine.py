@@ -1,6 +1,7 @@
 import json
 import time
 import re
+import ast
 from sentiment_engine import SentimentEngine
 import pandas as pd
 import config # Importar el módulo completo para hot-reload
@@ -22,6 +23,129 @@ def _safe_float(value, default=0.0):
 
 def _clamp(value, low=0.0, high=1.0):
     return max(low, min(high, value))
+
+
+DECISION_REQUIRED_FIELDS = {
+    "regime",
+    "best_strategy",
+    "action",
+    "confidence",
+    "position_size_multiplier",
+    "stop_loss_atr",
+    "take_profit_ratio",
+    "reasoning",
+}
+
+DECISION_JSON_KEYS = (
+    "regime",
+    "best_strategy",
+    "action",
+    "confidence",
+    "position_size_multiplier",
+    "stop_loss_atr",
+    "take_profit_ratio",
+    "reasoning",
+)
+
+
+def _strip_markdown_fences(text):
+    cleaned = str(text or "").strip().lstrip("\ufeff")
+    cleaned = re.sub(r"^\s*```(?:json)?\s*", "", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r"\s*```\s*$", "", cleaned)
+    return cleaned.strip()
+
+
+def _extract_first_json_object(text):
+    cleaned = _strip_markdown_fences(text)
+    start = cleaned.find("{")
+    if start < 0:
+        return None
+    depth = 0
+    in_string = False
+    escape = False
+    quote = ""
+    for idx in range(start, len(cleaned)):
+        char = cleaned[idx]
+        if in_string:
+            if escape:
+                escape = False
+            elif char == "\\":
+                escape = True
+            elif char == quote:
+                in_string = False
+            continue
+        if char in ('"', "'"):
+            in_string = True
+            quote = char
+        elif char == "{":
+            depth += 1
+        elif char == "}":
+            depth -= 1
+            if depth == 0:
+                return cleaned[start:idx + 1].strip()
+    return None
+
+
+def _remove_json_comments(text):
+    out = []
+    i = 0
+    in_string = False
+    escape = False
+    quote = ""
+    while i < len(text):
+        char = text[i]
+        nxt = text[i + 1] if i + 1 < len(text) else ""
+        if in_string:
+            out.append(char)
+            if escape:
+                escape = False
+            elif char == "\\":
+                escape = True
+            elif char == quote:
+                in_string = False
+            i += 1
+            continue
+        if char in ('"', "'"):
+            in_string = True
+            quote = char
+            out.append(char)
+            i += 1
+            continue
+        if char == "/" and nxt == "/":
+            i += 2
+            while i < len(text) and text[i] not in "\r\n":
+                i += 1
+            continue
+        if char == "/" and nxt == "*":
+            i += 2
+            while i + 1 < len(text) and not (text[i] == "*" and text[i + 1] == "/"):
+                i += 1
+            i += 2
+            continue
+        out.append(char)
+        i += 1
+    return "".join(out)
+
+
+def _repair_common_json_issues(text):
+    repaired = str(text or "").strip()
+    repaired = repaired.replace("“", '"').replace("”", '"').replace("‘", "'").replace("’", "'")
+    repaired = _remove_json_comments(repaired)
+    repaired = re.sub(r",\s*([}\]])", r"\1", repaired)
+    repaired = re.sub(
+        r'(?<=[0-9}"\]])\s+(?="(?:' + "|".join(DECISION_JSON_KEYS) + r')"\s*:)',
+        ", ",
+        repaired,
+    )
+    # Reparar claves conocidas sin comillas, preservando el prefijo capturado.
+    for key in DECISION_JSON_KEYS:
+        repaired = re.sub(rf'([{{,]\s*){key}\s*:', rf'\1"{key}":', repaired)
+    repaired = re.sub(
+        r'(?<=[0-9}"\]])\s+(?="(?:' + "|".join(DECISION_JSON_KEYS) + r')"\s*:)',
+        ", ",
+        repaired,
+    )
+    return repaired
 
 
 class DecisionEngine:
@@ -134,6 +258,52 @@ class DecisionEngine:
         components['adaptive_adjustment'] = round(adjustment, 4)
         components['adaptive_evidence'] = evidence or {}
         return round(adjusted, 3), components
+
+    def _parse_ai_decision_json(self, raw_content):
+        raw_object = _extract_first_json_object(raw_content)
+        if not raw_object:
+            raise ValueError("No JSON object found")
+
+        attempts = [
+            ("raw", raw_object),
+            ("repaired", _repair_common_json_issues(raw_object)),
+        ]
+        last_error = None
+        for mode, candidate in attempts:
+            try:
+                parsed = json.loads(candidate)
+                return parsed, mode
+            except json.JSONDecodeError as exc:
+                last_error = exc
+
+        try:
+            parsed = ast.literal_eval(_repair_common_json_issues(raw_object))
+            if isinstance(parsed, dict):
+                return parsed, "literal_eval"
+        except (SyntaxError, ValueError) as exc:
+            last_error = exc
+
+        raise ValueError(str(last_error or "Invalid JSON"))
+
+    def _validate_ai_decision(self, result):
+        if not isinstance(result, dict):
+            raise ValueError("AI JSON is not an object")
+        missing = sorted(DECISION_REQUIRED_FIELDS - set(result.keys()))
+        if missing:
+            raise ValueError(f"AI JSON missing fields: {','.join(missing)}")
+
+        result = dict(result)
+        result['action'] = str(result.get('action', 'HOLD')).upper()
+        if result['action'] not in {"BUY", "SELL", "HOLD"}:
+            raise ValueError(f"Invalid action: {result['action']}")
+        result['regime'] = str(result.get('regime', 'RANGING')).upper()
+        result['confidence'] = round(_clamp(_safe_float(result.get('confidence'), 0.0)), 3)
+        result['position_size_multiplier'] = round(_clamp(_safe_float(result.get('position_size_multiplier'), 1.0), 0.0, 2.0), 3)
+        result['stop_loss_atr'] = round(max(0.1, _safe_float(result.get('stop_loss_atr'), 2.0)), 3)
+        result['take_profit_ratio'] = round(max(0.1, _safe_float(result.get('take_profit_ratio'), 2.0)), 3)
+        result['best_strategy'] = str(result.get('best_strategy') or 'HOLD')
+        result['reasoning'] = " ".join(str(result.get('reasoning') or '').split())[:500]
+        return result
 
     def build_decision_score(self, indicators, macro_regime, confluence_score, prior, symbol=None, strategy=None):
         """Score determinista y auditable. La IA puede opinar, pero esta capa deja rastro cuantitativo."""
@@ -421,6 +591,13 @@ class DecisionEngine:
         system_instruction = config.PROMPT_DECISION
         lang_name = "English" if self.current_lang == 'en' else "Spanish"
         system_instruction += f"\nDEBES responder SIEMPRE en idioma {lang_name}."
+        system_instruction += (
+            "\nFORMATO OBLIGATORIO: devuelve exclusivamente un objeto JSON válido. "
+            "Sin markdown, sin ``` fences, sin texto antes/después, sin comentarios. "
+            "Usa comillas dobles en todas las claves y strings. Incluye todos los campos requeridos: "
+            "regime, best_strategy, action, confidence, position_size_multiplier, stop_loss_atr, "
+            "take_profit_ratio, reasoning. No uses NaN, Infinity ni trailing commas."
+        )
 
         prompt = f"""Analiza {symbol} (${current_price:.6f}).
 
@@ -447,7 +624,7 @@ Modo de decisión configurado: {decision_mode}
 === NOTICIAS RECIENTES ===
 {chr(10).join(news[:4]) if news else 'Sin noticias disponibles'}
 
-Teniendo en cuenta TODO el contexto anterior (macro, multi-timeframe e histórico), responde SOLO con este JSON:
+Teniendo en cuenta TODO el contexto anterior (macro, multi-timeframe e histórico), responde SOLO con un JSON válido exactamente con estas claves:
 {{
   "regime": "TRENDING_UP | TRENDING_DOWN | RANGING | HIGH_VOLATILITY",
   "best_strategy": "{mtf_recommended_strategy}",
@@ -459,6 +636,12 @@ Teniendo en cuenta TODO el contexto anterior (macro, multi-timeframe e históric
   "reasoning": "Máximo 2 frases justificando la decisión"
 }}
 
+Reglas estrictas de salida:
+- Primer caracter: {{ y último caracter: }}.
+- No incluyas markdown, comentarios, explicaciones, viñetas ni texto fuera del JSON.
+- Usa solo comillas dobles. No dejes comas finales. No omitas comas entre campos.
+- Todos los campos son obligatorios aunque la decisión sea HOLD.
+
 Considera que el umbral mínimo de confianza para BUY es 0.52 (más agresivo que el estándar).
 Si la confluencia MTF es fuerte ({confluence_score:.0%}), puedes aumentar position_size_multiplier hasta 1.5.
 """
@@ -467,69 +650,73 @@ Si la confluencia MTF es fuerte ({confluence_score:.0%}), puedes aumentar positi
 
         if raw_content:
             try:
-                match = re.search(r'\{.*\}', raw_content, re.DOTALL)
-                if match:
-                    result = json.loads(match.group())
-                    result['provider'] = provider
-                    result['confluence_score'] = confluence_score
-                    result['macro_regime'] = macro_regime
-                    result['decision_score'] = decision_score
-                    result['score_components'] = score_components
-                    result['decision_mode'] = decision_mode
-                    result['ai_action'] = result.get('action', 'HOLD')
-                    result['adaptive_adjustment'] = score_components.get('adaptive_adjustment', 0.0)
-                    result['adaptive_evidence'] = score_components.get('adaptive_evidence', {})
+                result, parse_mode = self._parse_ai_decision_json(raw_content)
+                result = self._validate_ai_decision(result)
+                if parse_mode != "raw":
+                    print(
+                        f"[DecisionEngine] JSON parse fallback OK para {symbol} | "
+                        f"provider={provider} | mode={parse_mode}"
+                    )
+                result['provider'] = provider
+                result['confluence_score'] = confluence_score
+                result['macro_regime'] = macro_regime
+                result['decision_score'] = decision_score
+                result['score_components'] = score_components
+                result['decision_mode'] = decision_mode
+                result['ai_action'] = result.get('action', 'HOLD')
+                result['adaptive_adjustment'] = score_components.get('adaptive_adjustment', 0.0)
+                result['adaptive_evidence'] = score_components.get('adaptive_evidence', {})
 
-                    snapshot = self._adaptive_snapshot()
-                    provider_stats = (snapshot.get('by_provider') or {}).get(str(provider)) if snapshot else None
-                    provider_adjustment = 0.0
-                    provider_evidence = {}
-                    if provider_stats:
-                        max_adj = abs(_safe_float(getattr(config, 'ADAPTIVE_MAX_SCORE_ADJUSTMENT', 0.12), 0.12))
-                        provider_adjustment = _clamp(_safe_float(provider_stats.get('adjustment')), -max_adj, max_adj)
-                        provider_evidence = {
-                            'adjustment': round(provider_adjustment, 4),
-                            'max_adjustment': round(max_adj, 4),
-                            'sources': [{
-                                'type': 'by_provider',
-                                'key': str(provider),
-                                'weight': 1.0,
-                                'trades': provider_stats.get('trades'),
-                                'expectancy_pct': provider_stats.get('expectancy_pct'),
-                                'profit_factor': provider_stats.get('profit_factor'),
-                                'win_rate': provider_stats.get('win_rate'),
-                                'source_adjustment': provider_stats.get('adjustment'),
-                            }],
-                        }
-                    if provider_evidence:
-                        result['decision_score'], result['score_components'] = self._apply_adaptive_adjustment(
-                            result['decision_score'],
-                            result['score_components'],
-                            provider_evidence,
+                snapshot = self._adaptive_snapshot()
+                provider_stats = (snapshot.get('by_provider') or {}).get(str(provider)) if snapshot else None
+                provider_adjustment = 0.0
+                provider_evidence = {}
+                if provider_stats:
+                    max_adj = abs(_safe_float(getattr(config, 'ADAPTIVE_MAX_SCORE_ADJUSTMENT', 0.12), 0.12))
+                    provider_adjustment = _clamp(_safe_float(provider_stats.get('adjustment')), -max_adj, max_adj)
+                    provider_evidence = {
+                        'adjustment': round(provider_adjustment, 4),
+                        'max_adjustment': round(max_adj, 4),
+                        'sources': [{
+                            'type': 'by_provider',
+                            'key': str(provider),
+                            'weight': 1.0,
+                            'trades': provider_stats.get('trades'),
+                            'expectancy_pct': provider_stats.get('expectancy_pct'),
+                            'profit_factor': provider_stats.get('profit_factor'),
+                            'win_rate': provider_stats.get('win_rate'),
+                            'source_adjustment': provider_stats.get('adjustment'),
+                        }],
+                    }
+                if provider_evidence:
+                    result['decision_score'], result['score_components'] = self._apply_adaptive_adjustment(
+                        result['decision_score'],
+                        result['score_components'],
+                        provider_evidence,
+                    )
+                    result['adaptive_adjustment'] = result['score_components'].get('adaptive_adjustment', provider_adjustment)
+                    result['adaptive_evidence'] = provider_evidence
+
+                # Ajuste de confianza por confluencia: si MTF es muy fuerte, boosteamos
+                if confluence_score >= 0.80 and result.get('action') == 'BUY':
+                    original_conf = result.get('confidence', 0)
+                    result['confidence'] = min(0.95, original_conf * 1.10)
+
+                if decision_mode == 'hybrid':
+                    effective_score = _safe_float(result.get('decision_score'), decision_score)
+                    if result.get('action') == 'BUY' and effective_score < config.MIN_AUTO_DECISION_SCORE:
+                        result['action'] = 'HOLD'
+                        result['reasoning'] = (
+                            f"[LOW RULE SCORE] {result.get('reasoning', '')} "
+                            f"(score {effective_score:.0%} < {config.MIN_AUTO_DECISION_SCORE:.0%})"
                         )
-                        result['adaptive_adjustment'] = result['score_components'].get('adaptive_adjustment', provider_adjustment)
-                        result['adaptive_evidence'] = provider_evidence
+                    else:
+                        ai_conf = _safe_float(result.get('confidence'), 0.0)
+                        result['confidence'] = round(_clamp((ai_conf * 0.70) + (effective_score * 0.30)), 3)
 
-                    # Ajuste de confianza por confluencia: si MTF es muy fuerte, boosteamos
-                    if confluence_score >= 0.80 and result.get('action') == 'BUY':
-                        original_conf = result.get('confidence', 0)
-                        result['confidence'] = min(0.95, original_conf * 1.10)
-
-                    if decision_mode == 'hybrid':
-                        effective_score = _safe_float(result.get('decision_score'), decision_score)
-                        if result.get('action') == 'BUY' and effective_score < config.MIN_AUTO_DECISION_SCORE:
-                            result['action'] = 'HOLD'
-                            result['reasoning'] = (
-                                f"[LOW RULE SCORE] {result.get('reasoning', '')} "
-                                f"(score {effective_score:.0%} < {config.MIN_AUTO_DECISION_SCORE:.0%})"
-                            )
-                        else:
-                            ai_conf = _safe_float(result.get('confidence'), 0.0)
-                            result['confidence'] = round(_clamp((ai_conf * 0.70) + (effective_score * 0.30)), 3)
-
-                    self.last_analysis[symbol] = now
-                    self.decision_cache[symbol] = result
-                    return result
+                self.last_analysis[symbol] = now
+                self.decision_cache[symbol] = result
+                return result
             except Exception as e:
                 print(f"[DecisionEngine] Error parseando respuesta IA para {symbol}: {e}")
 

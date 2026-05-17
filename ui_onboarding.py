@@ -11,16 +11,17 @@ def render_onboarding():
             max-width: 800px;
             margin: 0 auto;
             padding: 2rem;
-            background: rgba(255, 255, 255, 0.05);
+            background: var(--iv-card-bg);
+            color: var(--iv-text);
             border-radius: 15px;
-            border: 1px solid rgba(255, 255, 255, 0.1);
+            border: 1px solid var(--iv-border);
         }
         </style>
     """, unsafe_allow_html=True)
 
     with st.container():
         st.markdown(f"<h1 style='text-align: center;'>🏛️ { _('WELCOME_TITLE') }</h1>", unsafe_allow_html=True)
-        st.markdown(f"<p style='text-align: center; color: #888;'>{ _('WELCOME_SUBTITLE') }</p>", unsafe_allow_html=True)
+        st.markdown(f"<p style='text-align: center; color: var(--iv-muted);'>{ _('WELCOME_SUBTITLE') }</p>", unsafe_allow_html=True)
         st.markdown("<br>", unsafe_allow_html=True)
 
         # Usamos pestañas para simular los pasos del tutorial/onboarding

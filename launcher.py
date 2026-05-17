@@ -67,6 +67,10 @@ TEXT = {
         "port": "Puerto",
         "logs": "Log del daemon",
         "logs_hint": "Escaneo en vivo del bot: decisiones por símbolo, proveedores IA, filtros y errores.",
+        "copy_logs": "Copiar logs",
+        "logs_copied": "Logs copiados al portapapeles ({lines} líneas).",
+        "logs_copied_short": "Copiado",
+        "logs_empty": "No hay logs para copiar.",
         "ready": "Listo.",
         "starting": "Arrancando sistema...",
         "waiting_web": "Esperando a que la web esté lista",
@@ -152,6 +156,10 @@ TEXT = {
         "port": "Port",
         "logs": "Daemon log",
         "logs_hint": "Live bot scan: symbol decisions, AI providers, filters and errors.",
+        "copy_logs": "Copy logs",
+        "logs_copied": "Logs copied to clipboard ({lines} lines).",
+        "logs_copied_short": "Copied",
+        "logs_empty": "No logs to copy.",
         "ready": "Ready.",
         "starting": "Starting system...",
         "waiting_web": "Waiting for web app to be ready",
@@ -409,11 +417,22 @@ class InversoriaLauncher(ctk.CTk):
         logs = ctk.CTkFrame(self, corner_radius=24, fg_color="#0B1220", border_width=1, border_color="#1F2937")
         logs.grid(row=3, column=0, padx=20, pady=10, sticky="nsew")
         logs.grid_columnconfigure(0, weight=1)
+        logs.grid_columnconfigure(1, weight=0)
         logs.grid_rowconfigure(2, weight=1, minsize=180)
         self.logs_label = ctk.CTkLabel(logs, font=ctk.CTkFont(size=15, weight="bold"))
         self.logs_label.grid(row=0, column=0, padx=18, pady=(16, 6), sticky="w")
+        self.copy_logs_button = ctk.CTkButton(
+            logs,
+            width=130,
+            height=34,
+            corner_radius=12,
+            fg_color="#374151",
+            hover_color="#4B5563",
+            command=self.copy_visible_logs,
+        )
+        self.copy_logs_button.grid(row=0, column=1, padx=18, pady=(16, 6), sticky="e")
         self.logs_hint_label = ctk.CTkLabel(logs, text_color="#94A3B8", font=ctk.CTkFont(size=12))
-        self.logs_hint_label.grid(row=1, column=0, padx=18, pady=(0, 8), sticky="w")
+        self.logs_hint_label.grid(row=1, column=0, columnspan=2, padx=18, pady=(0, 8), sticky="w")
         self.log_box = ctk.CTkTextbox(
             logs,
             height=220,
@@ -424,7 +443,7 @@ class InversoriaLauncher(ctk.CTk):
             border_color="#1F2937",
             font=ctk.CTkFont(family="Consolas", size=12),
         )
-        self.log_box.grid(row=2, column=0, padx=18, pady=(0, 18), sticky="nsew")
+        self.log_box.grid(row=2, column=0, columnspan=2, padx=18, pady=(0, 18), sticky="nsew")
         self.log_box.configure(state="disabled")
 
         self.footer = ctk.CTkLabel(self, textvariable=self.status_var, text_color="#9CA3AF")
@@ -463,6 +482,7 @@ class InversoriaLauncher(ctk.CTk):
         self.api_button.configure(text=self.t("configure_apis"))
         self.status_title.configure(text=self.t("status"))
         self.logs_label.configure(text=self.t("logs"))
+        self.copy_logs_button.configure(text=self.t("copy_logs"))
         self.logs_hint_label.configure(text=self.t("logs_hint"))
         self.web_card["title"].configure(text=self.t("web"))
         self.daemon_card["title"].configure(text=self.t("daemon"))
@@ -853,6 +873,27 @@ class InversoriaLauncher(ctk.CTk):
         self.log_box.see("end")
         self.log_box.update_idletasks()
         self.log_box.configure(state="disabled")
+
+    def copy_visible_logs(self):
+        self._refresh_logs()
+        text = self.log_box.get("1.0", "end-1c")
+        if not text.strip():
+            self.status_var.set(self.t("logs_empty"))
+            return
+
+        line_count = len(text.splitlines())
+        try:
+            self.clipboard_clear()
+            self.clipboard_append(text)
+            self.update()
+            self.status_var.set(self.t("logs_copied").format(lines=line_count))
+            self.copy_logs_button.configure(text=self.t("logs_copied_short"), fg_color="#0F766E")
+            self.after(1800, self._reset_copy_logs_button)
+        except Exception as exc:
+            self.status_var.set(f"{self.t('db_error')}: {exc}")
+
+    def _reset_copy_logs_button(self):
+        self.copy_logs_button.configure(text=self.t("copy_logs"), fg_color="#374151")
 
     def _paint_metric(self, card, active):
         card["value"].configure(text_color="#22C55E" if active else "#EF4444")
