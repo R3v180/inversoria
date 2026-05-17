@@ -36,9 +36,10 @@
 14. [Important Files](#important-files)
 15. [SQLite Database](#sqlite-database)
 16. [Security](#security)
-17. [Troubleshooting](#troubleshooting)
-18. [Operational Guidelines](#operational-guidelines)
-19. [Suggested Roadmap](#suggested-roadmap)
+17. [License And Contributions](#license-and-contributions)
+18. [Troubleshooting](#troubleshooting)
+19. [Operational Guidelines](#operational-guidelines)
+20. [Suggested Roadmap](#suggested-roadmap)
 
 ---
 
@@ -881,6 +882,14 @@ Assistant safety:
 
 ---
 
+## License And Contributions
+
+InversorIA is licensed under the Apache License 2.0.
+
+Contributions are welcome. Unless explicitly stated otherwise, any contribution submitted to this repository is accepted under the same Apache-2.0 license. This keeps the local open-source core usable by the community while preserving the option to build commercial hosted services, support plans or premium infrastructure around it later.
+
+---
+
 ## Troubleshooting
 
 ### Dashboard Navigation Looks Wrong
@@ -1009,9 +1018,10 @@ Possible future improvements:
 14. [Archivos Importantes](#archivos-importantes)
 15. [Base De Datos SQLite](#base-de-datos-sqlite)
 16. [Seguridad](#seguridad-1)
-17. [Solución De Problemas](#solución-de-problemas)
-18. [Buenas Prácticas](#buenas-prácticas)
-19. [Roadmap Sugerido](#roadmap-sugerido-1)
+17. [Licencia Y Contribuciones](#licencia-y-contribuciones)
+18. [Solución De Problemas](#solución-de-problemas)
+19. [Buenas Prácticas](#buenas-prácticas)
+20. [Roadmap Sugerido](#roadmap-sugerido-1)
 
 ---
 
@@ -1570,6 +1580,14 @@ Recomendación Crypto.com:
 - Sin permisos de retiro.
 - IP whitelist si existe.
 - Probar primero en simulación.
+
+---
+
+## Licencia Y Contribuciones
+
+InversorIA usa la licencia Apache 2.0.
+
+Las contribuciones son bienvenidas. Salvo que se indique explícitamente lo contrario, cualquier contribución enviada a este repositorio se acepta bajo la misma licencia Apache-2.0. Esto mantiene abierto el core local para la comunidad y conserva la posibilidad de crear servicios hosted, soporte o infraestructura premium alrededor del proyecto en el futuro.
 
 ---
 
