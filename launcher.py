@@ -39,6 +39,7 @@ TEXT = {
         "real": "Real",
         "start_system": "Iniciar sistema",
         "open_web": "Abrir web",
+        "start_bot": "Arrancar bot",
         "stop_bot": "Detener bot",
         "stop_all": "Detener todo",
         "configure_apis": "Configurar APIs",
@@ -123,6 +124,7 @@ TEXT = {
         "real": "Real",
         "start_system": "Start system",
         "open_web": "Open web",
+        "start_bot": "Start bot",
         "stop_bot": "Stop bot",
         "stop_all": "Stop all",
         "configure_apis": "Configure APIs",
@@ -335,7 +337,7 @@ class InversoriaLauncher(ctk.CTk):
         self.start_button.grid(row=1, column=1, padx=8, pady=(0, 18), sticky="ew")
         self.open_button = ctk.CTkButton(controls, height=46, corner_radius=14, fg_color="#2563EB", hover_color="#1D4ED8", command=self.open_web)
         self.open_button.grid(row=1, column=2, padx=8, pady=(0, 18), sticky="ew")
-        self.stop_button = ctk.CTkButton(controls, height=46, corner_radius=14, fg_color="#B45309", hover_color="#D97706", command=self.stop_bot)
+        self.stop_button = ctk.CTkButton(controls, height=46, corner_radius=14, fg_color="#B45309", hover_color="#D97706", command=self.toggle_bot)
         self.stop_button.grid(row=1, column=3, padx=(8, 18), pady=(0, 18), sticky="ew")
         self.stop_all_button = ctk.CTkButton(
             controls,
@@ -744,6 +746,12 @@ class InversoriaLauncher(ctk.CTk):
             time.sleep(1)
         self.open_web()
 
+    def toggle_bot(self):
+        if self._system_flag("is_running"):
+            self.stop_bot()
+        else:
+            self.start_system()
+
     def stop_bot(self):
         self.set_status("stopping_bot")
         self._set_system_status("is_running", "false")
@@ -787,6 +795,18 @@ class InversoriaLauncher(ctk.CTk):
         self.port_state_var.set(str(PORT))
         api_ready = not self._missing_startup_keys()
         self.api_state_var.set(self.t("api_ready") if api_ready else self.t("api_missing"))
+        if trading_active:
+            self.stop_button.configure(
+                text=self.t("stop_bot"),
+                fg_color="#B45309",
+                hover_color="#D97706",
+            )
+        else:
+            self.stop_button.configure(
+                text=self.t("start_bot"),
+                fg_color="#10B981",
+                hover_color="#059669",
+            )
         self._paint_metric(self.web_card, web_active)
         self._paint_metric(self.daemon_card, daemon_active)
         self._paint_metric(self.trading_card, trading_active)
