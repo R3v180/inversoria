@@ -2,9 +2,9 @@
 
 
 
-# INVERSORIA
+# InversorIA - AI-Assisted Quantitative Crypto Trading Platform
 
-### Autonomous crypto trading bot with hybrid AI, global macro filters, historical backtesting, exchange wallet intelligence, news catalysts and safe human confirmation.
+### Autonomous crypto trading platform with hybrid AI, adaptive scoring, decision journal, portfolio risk guards, backtesting, macro filters and safe execution modes.
 
 ![InversorIA Dashboard](docs/dashboard.png)
 
