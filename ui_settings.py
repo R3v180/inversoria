@@ -157,6 +157,9 @@ def render_settings():
                 presupuesto = st.number_input(_('INITIAL_CAPITAL'), value=get_setting('PRESUPUESTO_INICIAL', 60.0, float))
                 min_score = st.slider(_('MIN_SCORE_L'), 0.0, 1.0, get_setting('MIN_AUTO_DECISION_SCORE', 0.62, float), step=0.01)
                 max_daily_loss = st.slider(_('MAX_DAILY_LOSS_L'), 0.1, 50.0, get_setting('MAX_DAILY_LOSS_PCT', 5.0, float), step=0.1)
+                vol_sizing = st.checkbox(_('VOL_SIZING_L'), value=get_setting('VOLATILITY_SIZING_ENABLED', True, bool))
+                max_position_risk = st.slider(_('MAX_POSITION_RISK_L'), 0.1, 10.0, get_setting('MAX_POSITION_RISK_PCT', 1.0, float), step=0.1)
+                min_position_usdt = st.number_input(_('MIN_POSITION_USDT_L'), min_value=0.1, value=get_setting('MIN_POSITION_USDT', 1.0, float), step=0.5)
             with col2:
                 manual_cap = st.checkbox(
                     _('MANUAL_POS_PRIORITY'),
@@ -172,6 +175,11 @@ def render_settings():
                 )
                 riesgo = st.slider(_('RISK_PER_TRADE_L'), 1, 100, int(get_setting('RISK_PER_TRADE', 0.1, float)*100))
                 max_exposure = st.slider(_('MAX_EXPOSURE_L'), 1.0, 100.0, get_setting('MAX_PORTFOLIO_EXPOSURE_PCT', 85.0, float), step=1.0)
+                max_symbol_exposure = st.slider(_('MAX_SYMBOL_EXPOSURE_L'), 1.0, 100.0, get_setting('MAX_SYMBOL_EXPOSURE_PCT', 30.0, float), step=1.0)
+                max_alt_exposure = st.slider(_('MAX_ALT_EXPOSURE_L'), 1.0, 100.0, get_setting('MAX_ALT_EXPOSURE_PCT', 75.0, float), step=1.0)
+                max_bucket_exposure = st.slider(_('MAX_BUCKET_EXPOSURE_L'), 1.0, 100.0, get_setting('MAX_BUCKET_EXPOSURE_PCT', 45.0, float), step=1.0)
+                max_vol_mult = st.slider(_('MAX_VOL_MULT_L'), 0.1, 3.0, get_setting('MAX_VOLATILITY_POSITION_MULTIPLIER', 1.0, float), step=0.1)
+                metrics_window = st.number_input(_('METRICS_WINDOW_L'), min_value=5, max_value=500, value=get_setting('METRICS_ROLLING_WINDOW', 30, int), step=5)
                 min_profit = st.number_input(
                     _('MIN_PROFIT_L'),
                     min_value=0.1,
@@ -222,6 +230,14 @@ def render_settings():
                 "RISK_PER_TRADE": riesgo / 100.0,
                 "MAX_DAILY_LOSS_PCT": float(max_daily_loss),
                 "MAX_PORTFOLIO_EXPOSURE_PCT": float(max_exposure),
+                "VOLATILITY_SIZING_ENABLED": bool(vol_sizing),
+                "MAX_POSITION_RISK_PCT": float(max_position_risk),
+                "MAX_VOLATILITY_POSITION_MULTIPLIER": float(max_vol_mult),
+                "MIN_POSITION_USDT": float(min_position_usdt),
+                "MAX_SYMBOL_EXPOSURE_PCT": float(max_symbol_exposure),
+                "MAX_ALT_EXPOSURE_PCT": float(max_alt_exposure),
+                "MAX_BUCKET_EXPOSURE_PCT": float(max_bucket_exposure),
+                "METRICS_ROLLING_WINDOW": int(metrics_window),
                 "ROTATION_ENABLED": rot_en,
                 "ROTATION_MIN_PROFIT": float(rot_prof),
                 "ROTATION_CONFIDENCE_GAP": float(rot_gap),

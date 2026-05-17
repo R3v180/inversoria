@@ -30,12 +30,51 @@ def render_history():
     profit_sum = ventas[ventas[pnl_col] > 0][pnl_col].sum()
     loss_sum = abs(ventas[ventas[pnl_col] <= 0][pnl_col].sum())
     profit_factor = (profit_sum / loss_sum) if loss_sum > 0 else (profit_sum if profit_sum > 0 else 0)
+    expectancy = ventas[pnl_col].mean() if total_trades > 0 else 0.0
+    rolling_pf = 0.0
+    if total_trades > 0:
+        rolling = ventas.tail(30)
+        rolling_profit = rolling[rolling[pnl_col] > 0][pnl_col].sum()
+        rolling_loss = abs(rolling[rolling[pnl_col] <= 0][pnl_col].sum())
+        rolling_pf = (rolling_profit / rolling_loss) if rolling_loss > 0 else (rolling_profit if rolling_profit > 0 else 0)
+    rolling_dd = 0.0
+    try:
+        eq = st.session_state.db.get_equity_history(limit=500)
+        if not eq.empty:
+            eq['total_value'] = pd.to_numeric(eq['total_value'], errors='coerce')
+            roll_max = eq['total_value'].cummax()
+            dd = ((eq['total_value'] - roll_max) / roll_max * 100).fillna(0)
+            rolling_dd = dd.min()
+    except Exception:
+        rolling_dd = 0.0
     
-    c1, c2, c3, c4 = st.columns(4)
+    c1, c2, c3, c4, c5, c6 = st.columns(6)
     c1.metric("Win Rate", f"{win_rate:.1f}%")
     c2.metric("Profit Factor", f"{profit_factor:.2f}")
     c3.metric(_('TRADES_CLOSED'), total_trades)
     c4.metric(_('BEST_TRADE'), f"{ventas[pnl_col].max() if not ventas.empty else 0:.2f}%")
+    c5.metric("Expectancy", f"{expectancy:.2f}%")
+    c6.metric("Rolling DD", f"{rolling_dd:.2f}%")
+
+    st.caption(f"Rolling PF últimos 30 cierres: {rolling_pf:.2f}")
+    try:
+        metrics = st.session_state.db.get_decision_metrics(limit=500)
+        provider_stats = metrics.get("provider_stats")
+        regime_stats = metrics.get("regime_stats")
+        if provider_stats is not None and not provider_stats.empty:
+            st.markdown("#### Provider / estrategia real")
+            st.dataframe(provider_stats, width="stretch", hide_index=True)
+        if regime_stats is not None and not regime_stats.empty:
+            st.markdown("#### Régimen")
+            st.dataframe(regime_stats, width="stretch", hide_index=True)
+        if metrics.get("total_decisions", 0):
+            st.caption(
+                f"Journal: {metrics.get('total_decisions', 0)} decisiones · "
+                f"BUY ejecutadas {metrics.get('accepted_buys', 0)} · "
+                f"IA alineada {metrics.get('ai_alignment_pct', 0):.1f}%"
+            )
+    except Exception:
+        pass
     
     st.markdown("---")
     st.subheader(_('EVOLUTION_CURVE'))

@@ -74,6 +74,9 @@ Available today:
 - Configurable decision mode: AI-aggressive, hybrid score+AI, or rules/quant-only.
 - Deterministic decision score with component breakdown for technical, MTF, historical and macro layers.
 - First risk guardrails for daily loss and total portfolio exposure before auto-buys.
+- Persistent decision journal for AI suggestion, final action, score, sizing, risk blocks and realized outcome.
+- ATR volatility sizing with configurable caps and portfolio concentration guards.
+- Live analytics for expectancy, rolling drawdown, rolling profit factor, provider stats and regime stats.
 - Full exchange wallet view, including balances not tracked by the bot.
 - Dust/recoverable-balance classification.
 - Sell pre-check: free balance, precision, minimums, notional and order-book slippage.
@@ -207,7 +210,9 @@ bot_daemon.py
     │
     ├── Rank all BUY candidates
     │   └── score = deterministic decision score + AI confidence + MTF bonus
+    ├── Size candidates with ATR volatility and portfolio caps
     ├── Execute top-ranked candidates until available slots are filled
+    ├── Write decision_journal rows for signals, blocks and executions
     └── If full, evaluate one rotation using the best remaining candidate
 ```
 
@@ -238,6 +243,10 @@ Decision layers:
   - Technical, multi-timeframe, historical and macro components are stored with each decision.
   - `hybrid` mode can block an AI BUY if the deterministic score is too weak.
   - `rules` mode can run without asking the AI to decide the action.
+8. **Execution governance**
+  - The AI may suggest an action, but the daemon records the executable action after score, sizing and risk guards.
+  - ATR sizing estimates stop distance and risk amount before placing an order.
+  - Portfolio guards can block overexposure by symbol, alt basket or narrative bucket.
 
 Execution is controlled separately from decision-making:
 
@@ -391,6 +400,9 @@ Hot-editable settings:
 - Decision mode: AI-aggressive, hybrid, or rules/quant.
 - Minimum deterministic score for automatic buys.
 - Daily loss and portfolio exposure guardrails.
+- Volatility sizing, max risk per position and min order size.
+- Symbol, alt and bucket exposure caps.
+- Rolling metrics window.
 - Minimum profit target.
 - Rotation.
 - Minimum profit for rotation.
@@ -579,6 +591,15 @@ This prevents macro refresh from overwriting the last real scan statistics.
 | `STOP_LOSS_PERCENT`             | Base stop-loss                                     | `3.0`          |
 | `MAX_DAILY_LOSS_PCT`            | Blocks new auto-buys after this 24h equity loss     | `5.0`          |
 | `MAX_PORTFOLIO_EXPOSURE_PCT`    | Blocks new auto-buys above this exposure            | `85.0`         |
+| `VOLATILITY_SIZING_ENABLED`     | Use ATR stop distance for position sizing            | `True`         |
+| `MAX_POSITION_RISK_PCT`         | Max equity risk estimated per position               | `1.0`          |
+| `MAX_VOLATILITY_POSITION_MULTIPLIER` | Cap vs base `RISK_PER_TRADE` size                | `1.0`          |
+| `MIN_POSITION_USDT`             | Minimum auto-buy amount                              | `1.0`          |
+| `MAX_SYMBOL_EXPOSURE_PCT`       | Max exposure per symbol                              | `30.0`         |
+| `MAX_ALT_EXPOSURE_PCT`          | Max aggregate non-BTC/ETH exposure                   | `75.0`         |
+| `MAX_BUCKET_EXPOSURE_PCT`       | Max exposure per configured narrative bucket         | `45.0`         |
+| `METRICS_ROLLING_WINDOW`        | Window for rolling analytics                         | `30`           |
+| `PORTFOLIO_BUCKETS`             | Symbol buckets for portfolio concentration checks    | built-in map   |
 | `ROTATION_ENABLED`              | Enable portfolio rotation                          | `True`         |
 | `ROTATION_MIN_PROFIT`           | Minimum profit before rotating out                 | `0.35`         |
 | `ROTATION_CONFIDENCE_GAP`       | New signal must exceed old confidence by this much | `0.20`         |
@@ -781,6 +802,7 @@ Main tables:
 | `cooldowns`           | Symbol cooldowns.                                        |
 | `backtest_runs`       | Backtest summaries.                                      |
 | `backtest_conditions` | Historical priors by condition.                          |
+| `decision_journal`    | Auditable decisions, sizing, risk blocks and outcomes.   |
 
 
 ---
@@ -972,6 +994,9 @@ Modos disponibles:
 - Modo de decisión configurable: IA agresiva, híbrido score+IA o reglas/quant.
 - Score determinista de decisión con desglose técnico, MTF, histórico y macro.
 - Primeros guardrails de riesgo por pérdida diaria y exposición total antes de auto-compras.
+- Journal persistente de decisiones con sugerencia IA, acción final, score, sizing, bloqueos y resultado.
+- Sizing por volatilidad ATR con caps configurables y guardrails de concentración de cartera.
+- Analítica viva: expectancy, drawdown rolling, profit factor rolling y métricas por provider/régimen.
 - Vista de cartera exchange completa.
 - Clasificación de retales y polvo recuperable.
 - Pre-chequeo de venta: saldo libre, precisión, mínimos, notional y slippage.
@@ -1065,7 +1090,9 @@ bot_daemon.py
 │
 ├── Rankea todos los candidatos BUY
 │   └── score = score determinista + confianza IA + bonus MTF
+├── Calcula sizing por ATR y límites de cartera
 ├── Compra los mejores candidatos hasta llenar huecos
+├── Registra señales, bloqueos y ejecuciones en decision_journal
 └── Si está lleno, evalúa una rotación con el mejor candidato restante
 ```
 
@@ -1078,6 +1105,7 @@ Capas:
 5. Backtest histórico.
 6. IA híbrida.
 7. Score de decisión auditable.
+8. Gobernanza de ejecución, sizing por ATR y guardrails de cartera.
 
 La ejecución se controla aparte:
 
@@ -1089,6 +1117,8 @@ El modo de decisión puede ser:
 - `ai_aggressive`: la IA tiene más peso, manteniendo filtros y riesgo.
 - `hybrid`: la IA participa, pero una compra debe superar el score determinista.
 - `rules`: decide con reglas/score sin pedir a la IA la acción final.
+
+La IA puede sugerir acción en modo híbrido, pero el daemon registra la acción ejecutable después de score, sizing y riesgo.
 
 ---
 
@@ -1130,11 +1160,11 @@ Chat contextual. Las órdenes propuestas pasan a una tarjeta pendiente y requier
 
 ### Historial
 
-Trades, win rate, profit factor, curva aproximada y journal.
+Trades, win rate, profit factor, expectancy, drawdown rolling, métricas por provider/régimen, curva aproximada y journal.
 
 ### Configuración
 
-Permite editar modo, ejecución automática/consultiva, cerebro de decisión, score mínimo, riesgo, posiciones, rotación, frecuencia IA, APIs y prompts.
+Permite editar modo, ejecución automática/consultiva, cerebro de decisión, score mínimo, volatility sizing, concentración de cartera, riesgo, posiciones, rotación, frecuencia IA, APIs y prompts.
 
 También incluye importación/exportación segura:
 
@@ -1271,6 +1301,15 @@ Estados:
 | `STOP_LOSS_PERCENT`             | Stop loss base             | `3.0`   |
 | `MAX_DAILY_LOSS_PCT`            | Bloquea compras tras esta pérdida 24h | `5.0` |
 | `MAX_PORTFOLIO_EXPOSURE_PCT`    | Bloquea compras sobre esta exposición | `85.0` |
+| `VOLATILITY_SIZING_ENABLED`     | Usa ATR para calcular tamaño de posición | `True` |
+| `MAX_POSITION_RISK_PCT`         | Riesgo estimado máximo por posición | `1.0` |
+| `MAX_VOLATILITY_POSITION_MULTIPLIER` | Cap frente al tamaño base por `RISK_PER_TRADE` | `1.0` |
+| `MIN_POSITION_USDT`             | Importe mínimo de auto-compra | `1.0` |
+| `MAX_SYMBOL_EXPOSURE_PCT`       | Exposición máxima por símbolo | `30.0` |
+| `MAX_ALT_EXPOSURE_PCT`          | Exposición máxima agregada en alts | `75.0` |
+| `MAX_BUCKET_EXPOSURE_PCT`       | Exposición máxima por narrativa/bucket | `45.0` |
+| `METRICS_ROLLING_WINDOW`        | Ventana de métricas rolling | `30` |
+| `PORTFOLIO_BUCKETS`             | Buckets de símbolos para concentración | mapa incluido |
 | `ROTATION_ENABLED`              | Activa rotación            | `True`  |
 | `ROTATION_MIN_PROFIT`           | Profit mínimo para rotar   | `0.35`  |
 | `ROTATION_CONFIDENCE_GAP`       | Gap de confianza           | `0.20`  |
@@ -1422,6 +1461,7 @@ Tablas:
 - `cooldowns`
 - `backtest_runs`
 - `backtest_conditions`
+- `decision_journal`
 
 ---
 

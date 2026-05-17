@@ -95,6 +95,38 @@ class BotDaemon:
     def is_consultive_mode(self):
         return getattr(config, "TRADING_EXECUTION_MODE", "auto") == "consultive"
 
+    def _safe_float(self, value, default=0.0):
+        try:
+            f = float(value)
+            if f != f:
+                return default
+            return f
+        except (TypeError, ValueError):
+            return default
+
+    def _clamp(self, value, low, high):
+        return max(low, min(high, value))
+
+    def _position_extra(self, pos):
+        raw = (pos or {}).get('extra_data')
+        if not raw:
+            return {}
+        if isinstance(raw, dict):
+            return raw
+        try:
+            return json.loads(raw)
+        except Exception:
+            return {}
+
+    def portfolio_bucket(self, symbol):
+        base = str(symbol or "").split("/", 1)[0].upper()
+        for bucket, symbols in (getattr(config, "PORTFOLIO_BUCKETS", {}) or {}).items():
+            if base in {str(s).upper() for s in symbols}:
+                return str(bucket).upper()
+        if base in {"BTC", "ETH"}:
+            return base
+        return "OTHER"
+
     def _open_exposure_usdt(self, open_positions):
         exposure = 0.0
         for sym, pos in (open_positions or {}).items():
@@ -102,12 +134,30 @@ class BotDaemon:
             exposure += float(pos.get('amount') or 0) * float(price or 0)
         return exposure
 
-    def evaluate_risk_guards(self, total_value, open_positions, pending_buy_usdt=0.0):
+    def portfolio_exposures(self, open_positions):
+        out = {"total": 0.0, "alt": 0.0, "symbols": {}, "buckets": {}}
+        for sym, pos in (open_positions or {}).items():
+            price = self.exchange.get_ticker(sym) or pos.get('entry_price') or 0
+            value = self._safe_float(pos.get('amount')) * self._safe_float(price)
+            if value <= 0:
+                continue
+            bucket = self.portfolio_bucket(sym)
+            out["total"] += value
+            out["symbols"][sym] = out["symbols"].get(sym, 0.0) + value
+            out["buckets"][bucket] = out["buckets"].get(bucket, 0.0) + value
+            if bucket not in {"BTC", "ETH"}:
+                out["alt"] += value
+        return out
+
+    def evaluate_risk_guards(self, total_value, open_positions, pending_buy_usdt=0.0, pending_symbol=None):
         guards = {
             "ok": True,
             "reasons": [],
             "daily_loss_pct": 0.0,
             "exposure_pct": 0.0,
+            "symbol_exposure_pct": 0.0,
+            "alt_exposure_pct": 0.0,
+            "bucket_exposure_pct": 0.0,
         }
         if total_value <= 0:
             guards["ok"] = False
@@ -124,7 +174,8 @@ class BotDaemon:
                     f"DAILY_LOSS {daily_loss_pct:.2f}% >= {config.MAX_DAILY_LOSS_PCT * 100:.2f}%"
                 )
 
-        exposure = self._open_exposure_usdt(open_positions) + float(pending_buy_usdt or 0)
+        exposures = self.portfolio_exposures(open_positions)
+        exposure = exposures["total"] + float(pending_buy_usdt or 0)
         exposure_pct = (exposure / float(total_value)) * 100 if total_value else 0.0
         guards["exposure_pct"] = round(exposure_pct, 2)
         if exposure_pct > config.MAX_PORTFOLIO_EXPOSURE_PCT * 100:
@@ -132,7 +183,93 @@ class BotDaemon:
             guards["reasons"].append(
                 f"EXPOSURE {exposure_pct:.2f}% > {config.MAX_PORTFOLIO_EXPOSURE_PCT * 100:.2f}%"
             )
+        guards["alt_exposure_pct"] = round((exposures["alt"] / float(total_value)) * 100, 2) if total_value else 0.0
+        if exposures["buckets"] and total_value:
+            guards["bucket_exposure_pct"] = round(
+                max(exposures["buckets"].values()) / float(total_value) * 100,
+                2,
+            )
+        if pending_symbol:
+            bucket = self.portfolio_bucket(pending_symbol)
+            symbol_value = exposures["symbols"].get(pending_symbol, 0.0) + float(pending_buy_usdt or 0)
+            symbol_pct = (symbol_value / float(total_value)) * 100 if total_value else 0.0
+            guards["symbol_exposure_pct"] = round(symbol_pct, 2)
+            if symbol_pct > config.MAX_SYMBOL_EXPOSURE_PCT * 100:
+                guards["ok"] = False
+                guards["reasons"].append(
+                    f"SYMBOL_EXPOSURE {pending_symbol} {symbol_pct:.2f}% > {config.MAX_SYMBOL_EXPOSURE_PCT * 100:.2f}%"
+                )
+
+            alt_value = exposures["alt"]
+            if bucket not in {"BTC", "ETH"}:
+                alt_value += float(pending_buy_usdt or 0)
+            alt_pct = (alt_value / float(total_value)) * 100 if total_value else 0.0
+            guards["alt_exposure_pct"] = round(alt_pct, 2)
+            if alt_pct > config.MAX_ALT_EXPOSURE_PCT * 100:
+                guards["ok"] = False
+                guards["reasons"].append(
+                    f"ALT_EXPOSURE {alt_pct:.2f}% > {config.MAX_ALT_EXPOSURE_PCT * 100:.2f}%"
+                )
+
+            bucket_value = exposures["buckets"].get(bucket, 0.0) + float(pending_buy_usdt or 0)
+            bucket_pct = (bucket_value / float(total_value)) * 100 if total_value else 0.0
+            guards["bucket"] = bucket
+            guards["bucket_exposure_pct"] = round(bucket_pct, 2)
+            if bucket_pct > config.MAX_BUCKET_EXPOSURE_PCT * 100:
+                guards["ok"] = False
+                guards["reasons"].append(
+                    f"BUCKET_EXPOSURE {bucket} {bucket_pct:.2f}% > {config.MAX_BUCKET_EXPOSURE_PCT * 100:.2f}%"
+                )
         return guards
+
+    def calculate_position_size(self, symbol, price, indicators, decision, total_value, open_positions):
+        balance_usdt = self.exchange.get_usdt_balance()
+        base_amount = balance_usdt * config.RISK_PER_TRADE
+        score = self._safe_float(decision.get('decision_score'), self._safe_float(decision.get('confidence'), 0.0))
+        size_mult = self._safe_float(decision.get('position_size_multiplier'), 1.0)
+        size_mult = self._clamp(size_mult, 0.25, config.MAX_VOLATILITY_POSITION_MULTIPLIER)
+        cap_amount = base_amount * max(0.1, config.MAX_VOLATILITY_POSITION_MULTIPLIER)
+
+        atr = self._safe_float(indicators.get('atr'), 0.0)
+        stop_mult = self._safe_float(decision.get('stop_loss_atr'), 2.0)
+        stop_distance_pct = 0.0
+        volatility_amount = base_amount
+        reason = "fixed_risk"
+
+        if config.VOLATILITY_SIZING_ENABLED and price > 0 and atr > 0 and stop_mult > 0:
+            stop_distance_pct = (atr * stop_mult) / float(price)
+            risk_budget = float(total_value or 0) * config.MAX_POSITION_RISK_PCT
+            if stop_distance_pct > 0:
+                volatility_amount = risk_budget / stop_distance_pct
+            score_mult = self._clamp(0.75 + (score - config.MIN_AUTO_DECISION_SCORE), 0.5, 1.15)
+            raw_amount = min(volatility_amount, cap_amount) * size_mult * score_mult
+            reason = "volatility_atr"
+        else:
+            raw_amount = base_amount * size_mult
+
+        amount_usdt = min(raw_amount, cap_amount, balance_usdt)
+        amount_usdt = max(0.0, amount_usdt)
+        risk_amount = amount_usdt * stop_distance_pct if stop_distance_pct else amount_usdt * config.STOP_LOSS_PCT
+        return {
+            "amount_usdt": round(amount_usdt, 8),
+            "base_amount_usdt": round(base_amount, 8),
+            "balance_usdt": round(balance_usdt, 8),
+            "atr": atr,
+            "stop_loss_atr": stop_mult,
+            "stop_distance_pct": round(stop_distance_pct * 100, 4),
+            "risk_amount_usdt": round(risk_amount, 8),
+            "position_size_multiplier": round(size_mult, 4),
+            "sizing_reason": reason,
+            "portfolio_bucket": self.portfolio_bucket(symbol),
+        }
+
+    def resolve_executable_action(self, decision):
+        action = str(decision.get('action', 'HOLD')).upper()
+        score = self._safe_float(decision.get('decision_score'), self._safe_float(decision.get('confidence'), 0.0))
+        if action == "BUY" and getattr(config, "DECISION_MODE", "hybrid") != "ai_aggressive":
+            if score < config.MIN_AUTO_DECISION_SCORE:
+                return "HOLD", f"LOW_DECISION_SCORE {score:.2f} < {config.MIN_AUTO_DECISION_SCORE:.2f}"
+        return action, ""
 
     def is_allowed_radar_symbol(self, symbol):
         try:
@@ -341,13 +478,33 @@ class BotDaemon:
             price = float(item['price'])
             decision = item['decision']
             provider = item['provider']
+            indicators = item.get('indicators') or {}
+            decision_journal_id = item.get('decision_journal_id')
 
-            balance_usdt_actual = self.exchange.get_usdt_balance()
-            amount_usdt = balance_usdt_actual * config.RISK_PER_TRADE
+            sizing = self.calculate_position_size(sym, price, indicators, decision, total_value, open_positions)
+            amount_usdt = float(sizing.get("amount_usdt") or 0)
 
-            candidate_risk = self.evaluate_risk_guards(total_value, open_positions, pending_buy_usdt=amount_usdt)
+            candidate_risk = self.evaluate_risk_guards(
+                total_value,
+                open_positions,
+                pending_buy_usdt=amount_usdt,
+                pending_symbol=sym,
+            )
+            if decision_journal_id:
+                self.db.update_decision_journal(
+                    decision_journal_id,
+                    sizing=sizing,
+                    risk=candidate_risk,
+                    execution_status="candidate",
+                )
             if not candidate_risk["ok"]:
                 self.log_message(f"🛡️ Compra bloqueada por riesgo {sym}: {', '.join(candidate_risk['reasons'])}")
+                if decision_journal_id:
+                    self.db.update_decision_journal(
+                        decision_journal_id,
+                        execution_status="blocked_risk",
+                        block_reason=", ".join(candidate_risk["reasons"]),
+                    )
                 return False
 
             if consultive_mode:
@@ -356,29 +513,69 @@ class BotDaemon:
                     f"score={item['score']:.3f} conf={float(decision.get('confidence') or 0):.2f} "
                     f"importe_estimado={amount_usdt:.2f} USDT"
                 )
+                if decision_journal_id:
+                    self.db.update_decision_journal(
+                        decision_journal_id,
+                        execution_status="consultive",
+                        block_reason="TRADING_EXECUTION_MODE=consultive",
+                    )
                 return False
 
-            if amount_usdt < 1.0:
-                self.log_message(f"{ _('LOG_INSUFFICIENT', lang=self.u_lang) } ({balance_usdt_actual:.2f}) { _('LOG_FOR', lang=self.u_lang) } {sym}")
+            if amount_usdt < config.MIN_POSITION_USDT:
+                self.log_message(f"{ _('LOG_INSUFFICIENT', lang=self.u_lang) } ({sizing.get('balance_usdt', 0):.2f}) { _('LOG_FOR', lang=self.u_lang) } {sym}")
+                if decision_journal_id:
+                    self.db.update_decision_journal(
+                        decision_journal_id,
+                        execution_status="blocked_min_size",
+                        block_reason=f"amount_usdt {amount_usdt:.4f} < MIN_POSITION_USDT {config.MIN_POSITION_USDT:.4f}",
+                    )
                 return False
 
             amount_coin = amount_usdt / price
             res = self.exchange.execute_order(sym, 'buy', amount_coin, price)
             if res.get('status') in ['closed', 'simulated']:
                 decision['entry_confidence'] = decision.get('confidence', 0.7)
+                decision['entry_decision_id'] = decision_journal_id
+                decision['atr_at_entry'] = sizing.get('atr', 0)
+                decision['sizing'] = sizing
                 self.db.add_open_position(sym, price, price, amount_coin, extra_data=json.dumps(decision))
-                open_positions[sym] = {'entry_price': price, 'amount': amount_coin}
-                self.db.save_trade(
+                open_positions[sym] = {
+                    'entry_price': price,
+                    'highest_price': price,
+                    'amount': amount_coin,
+                    'entry_confidence': decision.get('entry_confidence', 0.7),
+                    'extra_data': json.dumps(decision),
+                }
+                trade_id = self.db.save_trade(
                     sym, 'buy', float(price), float(amount_coin),
                     f"BOT [{provider}]", 0.0,
                 )
+                if decision_journal_id:
+                    self.db.update_decision_journal(
+                        decision_journal_id,
+                        execution_status=res.get('status', 'executed'),
+                        execution_side="buy",
+                        executed_price=float(price),
+                        executed_amount=float(amount_coin),
+                        sizing=sizing,
+                        risk=candidate_risk,
+                        block_reason=f"trade_id={trade_id}",
+                    )
                 self.log_message(
                     f"{ _('LOG_BUY', lang=self.u_lang) } {sym} @ {price} "
-                    f"[{provider}] score={item['score']:.3f} conf={float(decision.get('confidence') or 0):.2f}"
+                    f"[{provider}] score={item['score']:.3f} conf={float(decision.get('confidence') or 0):.2f} size=${amount_usdt:.2f}"
                 )
                 return True
 
             self.log_message(f"❌ Fallo compra {sym}: {res.get('reason', res)}")
+            if decision_journal_id:
+                self.db.update_decision_journal(
+                    decision_journal_id,
+                    execution_status="failed",
+                    block_reason=str(res.get('reason', res)),
+                    sizing=sizing,
+                    risk=candidate_risk,
+                )
             return False
 
         for symbol in self.active_symbols:
@@ -411,11 +608,31 @@ class BotDaemon:
             
             provider = decision.get('provider', 'IA')
             action = decision.get('action', 'HOLD')
+            executable_action, execution_block = self.resolve_executable_action(decision)
             action_counts[action] = action_counts.get(action, 0) + 1
             providers[provider] = providers.get(provider, 0) + 1
             if action == "HOLD":
                 reason = str(decision.get('reasoning', 'HOLD')).split("...")[0][:80]
                 hold_reasons[reason] = hold_reasons.get(reason, 0) + 1
+            decision_journal_id = self.db.add_decision_journal(
+                symbol=symbol,
+                price=float(current_price),
+                ai_action=decision.get('ai_action', action),
+                action_final=action,
+                executable_action=executable_action,
+                provider=provider,
+                decision_mode=decision.get('decision_mode', getattr(config, 'DECISION_MODE', 'hybrid')),
+                execution_mode=getattr(config, 'TRADING_EXECUTION_MODE', 'auto'),
+                regime=decision.get('regime', 'N/A'),
+                strategy=decision.get('best_strategy', 'N/A'),
+                confidence=float(decision.get('confidence') or 0),
+                decision_score=float(decision.get('decision_score') or 0),
+                score_components=decision.get('score_components', {}),
+                indicators=indicators,
+                portfolio_bucket=self.portfolio_bucket(symbol),
+                block_reason=execution_block,
+                execution_status="observed" if executable_action == "HOLD" else "signal",
+            )
             # Guardar para UI (Global y por Símbolo)
             decision_json = json.dumps({
                 'symbol': symbol,
@@ -424,6 +641,7 @@ class BotDaemon:
                 'best_strategy': decision.get('best_strategy', 'N/A'),
                 'confidence': decision.get('confidence', 0),
                 'action': decision.get('action', 'HOLD'),
+                'executable_action': executable_action,
                 'decision_score': decision.get('decision_score', 0),
                 'score_components': decision.get('score_components', {}),
                 'decision_mode': decision.get('decision_mode', getattr(config, 'DECISION_MODE', 'hybrid')),
@@ -449,6 +667,13 @@ class BotDaemon:
                 if sell_res['should_sell']:
                     if consultive_mode:
                         self.log_message(f"🧭 CONSULTIVO SELL {symbol} @ {current_price:.4f} | Motivo: {sell_res['reason']}")
+                        self.db.update_decision_journal(
+                            decision_journal_id,
+                            execution_status="consultive",
+                            execution_side="sell",
+                            block_reason="TRADING_EXECUTION_MODE=consultive",
+                            exit_reason=sell_res['reason'],
+                        )
                         continue
                     order_result = self.exchange.execute_order(symbol, 'sell', pos['amount'], current_price)
                     if order_result.get('status') in ['closed', 'simulated']:
@@ -459,8 +684,27 @@ class BotDaemon:
                         if sold <= 0:
                             sold = float(pos['amount'])
                         sold = min(sold, float(pos['amount']))
+                        entry_extra = self._position_extra(pos)
+                        entry_decision_id = entry_extra.get('entry_decision_id')
+                        entry_price = float(pos.get('entry_price') or current_price)
+                        realized_pnl = ((float(current_price) - entry_price) / entry_price) * 100 if entry_price else 0.0
                         closed = self.db.close_position(symbol, current_price, sell_res['reason'], sold_amount=sold)
                         if closed:
+                            self.db.update_decision_journal(
+                                decision_journal_id,
+                                execution_status=order_result.get('status', 'executed'),
+                                execution_side="sell",
+                                executed_price=float(current_price),
+                                executed_amount=float(sold),
+                                realized_pnl_pct=realized_pnl,
+                                exit_reason=sell_res['reason'],
+                            )
+                            if entry_decision_id:
+                                self.db.update_decision_journal(
+                                    entry_decision_id,
+                                    realized_pnl_pct=realized_pnl,
+                                    exit_reason=sell_res['reason'],
+                                )
                             still = self.db.get_open_positions().get(symbol)
                             if still:
                                 open_positions[symbol] = still
@@ -471,21 +715,31 @@ class BotDaemon:
                             self.log_message(f"⚠️ Venta ejecutada pero posición {symbol} no encontrada en DB")
                     else:
                         self.log_message(f"❌ Fallo al vender {symbol}: {order_result.get('reason', 'Error desconocido')}")
+                        self.db.update_decision_journal(
+                            decision_journal_id,
+                            execution_status="failed",
+                            execution_side="sell",
+                            block_reason=str(order_result.get('reason', 'Error desconocido')),
+                        )
             
             # 2. Lógica de COMPRA
             else:
-                if decision['action'] == 'BUY':
-                    if (
-                        getattr(config, "DECISION_MODE", "hybrid") != "ai_aggressive"
-                        and float(decision.get('decision_score') or decision.get('confidence') or 0) < config.MIN_AUTO_DECISION_SCORE
-                    ):
+                if action == 'BUY':
+                    if executable_action != "BUY":
                         skipped["LOW_DECISION_SCORE"] = skipped.get("LOW_DECISION_SCORE", 0) + 1
+                        self.db.update_decision_journal(
+                            decision_journal_id,
+                            execution_status="blocked_score",
+                            block_reason=execution_block,
+                        )
                         continue
                     item = {
                         'symbol': symbol,
                         'price': current_price,
                         'decision': decision,
                         'provider': provider,
+                        'indicators': indicators,
+                        'decision_journal_id': decision_journal_id,
                     }
                     item['score'] = candidate_score(item)
                     buy_candidates.append(item)
@@ -549,7 +803,17 @@ class BotDaemon:
                 if sold <= 0:
                     sold = float(sac_pos['amount'])
                 sold = min(sold, float(sac_pos['amount']))
+                sac_extra = self._position_extra(sac_pos)
+                sac_entry_decision_id = sac_extra.get('entry_decision_id')
+                sac_entry_price = float(sac_pos.get('entry_price') or sac_price)
+                sac_pnl = ((float(sac_price) - sac_entry_price) / sac_entry_price) * 100 if sac_entry_price else 0.0
                 self.db.close_position(sym_sac, sac_price, "ROTACIÓN IA", sold_amount=sold)
+                if sac_entry_decision_id:
+                    self.db.update_decision_journal(
+                        sac_entry_decision_id,
+                        realized_pnl_pct=sac_pnl,
+                        exit_reason=f"ROTACIÓN IA -> {candidate['symbol']}",
+                    )
                 still_sac = self.db.get_open_positions().get(sym_sac)
                 if still_sac:
                     open_positions[sym_sac] = still_sac

@@ -416,7 +416,8 @@ def render_dashboard():
                     status = "OK" if rg.get("ok", True) else "BLOQUEANDO COMPRAS"
                     st.caption(
                         f"Riesgo: {status} · pérdida diaria {rg.get('daily_loss_pct', 0)}% · "
-                        f"exposición {rg.get('exposure_pct', 0)}%"
+                        f"exposición {rg.get('exposure_pct', 0)}% · "
+                        f"alts {rg.get('alt_exposure_pct', 0)}% · bucket {rg.get('bucket_exposure_pct', 0)}%"
                     )
                 if diag.get("top_buy_candidates"):
                     st.markdown("**Top candidatos BUY**")
@@ -430,6 +431,24 @@ def render_dashboard():
                     st.markdown(f"**{_('DAEMON_TOP_HOLDS')}**")
                     for reason, count in diag["hold_reasons"].items():
                         st.caption(f"{count}× {reason}")
+                try:
+                    metrics = db.get_decision_metrics(limit=500)
+                    st.markdown("**Métricas del journal**")
+                    j1, j2, j3, j4 = st.columns(4)
+                    j1.metric("Decisiones", metrics.get("total_decisions", 0))
+                    j2.metric("BUY ejecutadas", metrics.get("accepted_buys", 0))
+                    j3.metric("Bloqueos/señales", metrics.get("blocked", 0))
+                    j4.metric("IA alineada", f"{metrics.get('ai_alignment_pct', 0):.1f}%")
+                    provider_stats = metrics.get("provider_stats")
+                    if provider_stats is not None and not provider_stats.empty:
+                        with st.expander("Provider accuracy"):
+                            st.dataframe(provider_stats, width="stretch", hide_index=True)
+                    regime_stats = metrics.get("regime_stats")
+                    if regime_stats is not None and not regime_stats.empty:
+                        with st.expander("Winrate por régimen"):
+                            st.dataframe(regime_stats, width="stretch", hide_index=True)
+                except Exception as e:
+                    st.caption(f"Decision journal pendiente: {e}")
         except Exception as e:
             st.info(f"{_('DAEMON_DIAG_TITLE')}: {e}")
 

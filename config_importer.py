@@ -30,6 +30,15 @@ CONFIG_SCHEMA = {
     "STOP_LOSS_PERCENT": {"type": float, "min": 0.1, "max": 50.0},
     "MAX_DAILY_LOSS_PCT": {"type": float, "min": 0.1, "max": 100.0},
     "MAX_PORTFOLIO_EXPOSURE_PCT": {"type": float, "min": 1.0, "max": 100.0},
+    "VOLATILITY_SIZING_ENABLED": {"type": bool},
+    "MAX_POSITION_RISK_PCT": {"type": float, "min": 0.1, "max": 20.0},
+    "MAX_VOLATILITY_POSITION_MULTIPLIER": {"type": float, "min": 0.25, "max": 3.0},
+    "MIN_POSITION_USDT": {"type": float, "min": 0.1, "max": 10_000.0},
+    "MAX_SYMBOL_EXPOSURE_PCT": {"type": float, "min": 1.0, "max": 100.0},
+    "MAX_ALT_EXPOSURE_PCT": {"type": float, "min": 1.0, "max": 100.0},
+    "MAX_BUCKET_EXPOSURE_PCT": {"type": float, "min": 1.0, "max": 100.0},
+    "METRICS_ROLLING_WINDOW": {"type": int, "min": 5, "max": 500},
+    "PORTFOLIO_BUCKETS": {"type": "bucket_map"},
     "RISK_PER_TRADE": {"type": float, "min": 0.01, "max": 1.0, "percent": True},
     "ROTATION_ENABLED": {"type": bool},
     "ROTATION_MIN_PROFIT": {"type": float, "min": 0.0, "max": 20.0},
@@ -58,6 +67,22 @@ EXAMPLE_SAFE_CONFIG = {
     "MIN_PROFIT_NET": 1.5,
     "MAX_DAILY_LOSS_PCT": 5.0,
     "MAX_PORTFOLIO_EXPOSURE_PCT": 85.0,
+    "VOLATILITY_SIZING_ENABLED": True,
+    "MAX_POSITION_RISK_PCT": 1.0,
+    "MAX_VOLATILITY_POSITION_MULTIPLIER": 1.0,
+    "MIN_POSITION_USDT": 1.0,
+    "MAX_SYMBOL_EXPOSURE_PCT": 30.0,
+    "MAX_ALT_EXPOSURE_PCT": 75.0,
+    "MAX_BUCKET_EXPOSURE_PCT": 45.0,
+    "METRICS_ROLLING_WINDOW": 30,
+    "PORTFOLIO_BUCKETS": {
+        "BTC": ["BTC"],
+        "ETH": ["ETH"],
+        "LAYER1": ["SOL", "ADA", "AVAX", "DOT", "ATOM", "NEAR", "SUI", "APT", "XLM", "XRP"],
+        "DEFI": ["AAVE", "UNI", "LINK", "RUNE", "MKR", "LDO", "CRV", "SNX"],
+        "AI": ["FET", "TAO", "RENDER", "RNDR", "GRT", "OCEAN", "AGIX"],
+        "MEME": ["DOGE", "SHIB", "PEPE", "BONK", "WIF", "FLOKI"]
+    },
     "ROTATION_ENABLED": True,
     "ROTATION_MIN_PROFIT": 2.0,
     "ROTATION_CONFIDENCE_GAP": 0.25,
@@ -132,6 +157,36 @@ def _coerce_symbols(value):
     return ",".join(cleaned)
 
 
+def _coerce_bucket_map(value):
+    if isinstance(value, str):
+        value = json.loads(value)
+    if not isinstance(value, dict):
+        raise ValueError("debe ser un objeto con buckets y listas de símbolos")
+    out = {}
+    for bucket, symbols in value.items():
+        bucket_name = str(bucket).strip().upper()
+        if not bucket_name:
+            continue
+        if isinstance(symbols, str):
+            symbols = [s.strip() for s in symbols.split(",")]
+        if not isinstance(symbols, list):
+            raise ValueError(f"{bucket_name}: debe ser lista o texto separado por comas")
+        cleaned = []
+        for symbol in symbols:
+            base = str(symbol).strip().upper()
+            if "/" in base:
+                base = base.split("/", 1)[0]
+            if not re.match(r"^[A-Z0-9]+$", base):
+                raise ValueError(f"{bucket_name}: símbolo inválido {base}")
+            if base and base not in cleaned:
+                cleaned.append(base)
+        if cleaned:
+            out[bucket_name] = cleaned
+    if not out:
+        raise ValueError("debe contener al menos un bucket")
+    return out
+
+
 def _coerce_value(key, value, spec, warnings):
     expected = spec["type"]
     if expected is bool:
@@ -151,6 +206,8 @@ def _coerce_value(key, value, spec, warnings):
             raise ValueError("texto demasiado largo")
     elif expected == "symbols":
         coerced = _coerce_symbols(value)
+    elif expected == "bucket_map":
+        coerced = _coerce_bucket_map(value)
     elif expected == "choice":
         coerced = str(value).strip().lower()
         if coerced not in spec["choices"]:

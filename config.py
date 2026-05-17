@@ -24,6 +24,22 @@ DEFAULT_SETTINGS = {
     'STOP_LOSS_PERCENT': 3.0,
     'MAX_DAILY_LOSS_PCT': 5.0,
     'MAX_PORTFOLIO_EXPOSURE_PCT': 85.0,
+    'VOLATILITY_SIZING_ENABLED': True,
+    'MAX_POSITION_RISK_PCT': 1.0,
+    'MAX_VOLATILITY_POSITION_MULTIPLIER': 1.0,
+    'MIN_POSITION_USDT': 1.0,
+    'MAX_SYMBOL_EXPOSURE_PCT': 30.0,
+    'MAX_ALT_EXPOSURE_PCT': 75.0,
+    'MAX_BUCKET_EXPOSURE_PCT': 45.0,
+    'METRICS_ROLLING_WINDOW': 30,
+    'PORTFOLIO_BUCKETS': {
+        'BTC': ['BTC'],
+        'ETH': ['ETH'],
+        'LAYER1': ['SOL', 'ADA', 'AVAX', 'DOT', 'ATOM', 'NEAR', 'SUI', 'APT', 'XLM', 'XRP'],
+        'DEFI': ['AAVE', 'UNI', 'LINK', 'RUNE', 'MKR', 'LDO', 'CRV', 'SNX'],
+        'AI': ['FET', 'TAO', 'RENDER', 'RNDR', 'GRT', 'OCEAN', 'AGIX'],
+        'MEME': ['DOGE', 'SHIB', 'PEPE', 'BONK', 'WIF', 'FLOKI'],
+    },
     # Parámetros de Rotación
     'ROTATION_ENABLED': True,
     'ROTATION_MIN_PROFIT': 0.35, # Beneficio mínimo para rotar
@@ -96,6 +112,23 @@ PROFIT_OBJETIVO = get_setting('MIN_PROFIT_NET', 1.0, float) / 100.0
 STOP_LOSS_PCT = get_setting('STOP_LOSS_PERCENT', 3.0, float) / 100.0
 MAX_DAILY_LOSS_PCT = get_setting('MAX_DAILY_LOSS_PCT', 5.0, float) / 100.0
 MAX_PORTFOLIO_EXPOSURE_PCT = get_setting('MAX_PORTFOLIO_EXPOSURE_PCT', 85.0, float) / 100.0
+VOLATILITY_SIZING_ENABLED = get_setting('VOLATILITY_SIZING_ENABLED', True, bool)
+MAX_POSITION_RISK_PCT = get_setting('MAX_POSITION_RISK_PCT', 1.0, float) / 100.0
+MAX_VOLATILITY_POSITION_MULTIPLIER = get_setting('MAX_VOLATILITY_POSITION_MULTIPLIER', 1.0, float)
+MIN_POSITION_USDT = get_setting('MIN_POSITION_USDT', 1.0, float)
+MAX_SYMBOL_EXPOSURE_PCT = get_setting('MAX_SYMBOL_EXPOSURE_PCT', 30.0, float) / 100.0
+MAX_ALT_EXPOSURE_PCT = get_setting('MAX_ALT_EXPOSURE_PCT', 75.0, float) / 100.0
+MAX_BUCKET_EXPOSURE_PCT = get_setting('MAX_BUCKET_EXPOSURE_PCT', 45.0, float) / 100.0
+METRICS_ROLLING_WINDOW = get_setting('METRICS_ROLLING_WINDOW', 30, int)
+
+_portfolio_buckets_raw = get_setting('PORTFOLIO_BUCKETS', DEFAULT_SETTINGS['PORTFOLIO_BUCKETS'])
+if isinstance(_portfolio_buckets_raw, str):
+    try:
+        PORTFOLIO_BUCKETS = json.loads(_portfolio_buckets_raw)
+    except Exception:
+        PORTFOLIO_BUCKETS = DEFAULT_SETTINGS['PORTFOLIO_BUCKETS']
+else:
+    PORTFOLIO_BUCKETS = _portfolio_buckets_raw
 
 # Rotación
 ROTATION_ENABLED = get_setting('ROTATION_ENABLED', True, bool)
