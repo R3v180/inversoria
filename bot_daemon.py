@@ -404,12 +404,6 @@ class BotDaemon:
     def run(self):
         self.load_active_watchlist()
 
-        # Correr backtest inicial si no hay datos históricos
-        now = time.time()
-        if now - self.last_backtest_run > self.BACKTEST_INTERVAL:
-            self.run_weekly_backtest()
-            self.last_backtest_run = now
-
         while True:
             try:
                 # Recargar configuración activa cada ciclo para captar cambios en UI
@@ -436,6 +430,15 @@ class BotDaemon:
                 is_sim_str = self.db.get_system_status('simulacion', 'true')
                 is_sim = str(is_sim_str).lower() == 'true'
                 is_running = self.db.get_system_status('is_running')
+                if str(is_running).lower() != 'true':
+                    try:
+                        armed_until = float(self.db.get_system_status('launcher_start_armed_until', '0') or 0)
+                    except (TypeError, ValueError):
+                        armed_until = 0
+                    if armed_until > time.time():
+                        self.db.set_system_status('is_running', 'true')
+                        is_running = 'true'
+                        self.log_message("[ARMED] Launcher start detected; trading rearmado.")
                 if str(is_running).lower() != 'true':
                     if time.time() - getattr(self, "_last_idle_log", 0) > 300:
                         self.log_message("[IDLE] Trading pausado: is_running=false. Esperando Start/Arrancar bot.")

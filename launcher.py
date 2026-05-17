@@ -645,10 +645,13 @@ class InversoriaLauncher(ctk.CTk):
 
     def _start_system_worker(self):
         self._prevent_sleep()
+        self._set_system_status("launcher_start_armed_until", str(time.time() + 300))
+        self._set_system_status("is_running", "true")
         self._start_streamlit()
         self._set_system_status("is_running", "true")
         self._start_daemon()
         self._open_web_when_ready()
+        self._set_system_status("launcher_start_armed_until", str(time.time() + 300))
         self._set_system_status("is_running", "true")
         self.after(0, self.refresh_status)
         self.after(750, self._refresh_logs)
@@ -713,6 +716,7 @@ class InversoriaLauncher(ctk.CTk):
                 )
             except Exception:
                 pass
+        self._set_system_status("launcher_start_armed_until", str(time.time() + 300))
         self._set_system_status("is_running", "true")
         self.daemon_process = subprocess.Popen(
             [python, "-u", str(ROOT / "bot_daemon.py")],

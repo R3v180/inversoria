@@ -241,6 +241,11 @@ with st.sidebar:
     # Detectar cambio de modo
     if st.session_state.current_mode != is_simulacion:
         was_running = str(st.session_state.db.get_system_status('is_running', 'false')).lower() == 'true'
+        try:
+            armed_until = float(st.session_state.db.get_system_status('launcher_start_armed_until', '0') or 0)
+            was_running = was_running or armed_until > time.time()
+        except (TypeError, ValueError):
+            pass
         st.session_state.current_mode = is_simulacion
         save_settings({"MODO_SIMULACION": bool(is_simulacion)})
         st.session_state.db = new_database_manager()
