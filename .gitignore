@@ -13,6 +13,13 @@
 export_code.py
 export_code.bat
 
+# Builds / runtime del launcher
+build/
+dist/
+launcher_logs/
+InversorIA.exe
+InversorIA Launcher.exe
+
 # Python
 __pycache__/
 *.pyc

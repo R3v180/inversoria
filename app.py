@@ -2,6 +2,7 @@ import streamlit as st
 import time
 import os
 import logging
+import base64
 
 from runtime_bootstrap import ensure_i18n_module, new_database_manager
 
@@ -13,7 +14,16 @@ from sentiment_engine import SentimentEngine
 from trading_logic import TradingLogic
 
 # --- CONFIGURACIÓN DE STREAMLIT ---
-st.set_page_config(page_title="InversorIA Terminal", layout="wide", page_icon="📈")
+APP_ROOT = os.path.dirname(os.path.abspath(__file__))
+APP_LOGO = os.path.join(APP_ROOT, "assets", "inversoria_logo.png")
+if os.path.exists(APP_LOGO) and "_brand_logo_b64" not in st.session_state:
+    with open(APP_LOGO, "rb") as logo_file:
+        st.session_state["_brand_logo_b64"] = base64.b64encode(logo_file.read()).decode("ascii")
+st.set_page_config(
+    page_title="InversorIA Terminal",
+    layout="wide",
+    page_icon=APP_LOGO if os.path.exists(APP_LOGO) else "📈",
+)
 
 # Estilos CSS para Bloomberg style
 st.markdown("""
@@ -21,6 +31,30 @@ st.markdown("""
     .stApp { background-color: #0E1117; }
     .stMetric { background-color: #1E1E1E; padding: 10px; border-radius: 5px; border-left: 4px solid #00FFAA; }
     div[data-testid="stSidebar"] { background-color: #161A22; border-right: 1px solid #333; }
+    .iversoria-brand {
+        display: flex;
+        align-items: center;
+        gap: 0.65rem;
+        padding: 0.35rem 0 0.2rem 0;
+        margin-bottom: 0.35rem;
+    }
+    .iversoria-brand img {
+        width: 38px;
+        height: 38px;
+        border-radius: 10px;
+    }
+    .iversoria-brand-title {
+        font-weight: 800;
+        font-size: 1.05rem;
+        line-height: 1.05;
+        color: #F9FAFB;
+    }
+    .iversoria-brand-subtitle {
+        font-size: 0.68rem;
+        line-height: 1.15;
+        color: #9CA3AF;
+        margin-top: 0.1rem;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -71,8 +105,21 @@ st.session_state.sentiment.set_user_context(
 )
 
 with st.sidebar:
-    st.markdown("### 🚀 InversorIA")
-    st.markdown(_('WELCOME_SUBTITLE'))
+    if os.path.exists(APP_LOGO):
+        st.markdown(
+            f"""
+            <div class="iversoria-brand">
+                <img src="data:image/png;base64,{st.session_state.get('_brand_logo_b64', '')}" />
+                <div>
+                    <div class="iversoria-brand-title">InversorIA</div>
+                    <div class="iversoria-brand-subtitle">{_('WELCOME_SUBTITLE')}</div>
+                </div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+    else:
+        st.markdown("### InversorIA")
     st.markdown("---")
 
     nav_items = [

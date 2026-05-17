@@ -9,3 +9,6 @@ google-genai
 groq
 python-dotenv
 requests
+customtkinter
+pyinstaller
+Pillow

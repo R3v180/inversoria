@@ -5,6 +5,7 @@ import os
 import sqlite3
 import config
 from config_importer import (
+    CONFIG_SCHEMA,
     apply_config_changes,
     diff_config_changes,
     parse_config_payload,
@@ -19,12 +20,22 @@ def _pending_orders():
     return st.session_state.assistant_pending_orders
 
 
-def _queue_assistant_order(action: str, symbol: str, source_text: str = ""):
+def _queue_assistant_order(
+    action: str,
+    symbol: str,
+    source_text: str = "",
+    amount_usdt: float | None = None,
+    amount_base: float | None = None,
+    percent: float | None = None,
+):
     order_id = f"{int(time.time() * 1000)}_{len(_pending_orders())}_{action}_{symbol.replace('/', '_')}"
     _pending_orders().append({
         "id": order_id,
         "action": action.upper(),
         "symbol": symbol.upper(),
+        "amount_usdt": amount_usdt,
+        "amount_base": amount_base,
+        "percent": percent,
         "created_at": time.strftime('%Y-%m-%d %H:%M:%S'),
         "source_text": source_text[:500],
     })
@@ -85,6 +96,38 @@ def _add_or_update_buy_position(db, symbol: str, price: float, amount: float, re
     db.add_log(f"{reason}: {symbol} qty={amount} @ {price}")
 
 
+def _parse_optional_float(value):
+    if value is None:
+        return None
+    try:
+        parsed = float(str(value).strip().replace("%", ""))
+    except (TypeError, ValueError):
+        return None
+    return parsed if parsed > 0 else None
+
+
+def _parse_order_block(block: str):
+    fields = {}
+    for line in str(block or "").splitlines():
+        if ":" not in line:
+            continue
+        key, value = line.split(":", 1)
+        fields[key.strip().upper()] = value.strip()
+
+    action = fields.get("ACTION", "").upper()
+    symbol = fields.get("SYMBOL", "").upper()
+    if action not in {"BUY", "SELL"} or not symbol:
+        return None
+
+    return {
+        "action": action,
+        "symbol": symbol,
+        "amount_usdt": _parse_optional_float(fields.get("AMOUNT_USDT")),
+        "amount_base": _parse_optional_float(fields.get("AMOUNT_BASE") or fields.get("AMOUNT")),
+        "percent": _parse_optional_float(fields.get("PERCENT")),
+    }
+
+
 def _execute_pending_order(order: dict, db, exchange):
     action = order.get("action")
     symbol = order.get("symbol")
@@ -100,7 +143,18 @@ def _execute_pending_order(order: dict, db, exchange):
             return
         pos = positions[symbol]
         real_amount = exchange.get_coin_balance(symbol)
-        sell_amount = min(float(pos["amount"]), float(real_amount)) if real_amount > 0 else float(pos["amount"])
+        max_sell = min(float(pos["amount"]), float(real_amount)) if real_amount > 0 else float(pos["amount"])
+        requested_base = _parse_optional_float(order.get("amount_base"))
+        requested_percent = _parse_optional_float(order.get("percent"))
+        if requested_base:
+            sell_amount = min(float(requested_base), float(max_sell))
+        elif requested_percent:
+            sell_amount = float(max_sell) * min(float(requested_percent), 100.0) / 100.0
+        else:
+            sell_amount = float(max_sell)
+        if sell_amount <= 0:
+            st.error(_("ASSIST_ORDER_LOW_BALANCE").format(f"{max_sell:.8g}"))
+            return
         res = exchange.execute_order(symbol, "sell", sell_amount, current_price, force_market=True)
         if res.get("status") in ["closed", "open", "simulated"]:
             try:
@@ -122,7 +176,8 @@ def _execute_pending_order(order: dict, db, exchange):
 
     if action == "BUY":
         usdt_balance = exchange.get_usdt_balance()
-        amount_usdt = float(usdt_balance) * float(config.RISK_PER_TRADE)
+        requested_usdt = _parse_optional_float(order.get("amount_usdt"))
+        amount_usdt = min(float(requested_usdt), float(usdt_balance)) if requested_usdt else float(usdt_balance) * float(config.RISK_PER_TRADE)
         if amount_usdt <= 1.0:
             st.error(_("ASSIST_ORDER_LOW_BALANCE").format(f"{usdt_balance:.2f}"))
             return
@@ -159,10 +214,18 @@ def _render_pending_orders(db, exchange):
                 st.metric(_("ASSIST_PENDING_PRICE"), f"${float(price):.6g}")
             if action == "BUY":
                 bal = float(exchange.get_usdt_balance() or 0)
-                st.caption(_("ASSIST_PENDING_BUY_SIZE").format(f"{bal * float(config.RISK_PER_TRADE):.2f}"))
+                requested_usdt = _parse_optional_float(order.get("amount_usdt"))
+                amount_usdt = min(requested_usdt, bal) if requested_usdt else bal * float(config.RISK_PER_TRADE)
+                st.caption(_("ASSIST_PENDING_BUY_SIZE").format(f"{amount_usdt:.2f}"))
             elif action == "SELL":
                 pos = db.get_open_positions().get(symbol)
                 qty = float(pos.get("amount") or 0) if pos else 0.0
+                requested_base = _parse_optional_float(order.get("amount_base"))
+                requested_percent = _parse_optional_float(order.get("percent"))
+                if requested_base:
+                    qty = min(float(requested_base), qty)
+                elif requested_percent:
+                    qty = qty * min(float(requested_percent), 100.0) / 100.0
                 st.caption(_("ASSIST_PENDING_SELL_SIZE").format(f"{qty:.8g}"))
 
             c1, c2 = st.columns(2)
@@ -261,6 +324,7 @@ def _compact_daemon_context(db):
 def _compact_settings_context(exchange):
     mode = "simulación" if exchange.modo_simulacion else "REAL"
     effective = config.get_effective_max_positions(_safe_float(exchange.get_balance()))
+    allowed_config = ", ".join(CONFIG_SCHEMA.keys())
     return "\n".join([
         f"Modo={mode}",
         f"RISK_PER_TRADE={config.RISK_PER_TRADE:.2%}",
@@ -269,6 +333,7 @@ def _compact_settings_context(exchange):
         f"ROTATION_ENABLED={config.ROTATION_ENABLED}; ROTATION_MIN_PROFIT={config.ROTATION_MIN_PROFIT:.2f}%; GAP={config.ROTATION_CONFIDENCE_GAP:.2f}; MIN_NEW_CONF={config.ROTATION_MIN_NEW_CONFIDENCE:.2f}",
         f"BUY_SLIPPAGE_LIMIT={config.BUY_SLIPPAGE_LIMIT:.2%}; SELL_SLIPPAGE_LIMIT={config.SELL_SLIPPAGE_LIMIT:.2%}; TRADING_FEE_RATE={config.TRADING_FEE_RATE:.3%}",
         f"AI_ANALYSIS_INTERVAL={config.AI_ANALYSIS_INTERVAL}s",
+        f"CONFIG_IMPORT_KEYS_PERMITIDAS={allowed_config}",
     ])
 
 
@@ -411,6 +476,7 @@ def _build_assistant_context(db, exchange):
     saved_watchlist = db.get_system_status('dynamic_watchlist', '')
     watchlist = [s.strip() for s in saved_watchlist.split(',') if s.strip()] or list(config.SYMBOLS)
     focus_symbols = list(dict.fromkeys(list(positions.keys()) + watchlist[:12]))
+    blocked_radar = "USD, EUR, GBP, AUD, CAD, CHF, JPY, USDT, USDC, DAI, TUSD, FDUSD, PYUSD, BUSD, USDP, EURC"
 
     try:
         macro = json.loads(db.get_system_status('macro_context', '{}') or '{}')
@@ -453,6 +519,11 @@ BACKTEST:
 DAEMON:
 {_compact_daemon_context(db)}
 
+RADAR / WATCHLIST:
+- Watchlist activa: {', '.join(watchlist[:20]) if watchlist else 'sin radar activo'}
+- El daemon filtra pares no /USDT y bases fiat/stable antes de guardar o cargar radar.
+- Bases bloqueadas del radar: {blocked_radar}
+
 DECISIONES RECIENTES:
 {_compact_decisions_context(db, focus_symbols)}
 
@@ -464,6 +535,7 @@ NOTICIAS RELEVANTES:
 
 REGLAS DE SEGURIDAD:
 - No ejecutes órdenes directamente: si el usuario confirma una operación, emite el bloque [EXECUTE_ORDER]; la app creará una orden pendiente con botón de confirmación.
+- En órdenes BUY puedes añadir AMOUNT_USDT opcional. En órdenes SELL puedes añadir AMOUNT_BASE o PERCENT opcional; si no lo haces, SELL venderá el máximo disponible de la posición.
 - Si el usuario pide cambiar configuración, puedes proponer un bloque [CONFIG_CHANGE] con JSON. La app solo creará una tarjeta pendiente y el usuario tendrá que confirmarla con botón.
 - Diferencia siempre entre posiciones del bot (open_positions) y saldos/retales del exchange.
 - Si hablas de comprar, considera macro, diagnóstico daemon, slippage, riesgo por trade, posiciones disponibles y noticias.
@@ -538,7 +610,13 @@ def render_assistant():
                 [EXECUTE_ORDER]
                 ACTION: BUY o SELL
                 SYMBOL: moneda/USDT
+                AMOUNT_USDT: opcional solo para BUY
+                AMOUNT_BASE: opcional solo para SELL
+                PERCENT: opcional solo para SELL, 1-100
                 [/EXECUTE_ORDER]
+
+                Si no incluyes AMOUNT_BASE ni PERCENT en una orden SELL, la app interpretará que se vende el máximo disponible de esa posición.
+                Si no incluyes AMOUNT_USDT en una orden BUY, la app usará el tamaño según RISK_PER_TRADE.
 
                 Si el usuario te pide cambiar la configuración, puedes proponer cambios con este bloque exacto al final.
                 IMPORTANTE: la aplicación NO aplicará la configuración automáticamente; solo creará una tarjeta pendiente para confirmación manual mediante botón.
@@ -567,12 +645,22 @@ def render_assistant():
                 
                 # 3. Interceptar órdenes propuestas: quedan pendientes hasta confirmación UI
                 import re
-                order_matches = re.finditer(r'\[EXECUTE_ORDER\]\s*ACTION:\s*(BUY|SELL)\s*SYMBOL:\s*([A-Z0-9/-]+)\s*\[/EXECUTE_ORDER\]', full_response, re.IGNORECASE)
+                order_matches = re.finditer(r'\[EXECUTE_ORDER\](.*?)\[/EXECUTE_ORDER\]', full_response, re.IGNORECASE | re.DOTALL)
                 queued = []
                 for order_match in order_matches:
-                    action = order_match.group(1).upper()
-                    symbol = order_match.group(2).upper()
-                    _queue_assistant_order(action, symbol, full_response)
+                    parsed_order = _parse_order_block(order_match.group(1))
+                    if not parsed_order:
+                        continue
+                    action = parsed_order["action"]
+                    symbol = parsed_order["symbol"]
+                    _queue_assistant_order(
+                        action,
+                        symbol,
+                        full_response,
+                        amount_usdt=parsed_order.get("amount_usdt"),
+                        amount_base=parsed_order.get("amount_base"),
+                        percent=parsed_order.get("percent"),
+                    )
                     queued.append(f"{action} {symbol}")
                 if queued:
                     st.warning(_("ASSIST_ORDER_QUEUED").format(", ".join(queued)))

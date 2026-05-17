@@ -346,10 +346,19 @@ If the AI proposes:
 [EXECUTE_ORDER]
 ACTION: BUY
 SYMBOL: BTC/USDT
+AMOUNT_USDT: 10
 [/EXECUTE_ORDER]
 ```
 
 the UI creates a pending order card. The user must click **Confirm order**. The user can also cancel.
+
+Optional sizing fields:
+
+- `AMOUNT_USDT` for BUY orders.
+- `AMOUNT_BASE` for SELL orders.
+- `PERCENT` for partial SELL orders.
+
+If a SELL order has no amount field, the app treats it as “sell the maximum available amount” for that bot position.
 
 ### History
 
@@ -486,7 +495,7 @@ Current flow:
 2. AI may output `[EXECUTE_ORDER]`.
 3. App detects the block.
 4. App creates a pending order.
-5. UI shows action, symbol, current price and estimated size.
+5. UI shows action, symbol, current price and estimated size, including optional partial sell sizing.
 6. User clicks Confirm or Cancel.
 7. Only Confirm executes.
 
@@ -622,6 +631,8 @@ pip install -r requirements.txt
 
 ## Configuration
 
+Recommended on Windows: launch `InversorIA.exe` from the project root and use **Configure APIs**. If `.env` does not exist or required startup keys are missing, the launcher opens the API setup dialog before starting the system. It saves keys locally in `.env` and creates a `.env.backup-*` file before overwriting an existing config.
+
 Copy:
 
 ```bash
@@ -645,7 +656,7 @@ SAMBANOVA_API_KEY=...
 ALPHA_VANTAGE_API_KEY=...
 ```
 
-`user_settings.json` is created/updated by the UI. It is local and ignored by Git.
+`user_settings.json` is created/updated by the UI. It is local and ignored by Git. API secrets should stay in `.env`.
 
 The settings screen also includes safe import/export:
 
@@ -675,6 +686,24 @@ Exceptions:
 ---
 
 ## Running The System
+
+Desktop launcher:
+
+```text
+InversorIA.exe
+```
+
+The launcher is copied to the project root after each build so it is the first file to open. `dist/InversorIA.exe` is only the internal PyInstaller output.
+
+The launcher provides a bilingual control panel for Windows. It can start Streamlit, start/stop the daemon, open the web UI, switch between simulation and real mode, configure local API keys, prevent system sleep while running, show live daemon logs, and display separate status cards for Web, Daemon, Trading and APIs. Real mode requires explicit confirmation and exchange keys in `.env`.
+
+To rebuild it:
+
+```bash
+build_launcher.bat
+```
+
+Manual mode:
 
 Terminal 1:
 
@@ -707,6 +736,11 @@ Recommended workflow:
 | `iversoria.db` | Local SQLite DB | Ignored |
 | `simulated_account.json` | Paper account state | Ignored |
 | `iversoria_bot.log` | Local log | Ignored |
+| `launcher.py` | Windows desktop launcher source | Tracked |
+| `launcher.spec` | PyInstaller build config | Tracked |
+| `build_launcher.bat` | Launcher build helper | Tracked |
+| `assets/inversoria_logo.png` | Shared app, launcher and favicon logo | Tracked |
+| `assets/inversoria_launcher.svg` | Launcher brand asset | Tracked |
 
 ---
 
@@ -1133,9 +1167,17 @@ Flujo:
 
 1. IA propone `[EXECUTE_ORDER]`.
 2. La app crea orden pendiente.
-3. La UI muestra acción, símbolo, precio y tamaño estimado.
+3. La UI muestra acción, símbolo, precio y tamaño estimado, incluyendo ventas parciales si la IA añadió cantidad.
 4. Usuario confirma o cancela.
 5. Solo confirmar ejecuta.
+
+Campos opcionales en órdenes:
+
+- `AMOUNT_USDT` para compras.
+- `AMOUNT_BASE` para ventas.
+- `PERCENT` para ventas parciales.
+
+Si una venta no incluye cantidad, la app la interpreta como venta del máximo disponible de esa posición.
 
 Para configuración:
 
@@ -1229,6 +1271,8 @@ pip install -r requirements.txt
 
 ## Configuración
 
+Recomendado en Windows: ejecuta `InversorIA.exe` desde la raíz del proyecto y usa **Configurar APIs**. Si `.env` no existe o faltan claves necesarias para arrancar, el launcher abre el asistente de APIs antes de iniciar el sistema. Guarda las claves localmente en `.env` y crea `.env.backup-*` antes de sobrescribir una configuración existente.
+
 ```bash
 cp .env.example .env
 ```
@@ -1250,7 +1294,7 @@ SAMBANOVA_API_KEY=...
 ALPHA_VANTAGE_API_KEY=...
 ```
 
-`user_settings.json` es local y está ignorado.
+`user_settings.json` es local y está ignorado. Los secretos de APIs deben quedarse en `.env`.
 
 La UI permite importar/exportar configuración segura:
 
@@ -1263,6 +1307,24 @@ La UI permite importar/exportar configuración segura:
 ---
 
 ## Ejecución
+
+Launcher de escritorio:
+
+```text
+InversorIA.exe
+```
+
+El launcher se copia a la raíz del proyecto tras cada build para que sea lo primero que se vea. `dist/InversorIA.exe` queda como salida interna de PyInstaller.
+
+El launcher ofrece un panel bilingüe para Windows. Puede iniciar Streamlit, iniciar/detener el daemon, abrir la web, cambiar entre simulación y real, configurar APIs locales, evitar suspensión del sistema mientras está activo, mostrar logs vivos del daemon y enseñar estados separados para Web, Daemon, Trading y APIs. El modo real pide confirmación explícita y exige claves de exchange en `.env`.
+
+Para reconstruirlo:
+
+```bash
+build_launcher.bat
+```
+
+Modo manual:
 
 Terminal 1:
 
@@ -1287,6 +1349,11 @@ python bot_daemon.py
 | `iversoria.db` | SQLite | Ignorado |
 | `simulated_account.json` | Cuenta sim | Ignorado |
 | `iversoria_bot.log` | Log local | Ignorado |
+| `launcher.py` | Código del launcher de escritorio Windows | Versionado |
+| `launcher.spec` | Configuración PyInstaller | Versionado |
+| `build_launcher.bat` | Helper para reconstruir el exe | Versionado |
+| `assets/inversoria_logo.png` | Logo compartido para app, launcher y favicon | Versionado |
+| `assets/inversoria_launcher.svg` | Recurso visual del launcher | Versionado |
 
 ---
 

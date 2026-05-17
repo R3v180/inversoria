@@ -15,22 +15,27 @@ def render_history():
         st.info(_('HISTORY_EMPTY'))
         return
     df['Date'] = pd.to_datetime(df['Date'])
+    pnl_col = 'PnL_%' if 'PnL_%' in df.columns else 'Pnl_Pct' if 'Pnl_Pct' in df.columns else None
+    if pnl_col is None:
+        df['PnL_%'] = 0.0
+        pnl_col = 'PnL_%'
+    df[pnl_col] = pd.to_numeric(df[pnl_col], errors='coerce').fillna(0.0)
     
     # Cálculos de Métricas Pro (Sincronización v2.3)
     ventas = df[df['Side'] == 'sell'].copy()
     total_trades = len(ventas)
-    ganadores = len(ventas[ventas['PnL_%'] > 0])
+    ganadores = len(ventas[ventas[pnl_col] > 0])
     win_rate = (ganadores / total_trades * 100) if total_trades > 0 else 0
     
-    profit_sum = ventas[ventas['PnL_%'] > 0]['PnL_%'].sum()
-    loss_sum = abs(ventas[ventas['PnL_%'] <= 0]['PnL_%'].sum())
+    profit_sum = ventas[ventas[pnl_col] > 0][pnl_col].sum()
+    loss_sum = abs(ventas[ventas[pnl_col] <= 0][pnl_col].sum())
     profit_factor = (profit_sum / loss_sum) if loss_sum > 0 else (profit_sum if profit_sum > 0 else 0)
     
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("Win Rate", f"{win_rate:.1f}%")
     c2.metric("Profit Factor", f"{profit_factor:.2f}")
     c3.metric(_('TRADES_CLOSED'), total_trades)
-    c4.metric(_('BEST_TRADE'), f"{ventas['PnL_%'].max() if not ventas.empty else 0:.2f}%")
+    c4.metric(_('BEST_TRADE'), f"{ventas[pnl_col].max() if not ventas.empty else 0:.2f}%")
     
     st.markdown("---")
     st.subheader(_('EVOLUTION_CURVE'))
@@ -39,7 +44,7 @@ def render_history():
     if not ventas.empty:
         # Calcular PNL aproximado en USD basado en el % y el capital invertido (price * amount de venta)
         # Esto es una aproximación para la visualización.
-        ventas['pnl_usd'] = (ventas['Price'] * ventas['Amount']) * (ventas['Pnl_Pct'] / 100)
+        ventas['pnl_usd'] = (ventas['Price'] * ventas['Amount']) * (ventas[pnl_col] / 100)
         ventas['pnl_acumulado'] = ventas['pnl_usd'].cumsum()
         
         fig = px.line(ventas, x='Date', y='pnl_acumulado', title="P&L Acumulado (USD)", markers=True)
@@ -58,7 +63,7 @@ def render_history():
     for index, row in df.sort_values(by='Date', ascending=False).iterrows():
         action_color = "🟢" if row['Side'] == 'buy' else "🔴"
         action_text = _('BUY') if row['Side'] == 'buy' else _('SELL')
-        pnl_text = f" | PNL: {row.get('Pnl_Pct', 0):.2f}%" if row['Side'] == 'sell' else ""
+        pnl_text = f" | PNL: {row.get(pnl_col, 0):.2f}%" if row['Side'] == 'sell' else ""
         
         with st.expander(f"{action_color} {action_text} | {row['Date'].strftime('%Y-%m-%d %H:%M')} | {row['Symbol']} a ${row['Price']:.4f}{pnl_text}"):
             st.markdown(f"**Cantidad:** {row['Amount']:.6f}")

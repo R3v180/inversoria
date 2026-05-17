@@ -1,6 +1,7 @@
 import time
 import os
 import json
+import sys
 import config 
 from exchange_helper import ExchangeHelper
 from sentiment_engine import SentimentEngine
@@ -9,6 +10,19 @@ from database_manager import DatabaseManager
 from decision_engine import DecisionEngine
 from market_context import MarketContext
 from i18n import _
+
+
+def _configure_console_encoding():
+    for stream_name in ("stdout", "stderr"):
+        stream = getattr(sys, stream_name, None)
+        if hasattr(stream, "reconfigure"):
+            try:
+                stream.reconfigure(encoding="utf-8", errors="replace")
+            except Exception:
+                pass
+
+
+_configure_console_encoding()
 
 
 BLOCKED_RADAR_BASES = {
@@ -54,7 +68,12 @@ class BotDaemon:
         self.log_message(_('LOG_DAEMON_INIT', lang=self.u_lang))
 
     def log_message(self, msg):
-        print(f"[DAEMON] {msg}")
+        text = f"[DAEMON] {msg}"
+        try:
+            print(text, flush=True)
+        except UnicodeEncodeError:
+            safe_text = text.encode("utf-8", errors="replace").decode("utf-8", errors="replace")
+            print(safe_text, flush=True)
         self.db.add_log(msg)
 
     def update_daemon_status(self, state, **extra):

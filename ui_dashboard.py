@@ -106,6 +106,20 @@ def _render_dashboard_sell_options(db, exchange, sym: str, pos: dict, current_pr
             st.rerun()
 
 
+def _render_refresh_status(diag: dict):
+    now_txt = time.strftime("%H:%M:%S")
+    state = diag.get("state", "-") if isinstance(diag, dict) else "-"
+    state_age = None
+    if isinstance(diag, dict) and diag.get("state_ts"):
+        try:
+            state_age = max(0, int(time.time() - float(diag.get("state_ts"))))
+        except (TypeError, ValueError):
+            state_age = None
+    age_txt = f"hace {state_age}s" if state_age is not None else "sin latido"
+    scanned = diag.get("scanned", 0) if isinstance(diag, dict) else 0
+    st.caption(f"Última actualización UI: {now_txt} · Daemon: {state} · {age_txt} · scan {scanned}")
+
+
 def render_dashboard():
     # Estilos CSS Avanzados
     st.markdown("""
@@ -168,6 +182,7 @@ def render_dashboard():
         diag_top = {}
     mode_label = "SIM" if exchange.modo_simulacion else "REAL"
     state_label = diag_top.get("state", "-")
+    _render_refresh_status(diag_top)
 
     m1, m2, m3, m4, m5, m6 = st.columns(6)
     m1.metric(_('EQUITY_TOTAL'), f"${total_value:.2f}", f"{pnl_pct:.2f}%")

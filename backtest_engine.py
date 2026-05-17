@@ -11,6 +11,7 @@ import json
 import time
 import sqlite3
 import os
+import config
 from database_manager import DatabaseManager
 from i18n import _
 
@@ -53,6 +54,8 @@ class BacktestEngine:
             'rsi_buy_min': 50, 'rsi_buy_max': 70,
         },
     }
+
+    PROFIT_FACTOR_CAP = 10.0
 
     def __init__(self, exchange_helper, lang='es'):
         self.exchange = exchange_helper
@@ -220,6 +223,9 @@ class BacktestEngine:
         equity_curve = [initial_capital]
         capital = initial_capital
         position = None  # Dict con datos de posición abierta
+        fee_rate = float(getattr(config, "TRADING_FEE_RATE", 0.001) or 0.0)
+        buy_slippage = float(getattr(config, "BUY_SLIPPAGE_LIMIT", 0.0) or 0.0)
+        sell_slippage = float(getattr(config, "SELL_SLIPPAGE_LIMIT", 0.0) or 0.0)
 
         for i in range(200, len(df)):  # Empezar en 200 para tener indicadores calculados
             row = df.iloc[i]
@@ -256,7 +262,9 @@ class BacktestEngine:
 
                 if exit_price:
                     # Calcular resultado
-                    pnl_pct = (exit_price - position['entry_price']) / position['entry_price']
+                    entry_net = position['entry_price'] * (1 + fee_rate)
+                    exit_net = exit_price * (1 - fee_rate - sell_slippage)
+                    pnl_pct = (exit_net - entry_net) / entry_net
                     pnl_usd = position['position_size'] * pnl_pct
                     capital += pnl_usd
                     duration_hours = (i - position['entry_index']) * self._candle_hours(df)
@@ -286,12 +294,13 @@ class BacktestEngine:
 
                 if should_enter and capital > 0:
                     position_size = capital * risk_per_trade
+                    entry_price = price * (1 + buy_slippage)
                     # Guardamos el Stop Loss inicial basado en el ATR de este momento
-                    initial_sl = price - (row['atr'] * params['sl_atr_mult'])
+                    initial_sl = entry_price - (row['atr'] * params['sl_atr_mult'])
                     
                     position = {
-                        'entry_price': price,
-                        'highest_price': price,
+                        'entry_price': entry_price,
+                        'highest_price': entry_price,
                         'entry_stop': initial_sl,
                         'position_size': position_size,
                         'entry_index': i,
@@ -341,7 +350,7 @@ class BacktestEngine:
 
         gross_profit = sum(t['pnl_usd'] for t in wins) if wins else 0
         gross_loss = abs(sum(t['pnl_usd'] for t in losses)) if losses else 0
-        profit_factor = gross_profit / gross_loss if gross_loss > 0 else float('inf')
+        profit_factor = self._finite_profit_factor(gross_profit, gross_loss, len(trades))
 
         # Max drawdown
         equity_series = pd.Series(equity_curve)
@@ -349,9 +358,11 @@ class BacktestEngine:
         drawdown = (equity_series - rolling_max) / rolling_max * 100
         max_drawdown = drawdown.min()
 
-        # Sharpe ratio simplificado
+        # Sharpe por operación, anualizado por frecuencia real de trades del histórico.
         returns = pd.Series([t['pnl_pct'] for t in trades])
-        sharpe = (returns.mean() / returns.std() * np.sqrt(252)) if returns.std() > 0 else 0
+        years = self._years_covered(df)
+        trades_per_year = len(trades) / years if years > 0 else 0
+        sharpe = (returns.mean() / returns.std() * np.sqrt(trades_per_year)) if returns.std() > 0 and trades_per_year > 0 else 0
 
         total_return = (equity_curve[-1] - initial_capital) / initial_capital * 100
 
@@ -375,6 +386,37 @@ class BacktestEngine:
             return 4.0
         delta = (df['timestamp'].iloc[1] - df['timestamp'].iloc[0]).total_seconds()
         return delta / 3600
+
+    def _years_covered(self, df: pd.DataFrame) -> float:
+        if len(df) < 2 or 'timestamp' not in df:
+            return 1.0
+        delta = df['timestamp'].iloc[-1] - df['timestamp'].iloc[0]
+        try:
+            days = delta.total_seconds() / 86400
+        except AttributeError:
+            days = 365.25
+        return max(days / 365.25, 1 / 365.25)
+
+    def _finite_profit_factor(self, gross_profit: float, gross_loss: float, total_trades: int) -> float:
+        if gross_loss > 0:
+            return min(gross_profit / gross_loss, self.PROFIT_FACTOR_CAP)
+        if gross_profit <= 0:
+            return 0.0
+        # Sin pérdidas en pocas muestras suele indicar muestra escasa más que ventaja real.
+        if total_trades < 8:
+            return 1.5
+        return self.PROFIT_FACTOR_CAP
+
+    def _strategy_score(self, result: dict) -> float:
+        trades = int(result.get('total_trades', 0) or 0)
+        if trades <= 0:
+            return -1.0
+        pf = min(float(result.get('profit_factor', 0) or 0), self.PROFIT_FACTOR_CAP)
+        win_rate = float(result.get('win_rate', 0) or 0)
+        total_return = float(result.get('total_return_pct', 0) or 0) / 100.0
+        drawdown_penalty = abs(float(result.get('max_drawdown_pct', 0) or 0)) / 100.0
+        sample_factor = min(1.0, trades / 12.0)
+        return ((pf * 0.55) + (win_rate * 2.0) + total_return - drawdown_penalty) * sample_factor
 
     # ─────────────────────────────────────────────
     # CONSTRUCCIÓN DE LA TABLA DE CONDICIONES
@@ -405,7 +447,7 @@ class BacktestEngine:
 
             gross_profit = wins['pnl_pct'].sum() if len(wins) > 0 else 0
             gross_loss = abs(losses['pnl_pct'].sum()) if len(losses) > 0 else 0
-            profit_factor = gross_profit / gross_loss if gross_loss > 0 else 99.0
+            profit_factor = self._finite_profit_factor(gross_profit, gross_loss, len(group))
 
             rows_to_insert.append((
                 symbol, timeframe, str(regime), str(strategy),
@@ -581,7 +623,7 @@ class BacktestEngine:
         self.build_conditions_table(symbol, all_trades, timeframe)
 
         # Guardar resumen del backtest en DB
-        best_strategy = max(results, key=lambda k: results[k].get('profit_factor', 0))
+        best_strategy = max(results, key=lambda k: self._strategy_score(results[k]))
         best = results[best_strategy]
 
         db_path = self.db.db_path
