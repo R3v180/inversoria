@@ -6,6 +6,8 @@
 
 ### Autonomous crypto trading platform with hybrid AI, adaptive scoring, decision journal, portfolio risk guards, backtesting, macro filters and safe execution modes.
 
+Maintained by Olivier Hottelet, trading as OHCodex: https://ohcodex.com
+
 ![InversorIA Dashboard](docs/dashboard.png)
 
 **🇬🇧 [English](#english-documentation) | 🇪🇸 [Español](#documentación-en-español)**
@@ -1586,6 +1588,8 @@ Recomendación Crypto.com:
 ## Licencia Y Contribuciones
 
 InversorIA usa la licencia Apache 2.0.
+
+Mantenido por Olivier Hottelet, bajo el nombre comercial OHCodex: https://ohcodex.com
 
 Las contribuciones son bienvenidas. Salvo que se indique explícitamente lo contrario, cualquier contribución enviada a este repositorio se acepta bajo la misma licencia Apache-2.0. Esto mantiene abierto el core local para la comunidad y conserva la posibilidad de crear servicios hosted, soporte o infraestructura premium alrededor del proyecto en el futuro.
 
