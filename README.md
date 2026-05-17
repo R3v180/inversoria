@@ -6,9 +6,9 @@
 
 ### Autonomous crypto trading bot with hybrid AI, global macro filters, historical backtesting, exchange wallet intelligence, news catalysts and safe human confirmation.
 
-InversorIA Dashboard
+![InversorIA Dashboard](docs/dashboard.png)
 
-**🇬🇧 [English](#english-documentation) | 🇪🇸 [Español**](#documentación-en-español)
+**🇬🇧 [English](#english-documentation) | 🇪🇸 [Español](#documentación-en-español)**
 
 > Disclaimer: InversorIA is not financial advice. Real mode can place real orders on Crypto.com. Use minimal API permissions, start in simulation, and verify every behavior before trading real funds.
 
