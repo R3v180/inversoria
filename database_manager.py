@@ -4,16 +4,16 @@ import os
 import re
 import json
 import pandas as pd
+from simulation_profiles import get_database_path_for_current_mode
 
 class DatabaseManager:
     def __init__(self, db_path=None):
         if db_path is None:
-            # Forzar ruta absoluta para evitar que Daemon y UI miren archivos distintos
-            base_dir = os.path.dirname(os.path.abspath(__file__))
-            self.db_path = os.path.join(base_dir, "iversoria.db")
+            self.db_path = get_database_path_for_current_mode()
         else:
             self.db_path = db_path
         self._init_db()
+        self._seed_profile_status()
 
     def _get_connection(self):
         # timeout=10 allows concurrent access by waiting for locks
@@ -182,6 +182,33 @@ class DatabaseManager:
                 )
             
             conn.commit()
+
+    def _seed_profile_status(self):
+        base_dir = os.path.dirname(os.path.abspath(__file__))
+        main_db = os.path.join(base_dir, "iversoria.db")
+        if os.path.abspath(self.db_path) == os.path.abspath(main_db) or not os.path.exists(main_db):
+            return
+        keys = ['user_name', 'language', 'risk_profile', 'onboarding_completed']
+        try:
+            with self._get_connection() as target, sqlite3.connect(main_db, timeout=5) as source:
+                target_count = target.execute(
+                    "SELECT COUNT(*) FROM system_status WHERE key IN ({})".format(",".join("?" for _ in keys)),
+                    keys,
+                ).fetchone()[0]
+                if target_count:
+                    return
+                rows = source.execute(
+                    "SELECT key, value FROM system_status WHERE key IN ({})".format(",".join("?" for _ in keys)),
+                    keys,
+                ).fetchall()
+                if rows:
+                    target.executemany(
+                        "INSERT OR REPLACE INTO system_status (key, value) VALUES (?, ?)",
+                        [(row[0], row[1]) for row in rows],
+                    )
+                    target.commit()
+        except Exception:
+            pass
 
     # --- System Status ---
     def set_system_status(self, key, value):

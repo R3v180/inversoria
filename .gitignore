@@ -17,6 +17,7 @@ export_code.bat
 build/
 dist/
 launcher_logs/
+simulations/
 InversorIA.exe
 InversorIA Launcher.exe
 

@@ -11,12 +11,14 @@ from config import (
     BUY_SLIPPAGE_LIMIT,
     SELL_SLIPPAGE_LIMIT,
 )
+from simulation_profiles import get_active_account_path
 
 class ExchangeHelper:
     def __init__(self, modo_simulacion=True):
         self.modo_simulacion = modo_simulacion
         self.virtual_balance = PRESUPUESTO_INICIAL
         self.virtual_portfolio = {} # symbol -> amount
+        self.simulated_account_path = get_active_account_path() if self.modo_simulacion else 'simulated_account.json'
         
         if self.modo_simulacion:
             self._load_simulated_state()
@@ -35,16 +37,16 @@ class ExchangeHelper:
             print(f"Error al inicializar Exchange: {e}")
 
     def _save_simulated_state(self):
-        with open('simulated_account.json', 'w') as f:
+        with open(self.simulated_account_path, 'w') as f:
             json.dump({
                 'virtual_balance': self.virtual_balance,
                 'virtual_portfolio': self.virtual_portfolio
             }, f)
 
     def _load_simulated_state(self):
-        if os.path.exists('simulated_account.json'):
+        if os.path.exists(self.simulated_account_path):
             try:
-                with open('simulated_account.json', 'r') as f:
+                with open(self.simulated_account_path, 'r') as f:
                     data = json.load(f)
                     self.virtual_balance = data.get('virtual_balance', PRESUPUESTO_INICIAL)
                     self.virtual_portfolio = data.get('virtual_portfolio', {})

@@ -8,10 +8,18 @@ from runtime_bootstrap import ensure_i18n_module, new_database_manager
 
 ensure_i18n_module()
 
-from config import SYMBOLS, MODO_SIMULACION
+from config import SYMBOLS, MODO_SIMULACION, save_settings
 from exchange_helper import ExchangeHelper
 from sentiment_engine import SentimentEngine
 from trading_logic import TradingLogic
+from simulation_profiles import (
+    create_profile,
+    get_active_profile,
+    get_database_path_for_current_mode,
+    list_profiles,
+    reset_profile,
+    set_active_profile,
+)
 
 # --- CONFIGURACIÓN DE STREAMLIT ---
 APP_ROOT = os.path.dirname(os.path.abspath(__file__))
@@ -67,7 +75,12 @@ logging.basicConfig(
 
 # --- INICIALIZACIÓN ---
 # Recrear DB si el código se actualizó en caliente (Streamlit conserva instancias viejas en session_state)
-if 'db' not in st.session_state or not hasattr(st.session_state.db, 'get_cost_basis'):
+expected_db_path = get_database_path_for_current_mode()
+if (
+    'db' not in st.session_state
+    or not hasattr(st.session_state.db, 'get_cost_basis')
+    or getattr(st.session_state.db, 'db_path', None) != expected_db_path
+):
     st.session_state.db = new_database_manager()
 
 if 'exchange' not in st.session_state:
@@ -180,14 +193,60 @@ with st.sidebar:
     
     if not is_simulacion:
         st.warning(_('REAL_FUNDS_WARNING'))
+    else:
+        try:
+            profiles = list_profiles()
+            active_profile = get_active_profile()
+            profile_options = [p["id"] for p in profiles]
+            profile_labels = {
+                p["id"]: f"{p.get('name', p['id'])} · {float(p.get('initial_capital', 0)):.2f} USDT"
+                for p in profiles
+            }
+            selected_profile = st.selectbox(
+                _('SIM_PROFILE_L'),
+                profile_options,
+                index=profile_options.index(active_profile["id"]) if active_profile["id"] in profile_options else 0,
+                format_func=lambda pid: profile_labels.get(pid, pid),
+                key="sim_profile_select",
+            )
+            if selected_profile != active_profile["id"]:
+                st.session_state.db.set_system_status('is_running', 'false')
+                set_active_profile(selected_profile)
+                st.session_state.db = new_database_manager()
+                st.session_state.exchange = ExchangeHelper(modo_simulacion=True)
+                st.session_state.current_mode = True
+                st.rerun()
+
+            with st.expander(_('SIM_PROFILE_MANAGE'), expanded=False):
+                sim_name = st.text_input(_('SIM_PROFILE_NAME'), value=f"Sim {time.strftime('%Y%m%d-%H%M')}", key="sim_profile_name")
+                sim_capital = st.number_input(_('SIM_PROFILE_CAPITAL'), min_value=1.0, value=float(active_profile.get("initial_capital", 60.0)), step=10.0, key="sim_profile_capital")
+                c_new, c_reset = st.columns(2)
+                if c_new.button(_('SIM_PROFILE_CREATE'), width="stretch"):
+                    st.session_state.db.set_system_status('is_running', 'false')
+                    create_profile(sim_name, sim_capital, activate=True)
+                    st.session_state.db = new_database_manager()
+                    st.session_state.exchange = ExchangeHelper(modo_simulacion=True)
+                    st.session_state.current_mode = True
+                    st.rerun()
+                if c_reset.button(_('SIM_PROFILE_RESET'), width="stretch"):
+                    st.session_state.db.set_system_status('is_running', 'false')
+                    reset_profile(active_profile["id"])
+                    st.session_state.db = new_database_manager()
+                    st.session_state.exchange = ExchangeHelper(modo_simulacion=True)
+                    st.session_state.current_mode = True
+                    st.rerun()
+        except Exception as exc:
+            st.caption(f"{_('SIM_PROFILE_UNAVAILABLE')}: {exc}")
         
     # Detectar cambio de modo
     if st.session_state.current_mode != is_simulacion:
         st.session_state.current_mode = is_simulacion
+        save_settings({"MODO_SIMULACION": bool(is_simulacion)})
+        st.session_state.db.set_system_status('is_running', 'false')
+        st.session_state.db = new_database_manager()
         st.session_state.db.set_system_status('is_running', 'false')
         st.session_state.db.set_system_status('simulacion', 'true' if is_simulacion else 'false')
         st.session_state.exchange = ExchangeHelper(modo_simulacion=is_simulacion)
-        st.session_state.db.clear_open_positions()
         st.rerun()
         
     with st.expander(f"⚠️ { _('EMERGENCY_ACTIONS') }", expanded=False):

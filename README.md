@@ -67,6 +67,7 @@ Available today:
 - Autonomous daemon with 60-second scan cycles.
 - Crypto.com Exchange integration through CCXT.
 - Simulation and real trading modes.
+- Full simulation profiles with isolated paper account, SQLite history, decision journal and profile-specific safe settings.
 - Streamlit dashboard with equity, available cash, open positions, technical chart, radar, macro context and daemon diagnostics.
 - Manual sell button from the dashboard.
 - Buy candidates are collected during the scan, ranked, and only the best ones are executed after the full cycle evaluation.
@@ -613,6 +614,7 @@ Daemon console logs are structured for quick triage:
 | Parameter                       | Meaning                                            | Default        |
 | ------------------------------- | -------------------------------------------------- | -------------- |
 | `MODO_SIMULACION`               | Simulation vs real mode                            | `True`         |
+| `SIMULATION_PROFILE_ID`         | Active isolated paper-trading profile               | `default`      |
 | `PRESUPUESTO_INICIAL`           | Simulation baseline                                | `60.0`         |
 | `TRADING_EXECUTION_MODE`        | `auto` executes, `consultive` only recommends       | `auto`         |
 | `DECISION_MODE`                 | `ai_aggressive`, `hybrid`, or `rules`               | `hybrid`       |
@@ -772,6 +774,8 @@ Open `InversorIA.exe` from the project root. It is the main entry point for norm
 
 The launcher provides a bilingual Windows control panel. It starts the web app, controls the daemon, opens the dashboard, switches between simulation and real mode, configures local API keys, prevents system sleep while running, and shows live daemon logs. Real mode requires explicit confirmation and exchange keys in `.env`.
 
+In simulation mode, the launcher and the app can create and switch complete simulation profiles. Each profile has its own initial capital, virtual account, SQLite DB, trades, equity history and `decision_journal`, so experiments with different risk settings do not contaminate each other.
+
 Developer note: `dist/InversorIA.exe` is the PyInstaller build output. To rebuild and copy the executable to the project root:
 
 ```bash
@@ -809,6 +813,8 @@ Recommended workflow:
 | -------------------------------- | ------------------------------------- | ------- |
 | `.env`                           | Real secrets                          | Ignored |
 | `user_settings.json`             | UI settings and possibly keys         | Ignored |
+| `simulation_profiles.json`       | Local simulation profile registry     | Ignored |
+| `simulations/`                   | Isolated simulation DB/account folders | Ignored |
 | `iversoria.db`                   | Local SQLite DB                       | Ignored |
 | `simulated_account.json`         | Paper account state                   | Ignored |
 | `iversoria_bot.log`              | Local log                             | Ignored |
@@ -1023,6 +1029,7 @@ Modos disponibles:
 - Daemon autónomo con ciclos de 60 segundos.
 - Integración Crypto.com Exchange mediante CCXT.
 - Modo simulación y modo real.
+- Perfiles completos de simulación con cuenta ficticia, SQLite, historial, journal de decisiones y configuración segura aislados.
 - Dashboard con equity, liquidez, posiciones, gráfico técnico, radar, macro y diagnóstico.
 - Botón de venta manual desde dashboard.
 - Los candidatos BUY se recopilan durante el escaneo, se rankean y solo se ejecutan los mejores al final del ciclo.
@@ -1348,6 +1355,7 @@ Los logs de consola del daemon usan formato compacto:
 | Parámetro                       | Significado                | Default |
 | ------------------------------- | -------------------------- | ------- |
 | `MODO_SIMULACION`               | Simulación vs real         | `True`  |
+| `SIMULATION_PROFILE_ID`         | Perfil de simulación activo | `default` |
 | `PRESUPUESTO_INICIAL`           | Baseline sim               | `60.0`  |
 | `TRADING_EXECUTION_MODE`        | `auto` ejecuta, `consultive` recomienda | `auto` |
 | `DECISION_MODE`                 | `ai_aggressive`, `hybrid` o `rules` | `hybrid` |
@@ -1467,6 +1475,8 @@ Abre `InversorIA.exe` desde la raíz del proyecto. Es el punto de entrada princi
 
 El launcher ofrece un panel bilingüe para Windows. Inicia la web, controla el daemon, abre el dashboard, cambia entre simulación y real, configura las APIs locales, evita la suspensión del sistema mientras está activo y muestra logs vivos del daemon. El modo real pide confirmación explícita y exige claves de exchange en `.env`.
 
+En modo simulación, el launcher y la app pueden crear y cambiar perfiles completos de simulación. Cada perfil tiene su propio capital inicial, cuenta virtual, SQLite, trades, equity y `decision_journal`, así que los experimentos con configuraciones distintas no se contaminan entre sí.
+
 Nota para desarrollo: `dist/InversorIA.exe` es la salida de PyInstaller. Para reconstruir y copiar el ejecutable a la raíz:
 
 ```bash
@@ -1496,6 +1506,8 @@ python bot_daemon.py
 | -------------------------------- | -------------------------------------------- | ---------- |
 | `.env`                           | Secretos                                     | Ignorado   |
 | `user_settings.json`             | Config UI                                    | Ignorado   |
+| `simulation_profiles.json`       | Registro local de perfiles de simulación     | Ignorado   |
+| `simulations/`                   | Carpetas aisladas de DB/cuenta por simulación | Ignorado   |
 | `iversoria.db`                   | SQLite                                       | Ignorado   |
 | `simulated_account.json`         | Cuenta sim                                   | Ignorado   |
 | `iversoria_bot.log`              | Log local                                    | Ignorado   |

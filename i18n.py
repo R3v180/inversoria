@@ -323,6 +323,13 @@ TRANSLATIONS = {
     'HISTORY_EMPTY': {'es': 'El historial está vacío.', 'en': 'History is empty.'},
     'LOADING_DATA': {'es': 'Cargando datos históricos...', 'en': 'Loading historical data...'},
     'DATA_ERROR': {'es': 'No se pudieron cargar datos.', 'en': 'Could not load data.'},
+    'SIM_PROFILE_L': {'es': 'Perfil simulación', 'en': 'Simulation profile'},
+    'SIM_PROFILE_MANAGE': {'es': 'Nueva simulación / reset', 'en': 'New simulation / reset'},
+    'SIM_PROFILE_NAME': {'es': 'Nombre', 'en': 'Name'},
+    'SIM_PROFILE_CAPITAL': {'es': 'Capital inicial USDT', 'en': 'Initial USDT capital'},
+    'SIM_PROFILE_CREATE': {'es': 'Crear y activar', 'en': 'Create and activate'},
+    'SIM_PROFILE_RESET': {'es': 'Reset perfil activo', 'en': 'Reset active profile'},
+    'SIM_PROFILE_UNAVAILABLE': {'es': 'Perfil simulación no disponible', 'en': 'Simulation profile unavailable'},
     
     'TUT_STEP1_TITLE': {'es': 'Métricas en tiempo real', 'en': 'Real-time Metrics'},
     'TUT_STEP1_DESC': {'es': 'Controla tu capital total y beneficio neto al instante.', 'en': 'Monitor your total capital and net profit instantly.'},

@@ -1,6 +1,11 @@
 import os
 import json
 from dotenv import load_dotenv
+from simulation_profiles import (
+    GLOBAL_SETTING_KEYS,
+    get_active_profile_settings,
+    save_active_profile_settings,
+)
 
 # Cargar variables de entorno desde .env
 load_dotenv()
@@ -9,6 +14,7 @@ USER_SETTINGS_FILE = 'user_settings.json'
 
 DEFAULT_SETTINGS = {
     'MODO_SIMULACION': True,
+    'SIMULATION_PROFILE_ID': 'default',
     'PRESUPUESTO_INICIAL': 60.0,
     'MONEDAS': 'BTC/USDT,ETH/USDT,SOL/USDT,ADA/USDT,DOT/USDT',
     'RISK_PER_TRADE': 0.10,
@@ -67,8 +73,15 @@ def get_setting(key, default, cast_type=str):
             with open(USER_SETTINGS_FILE, 'r', encoding='utf-8') as f:
                 settings = json.load(f)
         except Exception: pass
-            
-    val = settings.get(key, os.getenv(key, default))
+
+    profile_settings = {}
+    try:
+        if str(key).strip().upper() not in GLOBAL_SETTING_KEYS:
+            profile_settings = get_active_profile_settings()
+    except Exception:
+        profile_settings = {}
+
+    val = profile_settings.get(key, settings.get(key, os.getenv(key, default)))
         
     try:
         if cast_type == bool:
@@ -84,9 +97,22 @@ def save_settings(new_settings):
             with open(USER_SETTINGS_FILE, 'r', encoding='utf-8') as f:
                 settings = json.load(f)
         except: pass
-    settings.update(new_settings)
+    global_updates = {}
+    profile_updates = {}
+    next_sim_mode = new_settings.get('MODO_SIMULACION', settings.get('MODO_SIMULACION', DEFAULT_SETTINGS['MODO_SIMULACION']))
+    if isinstance(next_sim_mode, str):
+        next_sim_mode = next_sim_mode.strip().lower() in {'true', '1', 'yes', 'si', 'sí', 'on'}
+    for key, value in new_settings.items():
+        normalized = str(key).strip().upper()
+        if normalized in GLOBAL_SETTING_KEYS or not bool(next_sim_mode):
+            global_updates[key] = value
+        else:
+            profile_updates[key] = value
+    settings.update(global_updates)
     with open(USER_SETTINGS_FILE, 'w', encoding='utf-8') as f:
         json.dump(settings, f, indent=4)
+    if profile_updates:
+        save_active_profile_settings(profile_updates)
 
 def reset_to_defaults():
     with open(USER_SETTINGS_FILE, 'w', encoding='utf-8') as f:
@@ -95,6 +121,7 @@ def reset_to_defaults():
 
 # --- Carga de Variables Activas ---
 MODO_SIMULACION = get_setting('MODO_SIMULACION', True, bool)
+SIMULATION_PROFILE_ID = get_setting('SIMULATION_PROFILE_ID', 'default')
 PRESUPUESTO_INICIAL = get_setting('PRESUPUESTO_INICIAL', 60.0, float)
 CRYPTO_API_KEY = get_setting('CRYPTO_API_KEY', '')
 CRYPTO_API_SECRET = get_setting('CRYPTO_API_SECRET', '')

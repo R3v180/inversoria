@@ -14,6 +14,14 @@ from tkinter import messagebox
 import customtkinter as ctk
 from dotenv import dotenv_values
 from PIL import Image
+from simulation_profiles import (
+    create_profile,
+    get_active_profile,
+    get_database_path_for_current_mode,
+    list_profiles,
+    reset_profile,
+    set_active_profile,
+)
 
 
 APP_NAME = "InversorIA Launcher"
@@ -48,6 +56,13 @@ TEXT = {
         "heartbeat": "latido",
         "no_heartbeat": "sin latido",
         "mode_label": "Modo",
+        "simulation_profile": "Perfil simulación",
+        "initial_capital": "Capital inicial USDT",
+        "new_profile": "Crear perfil",
+        "reset_profile": "Reset perfil",
+        "profile_created": "Perfil creado y activado.",
+        "profile_reset": "Perfil reiniciado.",
+        "profile_name": "Nombre del perfil",
         "port": "Puerto",
         "logs": "Log del daemon",
         "logs_hint": "Escaneo en vivo del bot: decisiones por símbolo, proveedores IA, filtros y errores.",
@@ -125,6 +140,13 @@ TEXT = {
         "heartbeat": "heartbeat",
         "no_heartbeat": "no heartbeat",
         "mode_label": "Mode",
+        "simulation_profile": "Simulation profile",
+        "initial_capital": "Initial USDT capital",
+        "new_profile": "Create profile",
+        "reset_profile": "Reset profile",
+        "profile_created": "Profile created and activated.",
+        "profile_reset": "Profile reset.",
+        "profile_name": "Profile name",
         "port": "Port",
         "logs": "Daemon log",
         "logs_hint": "Live bot scan: symbol decisions, AI providers, filters and errors.",
@@ -229,6 +251,9 @@ class InversoriaLauncher(ctk.CTk):
 
         self.language_var = ctk.StringVar(value="Español" if self.lang == "es" else "English")
         self.mode_var = ctk.StringVar(value=self.t("simulation") if self._current_simulation_mode() else self.t("real"))
+        self.profile_var = ctk.StringVar(value="")
+        self.profile_name_var = ctk.StringVar(value="")
+        self.profile_capital_var = ctk.StringVar(value="60")
         self.web_state_var = ctk.StringVar(value=self.t("inactive"))
         self.daemon_state_var = ctk.StringVar(value=self.t("inactive"))
         self.trading_state_var = ctk.StringVar(value=self.t("paused"))
@@ -239,6 +264,7 @@ class InversoriaLauncher(ctk.CTk):
         self.logo_image = self._load_logo_image()
         self._api_window = None
         self._api_entries = {}
+        self._profile_display_to_id = {}
         self._api_prompt_shown = False
         self._sleep_blocked = False
 
@@ -326,6 +352,42 @@ class InversoriaLauncher(ctk.CTk):
         )
         self.api_button.grid(row=2, column=0, padx=18, pady=(0, 18), sticky="ew")
 
+        self.profile_label = ctk.CTkLabel(controls, font=ctk.CTkFont(size=14, weight="bold"))
+        self.profile_label.grid(row=3, column=0, padx=18, pady=(0, 6), sticky="w")
+        self.profile_name_entry = ctk.CTkEntry(controls, textvariable=self.profile_name_var, height=34)
+        self.profile_name_entry.grid(row=3, column=1, columnspan=3, padx=(8, 18), pady=(0, 6), sticky="ew")
+        self.profile_menu = ctk.CTkOptionMenu(
+            controls,
+            variable=self.profile_var,
+            values=["default · 60.00 USDT"],
+            command=self.change_simulation_profile,
+            fg_color="#1F2937",
+            button_color="#374151",
+            button_hover_color="#4B5563",
+            height=38,
+        )
+        self.profile_menu.grid(row=4, column=0, padx=18, pady=(0, 18), sticky="ew")
+        self.profile_capital_entry = ctk.CTkEntry(controls, textvariable=self.profile_capital_var, height=38)
+        self.profile_capital_entry.grid(row=4, column=1, padx=8, pady=(0, 18), sticky="ew")
+        self.create_profile_button = ctk.CTkButton(
+            controls,
+            height=38,
+            corner_radius=14,
+            fg_color="#0F766E",
+            hover_color="#0D9488",
+            command=self.create_simulation_profile,
+        )
+        self.create_profile_button.grid(row=4, column=2, padx=8, pady=(0, 18), sticky="ew")
+        self.reset_profile_button = ctk.CTkButton(
+            controls,
+            height=38,
+            corner_radius=14,
+            fg_color="#7C2D12",
+            hover_color="#9A3412",
+            command=self.reset_simulation_profile,
+        )
+        self.reset_profile_button.grid(row=4, column=3, padx=(8, 18), pady=(0, 18), sticky="ew")
+
         status = ctk.CTkFrame(self, corner_radius=24, fg_color="#0B1220", border_width=1, border_color="#1F2937")
         status.grid(row=2, column=0, padx=20, pady=10, sticky="ew")
         status.grid_columnconfigure((0, 1, 2, 3, 4, 5), weight=1)
@@ -382,6 +444,11 @@ class InversoriaLauncher(ctk.CTk):
         self.subtitle_label.configure(text=self.t("subtitle"))
         self.mission_label.configure(text=self.t("mission"))
         self.mode_label.configure(text=self.t("mode"))
+        self.profile_label.configure(text=self.t("simulation_profile"))
+        self.profile_name_entry.configure(placeholder_text=self.t("profile_name"))
+        self.profile_capital_entry.configure(placeholder_text=self.t("initial_capital"))
+        self.create_profile_button.configure(text=self.t("new_profile"))
+        self.reset_profile_button.configure(text=self.t("reset_profile"))
         self.start_button.configure(text=self.t("start_system"))
         self.open_button.configure(text=self.t("open_web"))
         self.stop_button.configure(text=self.t("stop_bot"))
@@ -398,6 +465,7 @@ class InversoriaLauncher(ctk.CTk):
         self.api_card["title"].configure(text=self.t("api_status"))
         self.mode_menu.configure(values=[self.t("simulation"), self.t("real")])
         self.mode_var.set(self.t("simulation") if current_is_sim else self.t("real"))
+        self.refresh_profile_menu()
         self.status_var.set(self.t("ready"))
         self.refresh_status()
 
@@ -405,6 +473,71 @@ class InversoriaLauncher(ctk.CTk):
         self.lang = "en" if value == "English" else "es"
         self._set_system_status("language", self.lang)
         self.refresh_texts()
+
+    def _profile_display(self, profile):
+        return f"{profile.get('name', profile.get('id'))} · {profile.get('initial_capital', 0):.2f} USDT"
+
+    def refresh_profile_menu(self):
+        try:
+            profiles = list_profiles()
+            active = get_active_profile()
+        except Exception:
+            profiles = []
+            active = None
+        self._profile_display_to_id = {self._profile_display(profile): profile["id"] for profile in profiles}
+        values = list(self._profile_display_to_id.keys()) or ["default · 60.00 USDT"]
+        self.profile_menu.configure(values=values)
+        selected = None
+        if active:
+            for display, profile_id in self._profile_display_to_id.items():
+                if profile_id == active.get("id"):
+                    selected = display
+                    self.profile_capital_var.set(str(active.get("initial_capital", 60)))
+                    break
+        self.profile_var.set(selected or values[0])
+
+    def change_simulation_profile(self, display_value):
+        profile_id = self._profile_display_to_id.get(display_value)
+        if not profile_id:
+            return
+        try:
+            self.stop_bot()
+            profile = set_active_profile(profile_id)
+            self.profile_capital_var.set(str(profile.get("initial_capital", 60)))
+            self._apply_mode(True)
+            self.refresh_status()
+        except Exception as exc:
+            self.status_var.set(f"{self.t('db_error')}: {exc}")
+
+    def create_simulation_profile(self):
+        try:
+            capital = float(str(self.profile_capital_var.get() or "60").replace(",", "."))
+        except ValueError:
+            capital = 60.0
+        name = self.profile_name_var.get().strip() or f"{self.t('profile_name')} {time.strftime('%Y%m%d-%H%M')}"
+        try:
+            self.stop_bot()
+            create_profile(name, capital, activate=True)
+            self._apply_mode(True)
+            self.refresh_profile_menu()
+            self.status_var.set(self.t("profile_created"))
+        except Exception as exc:
+            self.status_var.set(f"{self.t('db_error')}: {exc}")
+
+    def reset_simulation_profile(self):
+        display = self.profile_var.get()
+        profile_id = self._profile_display_to_id.get(display)
+        if not profile_id:
+            return
+        if not messagebox.askyesno(self.t("reset_profile"), self.t("delete_confirm")):
+            return
+        try:
+            self.stop_bot()
+            reset_profile(profile_id)
+            self.refresh_profile_menu()
+            self.status_var.set(self.t("profile_reset"))
+        except Exception as exc:
+            self.status_var.set(f"{self.t('db_error')}: {exc}")
 
     def _prompt_api_config_if_needed(self):
         if self._api_prompt_shown:
@@ -637,8 +770,9 @@ class InversoriaLauncher(ctk.CTk):
         # External daemons cannot have their stdout captured retroactively.
         if not lines:
             try:
-                if DB_PATH.exists():
-                    with sqlite3.connect(DB_PATH, timeout=2) as conn:
+                db_path = self._current_db_path()
+                if db_path.exists():
+                    with sqlite3.connect(db_path, timeout=2) as conn:
                         rows = conn.execute("SELECT message FROM logs ORDER BY id DESC LIMIT 80").fetchall()
                         lines = [row[0] for row in reversed(rows)]
             except Exception as exc:
@@ -666,6 +800,10 @@ class InversoriaLauncher(ctk.CTk):
         self.status_var.set(self.t(key))
 
     def _apply_mode(self, is_sim):
+        if is_sim:
+            profile_id = self._profile_display_to_id.get(self.profile_var.get())
+            if profile_id:
+                set_active_profile(profile_id)
         self._save_user_setting("MODO_SIMULACION", bool(is_sim))
         self._set_system_status("simulacion", "true" if is_sim else "false")
 
@@ -744,7 +882,7 @@ class InversoriaLauncher(ctk.CTk):
 
     def _set_system_status(self, key, value):
         try:
-            with sqlite3.connect(DB_PATH, timeout=5) as conn:
+            with sqlite3.connect(self._current_db_path(), timeout=5) as conn:
                 conn.execute(
                     "CREATE TABLE IF NOT EXISTS system_status (key TEXT PRIMARY KEY, value TEXT)"
                 )
@@ -758,14 +896,21 @@ class InversoriaLauncher(ctk.CTk):
 
     def _get_system_status(self, key, default=None):
         try:
-            if DB_PATH.exists():
-                with sqlite3.connect(DB_PATH, timeout=2) as conn:
+            db_path = self._current_db_path()
+            if db_path.exists():
+                with sqlite3.connect(db_path, timeout=2) as conn:
                     row = conn.execute("SELECT value FROM system_status WHERE key = ?", (key,)).fetchone()
                     if row:
                         return row[0]
         except Exception:
             pass
         return default
+
+    def _current_db_path(self):
+        try:
+            return Path(get_database_path_for_current_mode())
+        except Exception:
+            return DB_PATH
 
     def _system_flag(self, key):
         return str(self._get_system_status(key, "false")).lower() == "true"
@@ -814,8 +959,9 @@ class InversoriaLauncher(ctk.CTk):
 
     def _load_language(self):
         try:
-            if DB_PATH.exists():
-                with sqlite3.connect(DB_PATH, timeout=2) as conn:
+            db_path = self._current_db_path()
+            if db_path.exists():
+                with sqlite3.connect(db_path, timeout=2) as conn:
                     row = conn.execute("SELECT value FROM system_status WHERE key = 'language'").fetchone()
                     if row and str(row[0]).lower() in {"es", "en"}:
                         return str(row[0]).lower()

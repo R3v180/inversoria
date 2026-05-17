@@ -19,6 +19,7 @@ SENSITIVE_CONFIG_KEYS = {
 
 CONFIG_SCHEMA = {
     "MODO_SIMULACION": {"type": bool},
+    "SIMULATION_PROFILE_ID": {"type": str, "max_len": 80},
     "PRESUPUESTO_INICIAL": {"type": float, "min": 1.0, "max": 1_000_000.0},
     "MONEDAS": {"type": "symbols"},
     "TRADING_EXECUTION_MODE": {"type": "choice", "choices": {"auto", "consultive"}},
@@ -59,6 +60,7 @@ CONFIG_SCHEMA = {
 
 EXAMPLE_SAFE_CONFIG = {
     "MODO_SIMULACION": True,
+    "SIMULATION_PROFILE_ID": "default",
     "PRESUPUESTO_INICIAL": 60.0,
     "MONEDAS": "BTC/USDT,ETH/USDT,SOL/USDT,XRP/USDT,LINK/USDT,SUI/USDT,RUNE/USDT,QNT/USDT,XLM/USDT",
     "TRADING_EXECUTION_MODE": "auto",
