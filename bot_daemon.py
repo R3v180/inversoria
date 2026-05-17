@@ -665,9 +665,16 @@ class BotDaemon:
                     'entry_confidence': decision.get('entry_confidence', 0.7),
                     'extra_data': json.dumps(decision),
                 }
+                trade_reason = (
+                    f"BOT [{provider}] | score={self._safe_float(decision.get('decision_score'), 0):.2f} | "
+                    f"conf={self._safe_float(decision.get('confidence'), 0):.2f} | "
+                    f"regime={decision.get('regime', 'N/A')} | "
+                    f"strategy={decision.get('best_strategy', 'N/A')} | "
+                    f"{self._short_reason(decision.get('reasoning', ''), 160)}"
+                )
                 trade_id = self.db.save_trade(
                     sym, 'buy', float(price), float(amount_coin),
-                    f"BOT [{provider}]", 0.0,
+                    trade_reason, 0.0,
                 )
                 if decision_journal_id:
                     self.db.update_decision_journal(

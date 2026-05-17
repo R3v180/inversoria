@@ -391,6 +391,9 @@ Shows:
 - Filters by symbol, side, result and date range.
 - Pagination for large histories.
 - Compact table first, optional detailed trade cards per page.
+- Adaptive price/amount formatting for small-cap assets such as PEPE.
+- Clear note that win rate, profit factor, best trade and expectancy are realized metrics based on closed trades.
+- Enriched trade rationale from the decision context when available: provider, score, confidence, regime, strategy and AI reasoning.
 - Win rate.
 - Profit factor.
 - Expectancy.
@@ -1212,7 +1215,7 @@ Chat contextual con cartera, posiciones, macro, backtests, diagnóstico del daem
 
 ### Historial
 
-Trades con filtros por símbolo, tipo, resultado y fechas; paginación para historiales grandes; tabla compacta; tarjetas detalladas opcionales por página; win rate, profit factor, expectancy, drawdown rolling, profit factor rolling, métricas por provider/régimen, curva aproximada y journal.
+Trades con filtros por símbolo, tipo, resultado y fechas; paginación para historiales grandes; tabla compacta con formato adaptativo para precios/cantidades pequeñas como PEPE; tarjetas detalladas opcionales por página; aviso de que win rate, profit factor, mejor trade y expectancy son métricas realizadas basadas en cierres; justificación enriquecida con provider, score, confianza, régimen, estrategia y razonamiento IA cuando existe; drawdown rolling, profit factor rolling, métricas por provider/régimen, curva aproximada y journal.
 
 ### Configuración
 

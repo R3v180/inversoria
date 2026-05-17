@@ -1,7 +1,152 @@
 import streamlit as st
 import pandas as pd
 import plotly.express as px
+import json
 from i18n import _
+
+
+def _fmt_trade_price(value):
+    try:
+        price = float(value)
+    except (TypeError, ValueError):
+        return "-"
+    if price == 0:
+        return "0"
+    if abs(price) < 0.0001:
+        return f"{price:.10f}".rstrip("0").rstrip(".")
+    if abs(price) < 1:
+        return f"{price:.6f}".rstrip("0").rstrip(".")
+    if abs(price) < 100:
+        return f"{price:.4f}".rstrip("0").rstrip(".")
+    return f"{price:.2f}"
+
+
+def _fmt_trade_amount(value):
+    try:
+        amount = float(value)
+    except (TypeError, ValueError):
+        return "-"
+    if amount == 0:
+        return "0"
+    if abs(amount) >= 1_000_000:
+        return f"{amount:,.0f}"
+    if abs(amount) >= 1:
+        return f"{amount:,.6f}".rstrip("0").rstrip(".")
+    return f"{amount:.10f}".rstrip("0").rstrip(".")
+
+
+def _fmt_trade_value(price, amount):
+    try:
+        value = float(price) * float(amount)
+    except (TypeError, ValueError):
+        return "-"
+    return f"${value:,.2f}"
+
+
+def _parse_json_maybe(raw):
+    if not raw:
+        return {}
+    if isinstance(raw, dict):
+        return raw
+    try:
+        return json.loads(raw)
+    except Exception:
+        return {}
+
+
+def _open_position_context(db):
+    try:
+        positions = db.get_open_positions()
+    except Exception:
+        return {}
+    context = {}
+    for symbol, pos in positions.items():
+        extra = _parse_json_maybe(pos.get("extra_data"))
+        if extra:
+            context[str(symbol)] = extra
+    return context
+
+
+def _journal_context(db):
+    try:
+        journal = db.get_decision_journal(limit=1000)
+    except Exception:
+        return pd.DataFrame()
+    if journal is None or journal.empty:
+        return pd.DataFrame()
+    journal = journal.copy()
+    if "timestamp" in journal.columns:
+        journal["Date"] = pd.to_datetime(journal["timestamp"], unit="s", errors="coerce")
+    return journal
+
+
+def _match_journal(row, journal):
+    if journal.empty or "symbol" not in journal.columns:
+        return {}
+    side = str(row.get("Side", "")).lower()
+    symbol = str(row.get("Symbol", ""))
+    candidates = journal[journal["symbol"].astype(str) == symbol].copy()
+    if side == "buy" and "execution_side" in candidates.columns:
+        candidates = candidates[candidates["execution_side"].fillna("").astype(str).str.lower().isin(["buy", ""])]
+    elif side == "sell" and "execution_side" in candidates.columns:
+        candidates = candidates[candidates["execution_side"].fillna("").astype(str).str.lower().isin(["sell", ""])]
+    if candidates.empty:
+        return {}
+    if "Date" in candidates.columns:
+        trade_date = row.get("Date")
+        candidates["delta"] = (candidates["Date"] - trade_date).abs()
+        candidates = candidates.sort_values("delta")
+    return candidates.iloc[0].to_dict()
+
+
+def _build_trade_context(row, open_context, journal):
+    context = {}
+    if str(row.get("Side", "")).lower() == "buy":
+        context.update(open_context.get(str(row.get("Symbol", "")), {}))
+    journal_row = _match_journal(row, journal)
+    if journal_row:
+        context.setdefault("provider", journal_row.get("provider"))
+        context.setdefault("regime", journal_row.get("regime"))
+        context.setdefault("best_strategy", journal_row.get("strategy"))
+        context.setdefault("decision_score", journal_row.get("decision_score"))
+        context.setdefault("confidence", journal_row.get("confidence"))
+        context.setdefault("sizing", _parse_json_maybe(journal_row.get("sizing")))
+    return {k: v for k, v in context.items() if v not in (None, "", {})}
+
+
+def _short_reason(text, limit=140):
+    text = " ".join(str(text or "").split())
+    if len(text) <= limit:
+        return text
+    return text[: limit - 1].rstrip() + "…"
+
+
+def _display_reason(row, context):
+    reasoning = context.get("reasoning") or row.get("Reason") or ""
+    score = context.get("decision_score")
+    confidence = context.get("confidence")
+    regime = context.get("regime", "N/A")
+    strategy = context.get("best_strategy", context.get("strategy", "N/A"))
+    provider = context.get("provider", "")
+    parts = []
+    if provider:
+        parts.append(str(provider))
+    try:
+        parts.append(f"score={float(score):.2f}")
+    except (TypeError, ValueError):
+        pass
+    try:
+        parts.append(f"conf={float(confidence):.2f}")
+    except (TypeError, ValueError):
+        pass
+    if regime and regime != "N/A":
+        parts.append(str(regime))
+    if strategy and strategy != "N/A":
+        parts.append(str(strategy))
+    prefix = " | ".join(parts)
+    reason = _short_reason(reasoning)
+    return f"{prefix} | {reason}" if prefix and reason else reason or str(row.get("Reason", ""))
+
 
 def render_history():
     st.title(f"🧾 { _('NAV_HISTORY') }")
@@ -98,6 +243,11 @@ def render_history():
     c6.metric("Rolling DD", f"{rolling_dd:.2f}%")
 
     st.caption(f"Rolling PF últimos 30 cierres: {rolling_pf:.2f}")
+    if total_trades == 0:
+        st.info(
+            "Las métricas de Win Rate, Profit Factor, Best Trade y Expectancy se calculan "
+            "solo con operaciones cerradas. Mientras solo haya compras abiertas, es normal que salgan a 0."
+        )
     try:
         metrics = st.session_state.db.get_decision_metrics(limit=500)
         provider_stats = metrics.get("provider_stats")
@@ -165,8 +315,24 @@ def render_history():
 
     compact = page_df.copy()
     compact['Date'] = compact['Date'].dt.strftime('%Y-%m-%d %H:%M')
+    open_context = _open_position_context(st.session_state.db)
+    journal = _journal_context(st.session_state.db)
+    contexts = [
+        _build_trade_context(row, open_context, journal)
+        for _, row in page_df.iterrows()
+    ]
+    compact["Precio"] = compact["Price"].apply(_fmt_trade_price)
+    compact["Cantidad"] = compact["Amount"].apply(_fmt_trade_amount)
+    compact["Valor USDT"] = [
+        _fmt_trade_value(row["Price"], row["Amount"])
+        for _, row in page_df.iterrows()
+    ]
+    compact["Justificación"] = [
+        _display_reason(row, context)
+        for (_, row), context in zip(page_df.iterrows(), contexts)
+    ]
     st.dataframe(
-        compact[['Date', 'Symbol', 'Side', 'Price', 'Amount', pnl_col, 'Reason']],
+        compact[['Date', 'Symbol', 'Side', 'Precio', 'Cantidad', 'Valor USDT', pnl_col, 'Justificación']],
         width="stretch",
         hide_index=True,
     )
@@ -176,12 +342,34 @@ def render_history():
         return
 
     # Tarjetas Expandibles (solo página actual)
-    for index, row in page_df.iterrows():
+    for (_, row), context in zip(page_df.iterrows(), contexts):
         action_color = "🟢" if row['Side'] == 'buy' else "🔴"
         action_text = _('BUY') if row['Side'] == 'buy' else _('SELL')
         pnl_text = f" | PNL: {row.get(pnl_col, 0):.2f}%" if row['Side'] == 'sell' else ""
+        price_text = _fmt_trade_price(row["Price"])
         
-        with st.expander(f"{action_color} {action_text} | {row['Date'].strftime('%Y-%m-%d %H:%M')} | {row['Symbol']} a ${row['Price']:.4f}{pnl_text}"):
-            st.markdown(f"**Cantidad:** {row['Amount']:.6f}")
+        with st.expander(f"{action_color} {action_text} | {row['Date'].strftime('%Y-%m-%d %H:%M')} | {row['Symbol']} a ${price_text}{pnl_text}"):
+            st.markdown(f"**Cantidad:** {_fmt_trade_amount(row['Amount'])}")
+            st.markdown(f"**Valor aproximado:** {_fmt_trade_value(row['Price'], row['Amount'])}")
+            if context:
+                meta = []
+                if context.get("provider"):
+                    meta.append(f"Provider: `{context.get('provider')}`")
+                if context.get("regime"):
+                    meta.append(f"Régimen: `{context.get('regime')}`")
+                if context.get("best_strategy"):
+                    meta.append(f"Estrategia: `{context.get('best_strategy')}`")
+                if context.get("decision_score") is not None:
+                    try:
+                        meta.append(f"Score: `{float(context.get('decision_score')):.2f}`")
+                    except (TypeError, ValueError):
+                        pass
+                if context.get("confidence") is not None:
+                    try:
+                        meta.append(f"Confianza: `{float(context.get('confidence')):.2f}`")
+                    except (TypeError, ValueError):
+                        pass
+                if meta:
+                    st.caption(" · ".join(meta))
             st.markdown(f"**Justificación de la Operación:**")
-            st.info(row['Reason'])
+            st.info(_display_reason(row, context))
