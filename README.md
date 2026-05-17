@@ -1,23 +1,18 @@
-<div align="center">
 
-<img src="https://img.shields.io/badge/Python-3.11+-3776AB?style=for-the-badge&logo=python&logoColor=white"/>
-<img src="https://img.shields.io/badge/Streamlit-FF4B4B?style=for-the-badge&logo=streamlit&logoColor=white"/>
-<img src="https://img.shields.io/badge/Crypto.com-002D74?style=for-the-badge&logo=cryptocom&logoColor=white"/>
-<img src="https://img.shields.io/badge/SQLite-003B57?style=for-the-badge&logo=sqlite&logoColor=white"/>
-<img src="https://img.shields.io/badge/Gemini-4285F4?style=for-the-badge&logo=google&logoColor=white"/>
-<img src="https://img.shields.io/badge/Groq-F55036?style=for-the-badge&logo=groq&logoColor=white"/>
+
+
 
 # INVERSORIA
 
 ### Autonomous crypto trading bot with hybrid AI, global macro filters, historical backtesting, exchange wallet intelligence, news catalysts and safe human confirmation.
 
-![InversorIA Dashboard](docs/dashboard.png)
+InversorIA Dashboard
 
-**🇬🇧 [English](#english-documentation) | 🇪🇸 [Español](#documentación-en-español)**
+**🇬🇧 [English](#english-documentation) | 🇪🇸 [Español**](#documentación-en-español)
 
 > Disclaimer: InversorIA is not financial advice. Real mode can place real orders on Crypto.com. Use minimal API permissions, start in simulation, and verify every behavior before trading real funds.
 
-</div>
+
 
 ---
 
@@ -136,29 +131,31 @@ Available today:
 
 Main modules:
 
-| File | Responsibility |
-|---|---|
-| `app.py` | Streamlit entrypoint and navigation. |
-| `bot_daemon.py` | Autonomous trading daemon. |
-| `exchange_helper.py` | Crypto.com / CCXT balances, tickers, inventory, pre-checks and orders. |
-| `database_manager.py` | SQLite persistence layer. |
-| `decision_engine.py` | Macro, MTF, backtest and AI decision engine. |
-| `trading_logic.py` | Indicators, stop-loss, trailing stop and sell logic. |
-| `market_context.py` | Crypto/global macro context. |
-| `macro_analyzer.py` | Alpha Vantage global market indicators. |
-| `backtest_engine.py` | Historical strategy simulations and priors. |
-| `multi_timeframe.py` | 1D / 4H / 15M confluence. |
-| `sentiment_engine.py` | Gemini / Groq / SambaNova calls and fallback logic. |
-| `config_importer.py` | Safe configuration import/export validation and backups. |
-| `news_service.py` | RSS news, images, symbol matching, sentiment and impact. |
-| `ui_dashboard.py` | Main dashboard. |
-| `ui_wallet.py` | Exchange wallet, dust, PnL and manual sell. |
-| `ui_news.py` | Full news page and dashboard news widget. |
-| `ui_assistant.py` | AI assistant and pending order confirmation. |
-| `ui_settings.py` | Hot settings panel. |
-| `ui_terminal.py` | Technical terminal and logs. |
-| `ui_history.py` | Trade history and analytics. |
-| `runtime_bootstrap.py` | Defensive Streamlit hot-reload helpers. |
+
+| File                   | Responsibility                                                         |
+| ---------------------- | ---------------------------------------------------------------------- |
+| `app.py`               | Streamlit entrypoint and navigation.                                   |
+| `bot_daemon.py`        | Autonomous trading daemon.                                             |
+| `exchange_helper.py`   | Crypto.com / CCXT balances, tickers, inventory, pre-checks and orders. |
+| `database_manager.py`  | SQLite persistence layer.                                              |
+| `decision_engine.py`   | Macro, MTF, backtest and AI decision engine.                           |
+| `trading_logic.py`     | Indicators, stop-loss, trailing stop and sell logic.                   |
+| `market_context.py`    | Crypto/global macro context.                                           |
+| `macro_analyzer.py`    | Alpha Vantage global market indicators.                                |
+| `backtest_engine.py`   | Historical strategy simulations and priors.                            |
+| `multi_timeframe.py`   | 1D / 4H / 15M confluence.                                              |
+| `sentiment_engine.py`  | Gemini / Groq / SambaNova calls and fallback logic.                    |
+| `config_importer.py`   | Safe configuration import/export validation and backups.               |
+| `news_service.py`      | RSS news, images, symbol matching, sentiment and impact.               |
+| `ui_dashboard.py`      | Main dashboard.                                                        |
+| `ui_wallet.py`         | Exchange wallet, dust, PnL and manual sell.                            |
+| `ui_news.py`           | Full news page and dashboard news widget.                              |
+| `ui_assistant.py`      | AI assistant and pending order confirmation.                           |
+| `ui_settings.py`       | Hot settings panel.                                                    |
+| `ui_terminal.py`       | Technical terminal and logs.                                           |
+| `ui_history.py`        | Trade history and analytics.                                           |
+| `runtime_bootstrap.py` | Defensive Streamlit hot-reload helpers.                                |
+
 
 ---
 
@@ -213,31 +210,26 @@ bot_daemon.py
 Decision layers:
 
 1. **Global macro**
-   - Alpha Vantage: `SPY`, `UUP`, `GLD`, `USO`, `VXX`.
-   - Incremental refresh: one stale asset per macro interval.
-   - Avoids long synchronous blocking.
-
+  - Alpha Vantage: `SPY`, `UUP`, `GLD`, `USO`, `VXX`.
+  - Incremental refresh: one stale asset per macro interval.
+  - Avoids long synchronous blocking.
 2. **Crypto macro**
-   - BTC dominance.
-   - Market regime: `RISK_ON`, `ALTSEASON`, `NEUTRAL`, `CAUTION`, `RISK_OFF`.
-   - Can veto altcoin trading during high BTC dominance / risk-off conditions.
-
+  - BTC dominance.
+  - Market regime: `RISK_ON`, `ALTSEASON`, `NEUTRAL`, `CAUTION`, `RISK_OFF`.
+  - Can veto altcoin trading during high BTC dominance / risk-off conditions.
 3. **Quick technical filter**
-   - Avoids wasting AI calls on obvious sideways markets.
-   - HOLDs are marked as `TechnicalFilter`.
-
+  - Avoids wasting AI calls on obvious sideways markets.
+  - HOLDs are marked as `TechnicalFilter`.
 4. **Multi-timeframe**
-   - 1D / 4H / 15M confluence.
-   - Can veto long entries if higher timeframes are bearish.
-
+  - 1D / 4H / 15M confluence.
+  - Can veto long entries if higher timeframes are bearish.
 5. **Backtest prior**
-   - Historical conditions table stored in SQLite.
-   - Uses win rate, profit factor, regime and strategy context.
-   - Can veto historically poor conditions.
-
+  - Historical conditions table stored in SQLite.
+  - Uses win rate, profit factor, regime and strategy context.
+  - Can veto historically poor conditions
 6. **Hybrid AI**
-   - Gemini / Groq / SambaNova fallback.
-   - Returns structured JSON: action, confidence, regime, strategy, reasoning.
+  - Gemini / Groq / SambaNova fallback.
+  - Returns structured JSON: action, confidence, regime, strategy, reasoning.
 
 ---
 
@@ -555,32 +547,36 @@ This prevents macro refresh from overwriting the last real scan statistics.
 
 ## Risk Management
 
-| Parameter | Meaning | Default |
-|---|---|---|
-| `MODO_SIMULACION` | Simulation vs real mode | `True` |
-| `PRESUPUESTO_INICIAL` | Simulation baseline | `60.0` |
-| `RISK_PER_TRADE` | % of free USDT used per buy | `0.10` |
-| `MAX_OPEN_POSITIONS` | Manual max slots | `5` |
-| `MANUAL_MAX_POSITIONS_PRIORITY` | Use manual max instead of dynamic scaling | `False` |
-| `MIN_PROFIT_NET` | Normal profit target | `1.0` |
-| `STOP_LOSS_PERCENT` | Base stop-loss | `3.0` |
-| `ROTATION_ENABLED` | Enable portfolio rotation | `True` |
-| `ROTATION_MIN_PROFIT` | Minimum profit before rotating out | `0.35` |
-| `ROTATION_CONFIDENCE_GAP` | New signal must exceed old confidence by this much | `0.20` |
-| `ROTATION_MIN_NEW_CONFIDENCE` | Minimum confidence for new rotation target | `0.85` |
-| `AI_ANALYSIS_INTERVAL` | Deep AI interval per symbol | `1200` seconds |
-| `TRADING_FEE_RATE` | Estimated fee per side | `0.001` |
-| `BUY_SLIPPAGE_LIMIT` | Max buy slippage | `0.005` |
-| `SELL_SLIPPAGE_LIMIT` | Max automatic sell slippage | `0.010` |
+
+| Parameter                       | Meaning                                            | Default        |
+| ------------------------------- | -------------------------------------------------- | -------------- |
+| `MODO_SIMULACION`               | Simulation vs real mode                            | `True`         |
+| `PRESUPUESTO_INICIAL`           | Simulation baseline                                | `60.0`         |
+| `RISK_PER_TRADE`                | % of free USDT used per buy                        | `0.10`         |
+| `MAX_OPEN_POSITIONS`            | Manual max slots                                   | `5`            |
+| `MANUAL_MAX_POSITIONS_PRIORITY` | Use manual max instead of dynamic scaling          | `False`        |
+| `MIN_PROFIT_NET`                | Normal profit target                               | `1.0`          |
+| `STOP_LOSS_PERCENT`             | Base stop-loss                                     | `3.0`          |
+| `ROTATION_ENABLED`              | Enable portfolio rotation                          | `True`         |
+| `ROTATION_MIN_PROFIT`           | Minimum profit before rotating out                 | `0.35`         |
+| `ROTATION_CONFIDENCE_GAP`       | New signal must exceed old confidence by this much | `0.20`         |
+| `ROTATION_MIN_NEW_CONFIDENCE`   | Minimum confidence for new rotation target         | `0.85`         |
+| `AI_ANALYSIS_INTERVAL`          | Deep AI interval per symbol                        | `1200` seconds |
+| `TRADING_FEE_RATE`              | Estimated fee per side                             | `0.001`        |
+| `BUY_SLIPPAGE_LIMIT`            | Max buy slippage                                   | `0.005`        |
+| `SELL_SLIPPAGE_LIMIT`           | Max automatic sell slippage                        | `0.010`        |
+
 
 Dynamic position scaling when manual priority is disabled:
 
-| Equity | Max positions |
-|---|---:|
-| `< 100 USDT` | 3 |
-| `100 - 300 USDT` | 5 |
-| `300 - 600 USDT` | 7 |
-| `> 600 USDT` | 10 |
+
+| Equity           | Max positions |
+| ---------------- | ------------- |
+| `< 100 USDT`     | 3             |
+| `100 - 300 USDT` | 5             |
+| `300 - 600 USDT` | 7             |
+| `> 600 USDT`     | 10            |
+
 
 ---
 
@@ -631,7 +627,7 @@ pip install -r requirements.txt
 
 ## Configuration
 
-Recommended on Windows: launch `InversorIA.exe` from the project root and use **Configure APIs**. If `.env` does not exist or required startup keys are missing, the launcher opens the API setup dialog before starting the system. It saves keys locally in `.env` and creates a `.env.backup-*` file before overwriting an existing config.
+Recommended on Windows: launch `InversorIA.exe` from the project root and use **Configure APIs**. If `.env` does not exist or required startup keys are missing, the launcher opens the API setup dialog before starting the system. It saves keys locally in `.env` and creates a `.env.backup-`* file before overwriting an existing config.
 
 Copy:
 
@@ -729,18 +725,20 @@ Recommended workflow:
 
 ## Important Files
 
-| File | Description | Git |
-|---|---|---|
-| `.env` | Real secrets | Ignored |
-| `user_settings.json` | UI settings and possibly keys | Ignored |
-| `iversoria.db` | Local SQLite DB | Ignored |
-| `simulated_account.json` | Paper account state | Ignored |
-| `iversoria_bot.log` | Local log | Ignored |
-| `launcher.py` | Windows desktop launcher source | Tracked |
-| `launcher.spec` | PyInstaller build config | Tracked |
-| `build_launcher.bat` | Launcher build helper | Tracked |
-| `assets/inversoria_logo.png` | Shared app, launcher and favicon logo | Tracked |
-| `assets/inversoria_launcher.svg` | Launcher brand asset | Tracked |
+
+| File                             | Description                           | Git     |
+| -------------------------------- | ------------------------------------- | ------- |
+| `.env`                           | Real secrets                          | Ignored |
+| `user_settings.json`             | UI settings and possibly keys         | Ignored |
+| `iversoria.db`                   | Local SQLite DB                       | Ignored |
+| `simulated_account.json`         | Paper account state                   | Ignored |
+| `iversoria_bot.log`              | Local log                             | Ignored |
+| `launcher.py`                    | Windows desktop launcher source       | Tracked |
+| `launcher.spec`                  | PyInstaller build config              | Tracked |
+| `build_launcher.bat`             | Launcher build helper                 | Tracked |
+| `assets/inversoria_logo.png`     | Shared app, launcher and favicon logo | Tracked |
+| `assets/inversoria_launcher.svg` | Launcher brand asset                  | Tracked |
+
 
 ---
 
@@ -748,18 +746,20 @@ Recommended workflow:
 
 Main tables:
 
-| Table | Purpose |
-|---|---|
-| `system_status` | Global state, language, mode, diagnostics and decisions. |
-| `open_positions` | Bot-managed open positions. |
-| `trades` | Buy/sell history. |
-| `logs` | Recent logs. |
-| `equity_history` | Equity curve. |
-| `macro_data` | Alpha Vantage data. |
-| `chat_history` | Assistant history. |
-| `cooldowns` | Symbol cooldowns. |
-| `backtest_runs` | Backtest summaries. |
-| `backtest_conditions` | Historical priors by condition. |
+
+| Table                 | Purpose                                                  |
+| --------------------- | -------------------------------------------------------- |
+| `system_status`       | Global state, language, mode, diagnostics and decisions. |
+| `open_positions`      | Bot-managed open positions.                              |
+| `trades`              | Buy/sell history.                                        |
+| `logs`                | Recent logs.                                             |
+| `equity_history`      | Equity curve.                                            |
+| `macro_data`          | Alpha Vantage data.                                      |
+| `chat_history`        | Assistant history.                                       |
+| `cooldowns`           | Symbol cooldowns.                                        |
+| `backtest_runs`       | Backtest summaries.                                      |
+| `backtest_conditions` | Historical priors by condition.                          |
+
 
 ---
 
@@ -992,20 +992,22 @@ Modos disponibles:
 
 Módulos principales:
 
-| Archivo | Responsabilidad |
-|---|---|
-| `app.py` | Entrada Streamlit y navegación. |
-| `bot_daemon.py` | Bot autónomo. |
-| `exchange_helper.py` | Crypto.com / CCXT. |
-| `database_manager.py` | Persistencia SQLite. |
-| `decision_engine.py` | Motor de decisión. |
-| `trading_logic.py` | Indicadores, stops y ventas. |
-| `market_context.py` | Contexto macro cripto/global. |
-| `macro_analyzer.py` | Alpha Vantage incremental. |
-| `backtest_engine.py` | Backtesting y priors. |
-| `config_importer.py` | Importación/exportación segura de configuración. |
-| `news_service.py` | Noticias RSS. |
-| `ui_*.py` | Vistas Streamlit. |
+
+| Archivo               | Responsabilidad                                  |
+| --------------------- | ------------------------------------------------ |
+| `app.py`              | Entrada Streamlit y navegación.                  |
+| `bot_daemon.py`       | Bot autónomo.                                    |
+| `exchange_helper.py`  | Crypto.com / CCXT.                               |
+| `database_manager.py` | Persistencia SQLite.                             |
+| `decision_engine.py`  | Motor de decisión.                               |
+| `trading_logic.py`    | Indicadores, stops y ventas.                     |
+| `market_context.py`   | Contexto macro cripto/global.                    |
+| `macro_analyzer.py`   | Alpha Vantage incremental.                       |
+| `backtest_engine.py`  | Backtesting y priors.                            |
+| `config_importer.py`  | Importación/exportación segura de configuración. |
+| `news_service.py`     | Noticias RSS.                                    |
+| `ui_*.py`             | Vistas Streamlit.                                |
+
 
 ---
 
@@ -1216,32 +1218,36 @@ Estados:
 
 ## Gestión De Riesgo
 
-| Parámetro | Significado | Default |
-|---|---|---|
-| `MODO_SIMULACION` | Simulación vs real | `True` |
-| `PRESUPUESTO_INICIAL` | Baseline sim | `60.0` |
-| `RISK_PER_TRADE` | % de USDT libre por compra | `0.10` |
-| `MAX_OPEN_POSITIONS` | Máximo manual | `5` |
-| `MANUAL_MAX_POSITIONS_PRIORITY` | Prioriza máximo manual | `False` |
-| `MIN_PROFIT_NET` | Profit objetivo | `1.0` |
-| `STOP_LOSS_PERCENT` | Stop loss base | `3.0` |
-| `ROTATION_ENABLED` | Activa rotación | `True` |
-| `ROTATION_MIN_PROFIT` | Profit mínimo para rotar | `0.35` |
-| `ROTATION_CONFIDENCE_GAP` | Gap de confianza | `0.20` |
-| `ROTATION_MIN_NEW_CONFIDENCE` | Confianza mínima nueva | `0.85` |
-| `AI_ANALYSIS_INTERVAL` | Frecuencia IA | `1200` |
-| `TRADING_FEE_RATE` | Fee estimada | `0.001` |
-| `BUY_SLIPPAGE_LIMIT` | Slippage compra | `0.005` |
-| `SELL_SLIPPAGE_LIMIT` | Slippage venta automática | `0.010` |
+
+| Parámetro                       | Significado                | Default |
+| ------------------------------- | -------------------------- | ------- |
+| `MODO_SIMULACION`               | Simulación vs real         | `True`  |
+| `PRESUPUESTO_INICIAL`           | Baseline sim               | `60.0`  |
+| `RISK_PER_TRADE`                | % de USDT libre por compra | `0.10`  |
+| `MAX_OPEN_POSITIONS`            | Máximo manual              | `5`     |
+| `MANUAL_MAX_POSITIONS_PRIORITY` | Prioriza máximo manual     | `False` |
+| `MIN_PROFIT_NET`                | Profit objetivo            | `1.0`   |
+| `STOP_LOSS_PERCENT`             | Stop loss base             | `3.0`   |
+| `ROTATION_ENABLED`              | Activa rotación            | `True`  |
+| `ROTATION_MIN_PROFIT`           | Profit mínimo para rotar   | `0.35`  |
+| `ROTATION_CONFIDENCE_GAP`       | Gap de confianza           | `0.20`  |
+| `ROTATION_MIN_NEW_CONFIDENCE`   | Confianza mínima nueva     | `0.85`  |
+| `AI_ANALYSIS_INTERVAL`          | Frecuencia IA              | `1200`  |
+| `TRADING_FEE_RATE`              | Fee estimada               | `0.001` |
+| `BUY_SLIPPAGE_LIMIT`            | Slippage compra            | `0.005` |
+| `SELL_SLIPPAGE_LIMIT`           | Slippage venta automática  | `0.010` |
+
 
 Escala dinámica:
 
-| Equity | Máx posiciones |
-|---|---:|
-| `< 100 USDT` | 3 |
-| `100 - 300 USDT` | 5 |
-| `300 - 600 USDT` | 7 |
-| `> 600 USDT` | 10 |
+
+| Equity           | Máx posiciones |
+| ---------------- | -------------- |
+| `< 100 USDT`     | 3              |
+| `100 - 300 USDT` | 5              |
+| `300 - 600 USDT` | 7              |
+| `> 600 USDT`     | 10             |
+
 
 ---
 
@@ -1271,7 +1277,7 @@ pip install -r requirements.txt
 
 ## Configuración
 
-Recomendado en Windows: ejecuta `InversorIA.exe` desde la raíz del proyecto y usa **Configurar APIs**. Si `.env` no existe o faltan claves necesarias para arrancar, el launcher abre el asistente de APIs antes de iniciar el sistema. Guarda las claves localmente en `.env` y crea `.env.backup-*` antes de sobrescribir una configuración existente.
+Recomendado en Windows: ejecuta `InversorIA.exe` desde la raíz del proyecto y usa **Configurar APIs**. Si `.env` no existe o faltan claves necesarias para arrancar, el launcher abre el asistente de APIs antes de iniciar el sistema. Guarda las claves localmente en `.env` y crea `.env.backup-`* antes de sobrescribir una configuración existente.
 
 ```bash
 cp .env.example .env
@@ -1342,18 +1348,20 @@ python bot_daemon.py
 
 ## Archivos Importantes
 
-| Archivo | Descripción | Git |
-|---|---|---|
-| `.env` | Secretos | Ignorado |
-| `user_settings.json` | Config UI | Ignorado |
-| `iversoria.db` | SQLite | Ignorado |
-| `simulated_account.json` | Cuenta sim | Ignorado |
-| `iversoria_bot.log` | Log local | Ignorado |
-| `launcher.py` | Código del launcher de escritorio Windows | Versionado |
-| `launcher.spec` | Configuración PyInstaller | Versionado |
-| `build_launcher.bat` | Helper para reconstruir el exe | Versionado |
-| `assets/inversoria_logo.png` | Logo compartido para app, launcher y favicon | Versionado |
-| `assets/inversoria_launcher.svg` | Recurso visual del launcher | Versionado |
+
+| Archivo                          | Descripción                                  | Git        |
+| -------------------------------- | -------------------------------------------- | ---------- |
+| `.env`                           | Secretos                                     | Ignorado   |
+| `user_settings.json`             | Config UI                                    | Ignorado   |
+| `iversoria.db`                   | SQLite                                       | Ignorado   |
+| `simulated_account.json`         | Cuenta sim                                   | Ignorado   |
+| `iversoria_bot.log`              | Log local                                    | Ignorado   |
+| `launcher.py`                    | Código del launcher de escritorio Windows    | Versionado |
+| `launcher.spec`                  | Configuración PyInstaller                    | Versionado |
+| `build_launcher.bat`             | Helper para reconstruir el exe               | Versionado |
+| `assets/inversoria_logo.png`     | Logo compartido para app, launcher y favicon | Versionado |
+| `assets/inversoria_launcher.svg` | Recurso visual del launcher                  | Versionado |
+
 
 ---
 
@@ -1451,9 +1459,8 @@ pip install pandas-ta
 
 ---
 
-<div align="center">
+
 
 **INVERSORIA**  
 Local hybrid-AI crypto trading bot with macro awareness, backtesting, news, diagnostics and human-in-the-loop execution.
 
-</div>
