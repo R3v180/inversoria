@@ -5,6 +5,7 @@ límites CCXT y venta manual con pre-chequeo.
 import streamlit as st
 import pandas as pd
 import config
+import re
 from i18n import _
 
 
@@ -67,6 +68,7 @@ def build_inventory_snapshot_text(exchange, db) -> str:
 
 def _explain_precheck(err: str, pv: dict) -> str:
     fmt = pv.get("amount_after_precision")
+    requested = pv.get("requested_amount") or pv.get("free_amount")
     if err == "ZERO_AMOUNT":
         return _("WALLET_ERR_GENERIC").format("cantidad 0")
     if err == "NO_FREE_BALANCE" or err == "NO_SYMBOL":
@@ -79,7 +81,7 @@ def _explain_precheck(err: str, pv: dict) -> str:
         return _("WALLET_ERR_PRECISION")
     if err.startswith("BELOW_MIN_AMOUNT:"):
         mn = err.split(":", 1)[1]
-        return _("WALLET_ERR_MIN_AMT").format(mn, fmt)
+        return _dust_min_amount_msg(requested, mn, fmt)
     if err.startswith("BELOW_MIN_COST:"):
         parts = err.split(":")
         mc = parts[1] if len(parts) > 1 else "?"
@@ -90,7 +92,40 @@ def _explain_precheck(err: str, pv: dict) -> str:
         return _("WALLET_ERR_SLIP").format(pct)
     if err.startswith("BALANCE:"):
         return _("WALLET_ERR_GENERIC").format(err)
+    precision_match = re.search(r"minimum amount precision of ([0-9.eE+-]+)", str(err))
+    if precision_match:
+        return _dust_min_amount_msg(requested, precision_match.group(1), fmt)
     return _("WALLET_ERR_GENERIC").format(err)
+
+
+def _dust_min_amount_msg(amount, minimum, rounded=None) -> str:
+    try:
+        amount_f = float(amount or 0)
+        minimum_f = float(minimum or 0)
+        missing = max(0.0, minimum_f - amount_f)
+        rounded_txt = f"{float(rounded):.10g}" if rounded is not None else "—"
+        return _("WALLET_DUST_MIN_AMT").format(
+            f"{amount_f:.10g}",
+            f"{minimum_f:.10g}",
+            f"{missing:.10g}",
+            rounded_txt,
+        )
+    except (TypeError, ValueError):
+        return _("WALLET_ERR_MIN_AMT").format(minimum, rounded)
+
+
+def _blocked_reason_summary(pv: dict) -> str:
+    errors = pv.get("errors") or []
+    if not errors:
+        return _("WALLET_BADGE_BLOCKED")
+    first = str(errors[0])
+    if first.startswith("BELOW_MIN_AMOUNT:") or "minimum amount precision" in first:
+        return _("WALLET_DUST_SHORT_MIN")
+    if first.startswith("BELOW_MIN_COST:"):
+        return _("WALLET_DUST_SHORT_COST")
+    if first.startswith("SLIPPAGE:"):
+        return _("WALLET_DUST_SHORT_SLIP")
+    return _("WALLET_BADGE_BLOCKED")
 
 
 def _trading_fee_rate() -> float:
@@ -403,7 +438,7 @@ def render_wallet():
             elif in_bot:
                 badge = f"🤖 {_('WALLET_BADGE_BOT_POS')}" if sell_ok else f"🤖 ⛔ {_('WALLET_BADGE_BOT_POS')}"
             else:
-                badge = f"⛔ {_('WALLET_BADGE_BLOCKED')}"
+                badge = f"⛔ {_blocked_reason_summary(pv_full)}"
 
             bot_lbl = _("WALLET_BADGE_BOT_POS") if in_bot else _("WALLET_BADGE_NO_BOT")
             pnl_hdr = ""
@@ -430,8 +465,9 @@ def render_wallet():
                         + (_("WALLET_YES") if sell_ok else _("WALLET_BADGE_BLOCKED"))
                     )
                 elif not sell_ok:
+                    st.info(_("WALLET_DUST_INFO"))
                     for er in pv_full.get("errors", []):
-                        st.warning(_explain_precheck(er, pv_full))
+                        st.caption(f"- {_explain_precheck(er, pv_full)}")
 
                 db_amt = float(open_pos[sym]["amount"]) if in_bot else None
                 default_qty = free if is_recoverable else (
@@ -460,8 +496,9 @@ def render_wallet():
                 pv = ex.prevalidate_market_sell(sym, qty, px, free_override=free)
                 st.markdown(f"**{_('WALLET_PRECHECK')}**")
                 if pv["errors"]:
+                    st.info(_("WALLET_DUST_INFO"))
                     for er in pv["errors"]:
-                        st.warning(_explain_precheck(er, pv))
+                        st.caption(f"- {_explain_precheck(er, pv)}")
                 else:
                     amt_ok = pv.get('amount_after_precision')
                     st.success(

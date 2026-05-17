@@ -73,9 +73,22 @@ def _remove_pending_config_change(change_id: str):
     ]
 
 
-def _add_or_update_buy_position(db, symbol: str, price: float, amount: float, reason: str):
+def _position_extra(pos: dict) -> dict:
+    raw = (pos or {}).get("extra_data")
+    if not raw:
+        return {}
+    if isinstance(raw, dict):
+        return raw
+    try:
+        return json.loads(raw)
+    except Exception:
+        return {}
+
+
+def _add_or_update_buy_position(db, symbol: str, price: float, amount: float, reason: str, decision_id=None):
     positions = db.get_open_positions()
     existing = positions.get(symbol)
+    existing_extra = _position_extra(existing) if existing else {}
     if existing:
         old_amount = float(existing.get("amount") or 0)
         old_entry = float(existing.get("entry_price") or price)
@@ -90,10 +103,18 @@ def _add_or_update_buy_position(db, symbol: str, price: float, amount: float, re
         entry_time = None
         amount_to_store = amount
 
-    extra = json.dumps({"provider": "Asistente IA", "reason": reason}, ensure_ascii=False)
+    extra_payload = {
+        **existing_extra,
+        "provider": "Asistente IA",
+        "reason": reason,
+    }
+    if decision_id:
+        extra_payload["entry_decision_id"] = decision_id
+    extra = json.dumps(extra_payload, ensure_ascii=False)
     db.add_open_position(symbol, entry, highest, amount_to_store, entry_time=entry_time, extra_data=extra)
-    db.save_trade(symbol, "buy", price, amount, reason, 0.0)
+    trade_id = db.save_trade(symbol, "buy", price, amount, reason, 0.0)
     db.add_log(f"{reason}: {symbol} qty={amount} @ {price}")
+    return trade_id
 
 
 def _parse_optional_float(value):
@@ -136,10 +157,38 @@ def _execute_pending_order(order: dict, db, exchange):
         st.error(_("ASSIST_ORDER_NO_PRICE").format(symbol))
         return
 
+    decision_id = None
+    if hasattr(db, "add_decision_journal"):
+        decision_id = db.add_decision_journal(
+            symbol=symbol,
+            price=float(current_price),
+            ai_action=action,
+            action_final=action,
+            executable_action=action,
+            provider="Assistant",
+            decision_mode="manual_assistant",
+            execution_mode="manual_confirm",
+            regime="MANUAL",
+            strategy="ASSISTANT_ORDER",
+            confidence=1.0,
+            decision_score=1.0,
+            score_components={"manual_confirmation": 1.0},
+            indicators={},
+            portfolio_bucket="MANUAL",
+            execution_status="pending_confirmation",
+            block_reason="assistant_confirmed_by_user",
+        )
+
     if action == "SELL":
         positions = db.get_open_positions()
         if symbol not in positions:
             st.warning(_("ASSIST_ORDER_NO_POSITION").format(symbol))
+            if decision_id:
+                db.update_decision_journal(
+                    decision_id,
+                    execution_status="blocked_no_position",
+                    block_reason="No open bot position",
+                )
             return
         pos = positions[symbol]
         real_amount = exchange.get_coin_balance(symbol)
@@ -154,6 +203,12 @@ def _execute_pending_order(order: dict, db, exchange):
             sell_amount = float(max_sell)
         if sell_amount <= 0:
             st.error(_("ASSIST_ORDER_LOW_BALANCE").format(f"{max_sell:.8g}"))
+            if decision_id:
+                db.update_decision_journal(
+                    decision_id,
+                    execution_status="blocked_min_size",
+                    block_reason=f"sell_amount={sell_amount}",
+                )
             return
         res = exchange.execute_order(symbol, "sell", sell_amount, current_price, force_market=True)
         if res.get("status") in ["closed", "open", "simulated"]:
@@ -165,21 +220,54 @@ def _execute_pending_order(order: dict, db, exchange):
                 sold = float(res.get("amount") or sell_amount)
             sold = min(sold, float(pos["amount"]))
             exit_price = float(res.get("average") or res.get("price") or current_price)
+            entry = float(pos.get("entry_price") or exit_price)
+            realized_pnl = ((exit_price - entry) / entry) * 100 if entry else 0.0
             db.close_position(symbol, exit_price, _("ASSIST_ORDER_SELL_REASON"), sold_amount=sold)
+            if decision_id:
+                db.update_decision_journal(
+                    decision_id,
+                    execution_status=res.get("status", "executed"),
+                    execution_side="sell",
+                    executed_price=exit_price,
+                    executed_amount=sold,
+                    realized_pnl_pct=realized_pnl,
+                    exit_reason=_("ASSIST_ORDER_SELL_REASON"),
+                )
+            entry_decision_id = _position_extra(pos).get("entry_decision_id")
+            if entry_decision_id:
+                db.update_decision_journal(
+                    entry_decision_id,
+                    realized_pnl_pct=realized_pnl,
+                    exit_reason=_("ASSIST_ORDER_SELL_REASON"),
+                )
             st.success(_("ASSIST_ORDER_SELL_OK").format(symbol, f"{exit_price:.6g}"))
             _remove_pending_order(order["id"])
             time.sleep(0.5)
             st.rerun()
         else:
             st.error(f"{_('ASSIST_ORDER_FAIL')}: {res.get('reason', res)}")
+            if decision_id:
+                db.update_decision_journal(
+                    decision_id,
+                    execution_status="failed",
+                    execution_side="sell",
+                    block_reason=str(res.get('reason', res)),
+                )
         return
 
     if action == "BUY":
         usdt_balance = exchange.get_usdt_balance()
         requested_usdt = _parse_optional_float(order.get("amount_usdt"))
         amount_usdt = min(float(requested_usdt), float(usdt_balance)) if requested_usdt else float(usdt_balance) * float(config.RISK_PER_TRADE)
-        if amount_usdt <= 1.0:
+        min_position = float(getattr(config, "MIN_POSITION_USDT", 1.0) or 1.0)
+        if amount_usdt <= min_position:
             st.error(_("ASSIST_ORDER_LOW_BALANCE").format(f"{usdt_balance:.2f}"))
+            if decision_id:
+                db.update_decision_journal(
+                    decision_id,
+                    execution_status="blocked_min_size",
+                    block_reason=f"amount_usdt={amount_usdt:.4f} <= min_position={min_position:.4f}",
+                )
             return
         amount_coin = amount_usdt / float(current_price)
         res = exchange.execute_order(symbol, "buy", amount_coin, current_price)
@@ -188,13 +276,41 @@ def _execute_pending_order(order: dict, db, exchange):
                 filled = float(res.get("filled") or res.get("amount") or amount_coin)
             except (TypeError, ValueError):
                 filled = amount_coin
-            _add_or_update_buy_position(db, symbol, float(current_price), filled, _("ASSIST_ORDER_BUY_REASON"))
+            trade_id = _add_or_update_buy_position(
+                db,
+                symbol,
+                float(current_price),
+                filled,
+                _("ASSIST_ORDER_BUY_REASON"),
+                decision_id=decision_id,
+            )
+            if decision_id:
+                db.update_decision_journal(
+                    decision_id,
+                    execution_status=res.get("status", "executed"),
+                    execution_side="buy",
+                    executed_price=float(current_price),
+                    executed_amount=filled,
+                    sizing={
+                        "amount_usdt": amount_usdt,
+                        "amount_base": filled,
+                        "sizing_reason": "assistant_manual",
+                    },
+                    block_reason=f"trade_id={trade_id}",
+                )
             st.success(_("ASSIST_ORDER_BUY_OK").format(symbol, f"{current_price:.6g}"))
             _remove_pending_order(order["id"])
             time.sleep(0.5)
             st.rerun()
         else:
             st.error(f"{_('ASSIST_ORDER_FAIL')}: {res.get('reason', res)}")
+            if decision_id:
+                db.update_decision_journal(
+                    decision_id,
+                    execution_status="failed",
+                    execution_side="buy",
+                    block_reason=str(res.get('reason', res)),
+                )
 
 
 def _render_pending_orders(db, exchange):
@@ -311,9 +427,16 @@ def _compact_daemon_context(db):
     if diag.get("top_buy_candidates"):
         lines.append(
             "Top BUY candidates: " + " | ".join(
-                f"{c.get('symbol')} score={c.get('score')} conf={float(c.get('confidence', 0)):.0%}"
+                f"{c.get('symbol')} score={c.get('score')} decision={float(c.get('decision_score', 0)):.0%} conf={float(c.get('confidence', 0)):.0%}"
                 for c in diag.get("top_buy_candidates", [])[:5]
             )
+        )
+    if diag.get("risk_guards"):
+        rg = diag.get("risk_guards", {})
+        lines.append(
+            f"Risk guards: ok={rg.get('ok')} daily_loss={rg.get('daily_loss_pct', 0)}% "
+            f"exposure={rg.get('exposure_pct', 0)}% alt={rg.get('alt_exposure_pct', 0)}% "
+            f"bucket={rg.get('bucket_exposure_pct', 0)}% reasons={rg.get('reasons', [])}"
         )
     if holds:
         top = list(holds.items())[:5]
@@ -327,7 +450,10 @@ def _compact_settings_context(exchange):
     allowed_config = ", ".join(CONFIG_SCHEMA.keys())
     return "\n".join([
         f"Modo={mode}",
+        f"TRADING_EXECUTION_MODE={getattr(config, 'TRADING_EXECUTION_MODE', 'auto')}; DECISION_MODE={getattr(config, 'DECISION_MODE', 'hybrid')}; MIN_AUTO_DECISION_SCORE={getattr(config, 'MIN_AUTO_DECISION_SCORE', 0.62):.2f}",
         f"RISK_PER_TRADE={config.RISK_PER_TRADE:.2%}",
+        f"VOLATILITY_SIZING_ENABLED={getattr(config, 'VOLATILITY_SIZING_ENABLED', True)}; MAX_POSITION_RISK={getattr(config, 'MAX_POSITION_RISK_PCT', 0):.2%}; MIN_POSITION_USDT={getattr(config, 'MIN_POSITION_USDT', 1.0):.2f}",
+        f"MAX_DAILY_LOSS={getattr(config, 'MAX_DAILY_LOSS_PCT', 0):.2%}; MAX_PORTFOLIO_EXPOSURE={getattr(config, 'MAX_PORTFOLIO_EXPOSURE_PCT', 0):.2%}; MAX_SYMBOL_EXPOSURE={getattr(config, 'MAX_SYMBOL_EXPOSURE_PCT', 0):.2%}; MAX_ALT_EXPOSURE={getattr(config, 'MAX_ALT_EXPOSURE_PCT', 0):.2%}; MAX_BUCKET_EXPOSURE={getattr(config, 'MAX_BUCKET_EXPOSURE_PCT', 0):.2%}",
         f"MAX_OPEN_POSITIONS={config.MAX_OPEN_POSITIONS}; límite efectivo={effective}; prioridad manual={config.get_setting('MANUAL_MAX_POSITIONS_PRIORITY', False, bool)}",
         f"MIN_PROFIT_NET={config.get_setting('MIN_PROFIT_NET', 1.0, float):.2f}%",
         f"ROTATION_ENABLED={config.ROTATION_ENABLED}; ROTATION_MIN_PROFIT={config.ROTATION_MIN_PROFIT:.2f}%; GAP={config.ROTATION_CONFIDENCE_GAP:.2f}; MIN_NEW_CONF={config.ROTATION_MIN_NEW_CONFIDENCE:.2f}",
@@ -422,6 +548,8 @@ def _compact_decisions_context(db, symbols):
         reason = str(dec.get("reasoning", ""))[:100]
         lines.append(
             f"{sym}: {dec.get('action', 'HOLD')} conf={_safe_float(dec.get('confidence')):.0%} "
+            f"exec={dec.get('executable_action', dec.get('action', 'HOLD'))} "
+            f"score={_safe_float(dec.get('decision_score')):.0%} "
             f"regime={dec.get('regime', '-')} strategy={dec.get('best_strategy', '-')} reason={reason}"
         )
     return "\n".join(lines) if lines else "Sin decisiones recientes por símbolo."
@@ -440,6 +568,37 @@ def _compact_backtest_context():
         return ", ".join(f"{r['symbol']} {r['timeframe']} WR:{r['win_rate']:.0%} best:{r['best_strategy']}" for r in runs)
     except Exception as exc:
         return f"Backtest no disponible: {exc}"
+
+
+def _compact_decision_journal_context(db):
+    if not hasattr(db, "get_decision_metrics"):
+        return "Decision journal no disponible."
+    try:
+        metrics = db.get_decision_metrics(limit=500)
+    except Exception as exc:
+        return f"Decision journal no disponible: {exc}"
+    lines = [
+        f"Decisiones journal={metrics.get('total_decisions', 0)}; BUY ejecutadas={metrics.get('accepted_buys', 0)}; bloqueos/señales={metrics.get('blocked', 0)}; IA alineada={metrics.get('ai_alignment_pct', 0):.1f}%"
+    ]
+    provider_stats = metrics.get("provider_stats")
+    if provider_stats is not None and not provider_stats.empty:
+        top = provider_stats.head(5)
+        lines.append(
+            "Provider stats: " + " | ".join(
+                f"{r.get('provider', 'N/A')} trades={r.get('trades')} WR={r.get('win_rate')}% exp={r.get('expectancy_pct')}%"
+                for _, r in top.iterrows()
+            )
+        )
+    regime_stats = metrics.get("regime_stats")
+    if regime_stats is not None and not regime_stats.empty:
+        top = regime_stats.head(5)
+        lines.append(
+            "Regime stats: " + " | ".join(
+                f"{r.get('regime', 'N/A')} trades={r.get('trades')} WR={r.get('win_rate')}% exp={r.get('expectancy_pct')}%"
+                for _, r in top.iterrows()
+            )
+        )
+    return "\n".join(lines)
 
 
 def _compact_news_context(symbols, limit=5):
@@ -526,6 +685,9 @@ RADAR / WATCHLIST:
 
 DECISIONES RECIENTES:
 {_compact_decisions_context(db, focus_symbols)}
+
+DECISION JOURNAL / MÉTRICAS:
+{_compact_decision_journal_context(db)}
 
 NOTICIAS RELEVANTES:
 {_compact_news_context(focus_symbols)}
@@ -616,7 +778,7 @@ def render_assistant():
                 [/EXECUTE_ORDER]
 
                 Si no incluyes AMOUNT_BASE ni PERCENT en una orden SELL, la app interpretará que se vende el máximo disponible de esa posición.
-                Si no incluyes AMOUNT_USDT en una orden BUY, la app usará el tamaño según RISK_PER_TRADE.
+                Si no incluyes AMOUNT_USDT en una orden BUY, la app usará el tamaño manual por RISK_PER_TRADE. El daemon automático usa además volatility sizing/ATR y guardrails.
 
                 Si el usuario te pide cambiar la configuración, puedes proponer cambios con este bloque exacto al final.
                 IMPORTANTE: la aplicación NO aplicará la configuración automáticamente; solo creará una tarjeta pendiente para confirmación manual mediante botón.
@@ -624,9 +786,15 @@ def render_assistant():
 
                 [CONFIG_CHANGE]
                 {{
+                  "TRADING_EXECUTION_MODE": "auto",
+                  "DECISION_MODE": "hybrid",
+                  "MIN_AUTO_DECISION_SCORE": 0.62,
                   "MAX_OPEN_POSITIONS": 3,
                   "MANUAL_MAX_POSITIONS_PRIORITY": true,
-                  "RISK_PER_TRADE": 0.10
+                  "RISK_PER_TRADE": 0.10,
+                  "VOLATILITY_SIZING_ENABLED": true,
+                  "MAX_DAILY_LOSS_PCT": 5.0,
+                  "MAX_PORTFOLIO_EXPOSURE_PCT": 85.0
                 }}
                 [/CONFIG_CHANGE]
                 """

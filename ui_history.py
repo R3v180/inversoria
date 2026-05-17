@@ -20,9 +20,50 @@ def render_history():
         df['PnL_%'] = 0.0
         pnl_col = 'PnL_%'
     df[pnl_col] = pd.to_numeric(df[pnl_col], errors='coerce').fillna(0.0)
+    df['Side'] = df['Side'].astype(str).str.lower()
+    df['Symbol'] = df['Symbol'].astype(str)
+
+    with st.expander("Filtros y paginación", expanded=True):
+        f1, f2, f3, f4 = st.columns(4)
+        symbols = ["Todos"] + sorted(df['Symbol'].dropna().unique().tolist())
+        selected_symbol = f1.selectbox("Símbolo", symbols, key="hist_symbol")
+        selected_side = f2.selectbox("Tipo", ["Todos", "buy", "sell"], key="hist_side")
+        result_filter = f3.selectbox("Resultado", ["Todos", "Ganadoras", "Perdedoras / break-even"], key="hist_result")
+        page_size = int(f4.selectbox("Por página", [25, 50, 100, 250, 500], index=1, key="hist_page_size"))
+
+        d1, d2, d3 = st.columns([1, 1, 2])
+        min_date = df['Date'].min().date()
+        max_date = df['Date'].max().date()
+        start_date = d1.date_input("Desde", min_date, min_value=min_date, max_value=max_date, key="hist_start")
+        end_date = d2.date_input("Hasta", max_date, min_value=min_date, max_value=max_date, key="hist_end")
+        metrics_scope = d3.radio(
+            "Métricas",
+            ["Histórico completo", "Solo filtro actual"],
+            horizontal=True,
+            key="hist_metrics_scope",
+        )
+
+    filtered = df.copy()
+    filtered = filtered[
+        (filtered['Date'].dt.date >= start_date)
+        & (filtered['Date'].dt.date <= end_date)
+    ]
+    if selected_symbol != "Todos":
+        filtered = filtered[filtered['Symbol'] == selected_symbol]
+    if selected_side != "Todos":
+        filtered = filtered[filtered['Side'] == selected_side]
+    if result_filter == "Ganadoras":
+        filtered = filtered[(filtered['Side'] == 'sell') & (filtered[pnl_col] > 0)]
+    elif result_filter == "Perdedoras / break-even":
+        filtered = filtered[(filtered['Side'] == 'sell') & (filtered[pnl_col] <= 0)]
+
+    metric_df = filtered if metrics_scope == "Solo filtro actual" else df
+    if filtered.empty:
+        st.warning("No hay operaciones para los filtros seleccionados.")
+        return
     
     # Cálculos de Métricas Pro (Sincronización v2.3)
-    ventas = df[df['Side'] == 'sell'].copy()
+    ventas = metric_df[metric_df['Side'] == 'sell'].copy()
     total_trades = len(ventas)
     ganadores = len(ventas[ventas[pnl_col] > 0])
     win_rate = (ganadores / total_trades * 100) if total_trades > 0 else 0
@@ -79,7 +120,7 @@ def render_history():
     st.markdown("---")
     st.subheader(_('EVOLUTION_CURVE'))
     
-    ventas = df[df['Side'] == 'sell'].copy()
+    ventas = metric_df[metric_df['Side'] == 'sell'].copy()
     if not ventas.empty:
         # Calcular PNL aproximado en USD basado en el % y el capital invertido (price * amount de venta)
         # Esto es una aproximación para la visualización.
@@ -98,8 +139,36 @@ def render_history():
     st.markdown("---")
     st.subheader(_('TRADING_JOURNAL'))
     
-    # Tarjetas Expandibles (Trade Cards)
-    for index, row in df.sort_values(by='Date', ascending=False).iterrows():
+    sorted_df = filtered.sort_values(by='Date', ascending=False).reset_index(drop=True)
+    total_rows = len(sorted_df)
+    total_pages = max(1, (total_rows + page_size - 1) // page_size)
+    current_page = int(st.number_input(
+        "Página",
+        min_value=1,
+        max_value=total_pages,
+        value=min(int(st.session_state.get("hist_page", 1)), total_pages),
+        step=1,
+        key="hist_page",
+    ))
+    start_idx = (current_page - 1) * page_size
+    end_idx = start_idx + page_size
+    page_df = sorted_df.iloc[start_idx:end_idx]
+    st.caption(f"Mostrando {start_idx + 1}-{min(end_idx, total_rows)} de {total_rows} operaciones filtradas.")
+
+    compact = page_df.copy()
+    compact['Date'] = compact['Date'].dt.strftime('%Y-%m-%d %H:%M')
+    st.dataframe(
+        compact[['Date', 'Symbol', 'Side', 'Price', 'Amount', pnl_col, 'Reason']],
+        width="stretch",
+        hide_index=True,
+    )
+
+    show_cards = st.toggle("Mostrar tarjetas detalladas de esta página", value=total_rows <= 50, key="hist_show_cards")
+    if not show_cards:
+        return
+
+    # Tarjetas Expandibles (solo página actual)
+    for index, row in page_df.iterrows():
         action_color = "🟢" if row['Side'] == 'buy' else "🔴"
         action_text = _('BUY') if row['Side'] == 'buy' else _('SELL')
         pnl_text = f" | PNL: {row.get(pnl_col, 0):.2f}%" if row['Side'] == 'sell' else ""

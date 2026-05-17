@@ -450,17 +450,29 @@ class ExchangeHelper:
         Comprueba si una venta a mercado es viable (sin enviar orden).
         Devuelve dict: ok, errors[], info[], amount_after_precision (float|None)
         """
-        out = {"ok": False, "errors": [], "info": [], "amount_after_precision": None}
+        out = {
+            "ok": False,
+            "errors": [],
+            "info": [],
+            "amount_after_precision": None,
+            "requested_amount": None,
+            "free_amount": None,
+            "min_amount": None,
+            "min_cost": None,
+            "notional": None,
+        }
         if amount is None or float(amount) <= 0:
             out["errors"].append("ZERO_AMOUNT")
             return out
         amount = float(amount)
+        out["requested_amount"] = amount
 
         if self.modo_simulacion:
             have = float(self.virtual_portfolio.get(symbol, 0) or 0)
             if amount > have + 1e-12:
                 out["errors"].append("INSUFFICIENT_VIRTUAL")
                 return out
+            out["free_amount"] = have
             out["amount_after_precision"] = amount
             out["ok"] = True
             out["info"].append("SIM_OK")
@@ -474,6 +486,7 @@ class ExchangeHelper:
         try:
             bal = self.exchange.fetch_balance()
             free_c = float(free_override) if free_override is not None else float(bal.get("free", {}).get(coin) or 0)
+            out["free_amount"] = free_c
         except Exception as e:
             out["errors"].append(f"BALANCE:{e}")
             return out
@@ -497,12 +510,15 @@ class ExchangeHelper:
                 return out
 
             min_amt = (market.get("limits") or {}).get("amount", {}).get("min")
+            out["min_amount"] = min_amt
             if min_amt is not None and fmt + 1e-12 < float(min_amt):
                 out["errors"].append(f"BELOW_MIN_AMOUNT:{min_amt}")
 
             px = float(price_hint) if price_hint else (self.get_ticker(symbol) or 0.0)
             notional = fmt * px if px else 0.0
+            out["notional"] = notional
             min_cost = (market.get("limits") or {}).get("cost", {}).get("min")
+            out["min_cost"] = min_cost
             if min_cost is not None and notional + 1e-8 < float(min_cost):
                 out["errors"].append(f"BELOW_MIN_COST:{min_cost}:{notional:.4f}")
 
