@@ -350,6 +350,8 @@ The assistant has context about:
 - logs,
 - macro,
 - recent backtests,
+- daemon diagnostics, execution mode, decision mode, risk guards and deterministic decision scores,
+- decision journal metrics by provider/regime,
 - wallet snapshot when generated.
 
 The assistant **does not execute orders automatically**.
@@ -365,6 +367,7 @@ AMOUNT_USDT: 10
 ```
 
 the UI creates a pending order card. The user must click **Confirm order**. The user can also cancel.
+Confirmed assistant orders are also written to `decision_journal`, including manual provider, executed side, price, amount, sizing reason and realized PnL when the position is closed.
 
 Optional sizing fields:
 
@@ -379,8 +382,15 @@ If a SELL order has no amount field, the app treats it as “sell the maximum av
 Shows:
 
 - Trades.
+- Filters by symbol, side, result and date range.
+- Pagination for large histories.
+- Compact table first, optional detailed trade cards per page.
 - Win rate.
 - Profit factor.
+- Expectancy.
+- Rolling drawdown.
+- Rolling profit factor.
+- Provider/regime metrics from `decision_journal`.
 - Closed trades.
 - Best trade.
 - Approximate PnL curve.
@@ -439,6 +449,15 @@ A recoverable dust balance is:
 - minimum amount/notional passes,
 - slippage pre-check passes,
 - not attached to an active bot position.
+
+The wallet UI explains non-sellable dust with specific reasons instead of raw exchange errors:
+
+- below exchange minimum amount,
+- below minimum notional/cost,
+- rounded to zero by market precision,
+- blocked by slippage.
+
+For minimum amount dust, the UI shows current amount, required minimum, approximate missing amount and rounded amount.
 
 Dust can come from:
 
@@ -519,6 +538,7 @@ Current flow:
 5. UI shows action, symbol, current price and estimated size, including optional partial sell sizing.
 6. User clicks Confirm or Cancel.
 7. Only Confirm executes.
+8. Confirmed assistant orders are audited in `decision_journal`, including manual strategy, execution status, executed amount/price and realized PnL where available.
 
 Configuration changes follow the same safety model:
 
@@ -1156,11 +1176,11 @@ Gráfico técnico por activo, indicadores, decisión reciente y logs.
 
 ### Asistente IA
 
-Chat contextual. Las órdenes propuestas pasan a una tarjeta pendiente y requieren botón de confirmación. Los cambios de configuración propuestos por IA siguen el mismo modelo: se muestran como tarjeta pendiente con diff y solo se aplican si el usuario confirma.
+Chat contextual con cartera, posiciones, macro, backtests, diagnóstico del daemon, modos de ejecución/decisión, guardrails, `decision_score` y métricas del `decision_journal`. Las órdenes propuestas pasan a una tarjeta pendiente y requieren botón de confirmación. Los cambios de configuración propuestos por IA siguen el mismo modelo: se muestran como tarjeta pendiente con diff y solo se aplican si el usuario confirma. Las órdenes confirmadas desde el asistente también quedan auditadas en `decision_journal`.
 
 ### Historial
 
-Trades, win rate, profit factor, expectancy, drawdown rolling, métricas por provider/régimen, curva aproximada y journal.
+Trades con filtros por símbolo, tipo, resultado y fechas; paginación para historiales grandes; tabla compacta; tarjetas detalladas opcionales por página; win rate, profit factor, expectancy, drawdown rolling, profit factor rolling, métricas por provider/régimen, curva aproximada y journal.
 
 ### Configuración
 
@@ -1194,6 +1214,15 @@ Un retal recuperable:
 - pasa mínimo/notional,
 - pasa slippage,
 - no está en posición activa del bot.
+
+La UI explica los retales no vendibles con motivos claros en vez de errores crudos del exchange:
+
+- polvo bajo mínimo de cantidad,
+- polvo bajo notional/coste mínimo,
+- cantidad redondeada a cero por precisión,
+- bloqueo por slippage.
+
+En mínimos de cantidad muestra cantidad actual, mínimo requerido, cuánto falta aproximadamente y cantidad tras redondeo.
 
 `get_cost_basis()` busca precio de compra en:
 
@@ -1240,6 +1269,7 @@ Flujo:
 3. La UI muestra acción, símbolo, precio y tamaño estimado, incluyendo ventas parciales si la IA añadió cantidad.
 4. Usuario confirma o cancela.
 5. Solo confirmar ejecuta.
+6. La orden confirmada queda auditada en `decision_journal` con estrategia manual, estado, lado, precio/cantidad ejecutada y PnL realizado cuando exista.
 
 Campos opcionales en órdenes:
 
