@@ -107,6 +107,43 @@ class BotDaemon:
     def _clamp(self, value, low, high):
         return max(low, min(high, value))
 
+    def _fmt_pct(self, value, decimals=0, signed=False):
+        val = self._safe_float(value, 0.0) * 100 if abs(self._safe_float(value, 0.0)) <= 1 else self._safe_float(value, 0.0)
+        sign = "+" if signed else ""
+        return f"{val:{sign}.{decimals}f}%"
+
+    def _short_reason(self, text, max_len=72):
+        clean = " ".join(str(text or "").split())
+        if len(clean) <= max_len:
+            return clean or "-"
+        return clean[: max_len - 1].rstrip() + "…"
+
+    def _backtest_status(self, result):
+        pf = self._safe_float((result or {}).get('profit_factor'), 0.0)
+        ret = self._safe_float((result or {}).get('total_return_pct'), 0.0)
+        wr = self._safe_float((result or {}).get('win_rate'), 0.0)
+        if pf >= 1.20 and ret > 0 and wr >= 0.45:
+            return "strong"
+        if pf >= 1.00 and ret >= 0:
+            return "ok"
+        if pf >= 0.85 or ret > -3:
+            return "weak"
+        return "poor"
+
+    def _decision_log_line(self, symbol, decision, executable_action, provider):
+        action = str(decision.get('action', 'HOLD')).upper()
+        score = self._safe_float(decision.get('decision_score'), self._safe_float(decision.get('confidence'), 0.0))
+        conf = self._safe_float(decision.get('confidence'), 0.0)
+        adaptive = self._safe_float(decision.get('adaptive_adjustment'), 0.0)
+        regime = decision.get('regime', 'N/A')
+        strategy = decision.get('best_strategy', 'N/A')
+        reason = self._short_reason(decision.get('reasoning', ''), 78)
+        return (
+            f"[DECISION] {symbol} {action} | exec={executable_action} | "
+            f"score={score:.2f} | conf={conf:.2f} | adaptive={adaptive:+.3f} | "
+            f"provider={provider} | regime={regime} | strategy={strategy} | reason={reason}"
+        )
+
     def _position_extra(self, pos):
         raw = (pos or {}).get('extra_data')
         if not raw:
@@ -344,13 +381,18 @@ class BotDaemon:
         for symbol in symbols_to_backtest:
             try:
                 self.log_message(f"📊 Backtest {symbol} (4h · 2 { _('LOG_YEARS', lang=self.u_lang) })...")
-                results = bt.run_full_backtest(symbol, timeframe='4h', years=2.0)
+                results = bt.run_full_backtest(symbol, timeframe='4h', years=2.0, verbose=False)
                 if results:
-                    best = max(results, key=lambda k: results[k].get('profit_factor', 0))
-                    best_wr = results[best].get('win_rate', 0)
+                    best = max(results, key=lambda k: bt._strategy_score(results[k]))
+                    best_result = results[best]
+                    status = self._backtest_status(best_result)
                     self.log_message(
-                        f"✅ {symbol}: { _('LOG_BEST_STRAT_IS', lang=self.u_lang) } {best} "
-                        f"(WR: {best_wr:.0%})"
+                        f"[BACKTEST] {symbol} best={best} | "
+                        f"trades={int(best_result.get('total_trades', 0) or 0)} | "
+                        f"WR={self._fmt_pct(best_result.get('win_rate', 0))} | "
+                        f"PF={self._safe_float(best_result.get('profit_factor'), 0):.2f} | "
+                        f"return={self._safe_float(best_result.get('total_return_pct'), 0):+.1f}% | "
+                        f"status={status}"
                     )
             except Exception as e:
                 self.log_message(f"❌ Error en backtest de {symbol}: {e}")
@@ -444,7 +486,6 @@ class BotDaemon:
                 time.sleep(30)
 
     def bot_iteration(self):
-        print("[DAEMON] --- Escaneo de Ciclo ---")
         cycle_start = time.time()
         self.update_daemon_status("scanning", cycle_started_at=cycle_start)
         action_counts = {"BUY": 0, "SELL": 0, "HOLD": 0}
@@ -466,7 +507,11 @@ class BotDaemon:
         buy_candidates = []
         cycle_risk = self.evaluate_risk_guards(total_value, open_positions)
         if not cycle_risk["ok"]:
-            self.log_message(f"🛡️ Risk guard activo: {', '.join(cycle_risk['reasons'])}")
+            self.log_message(
+                f"[RISK] cycle ok=false | reasons={'; '.join(cycle_risk['reasons'])} | "
+                f"daily_loss={cycle_risk.get('daily_loss_pct', 0):.2f}% | "
+                f"exposure={cycle_risk.get('exposure_pct', 0):.2f}%"
+            )
 
         def candidate_score(item):
             decision = item.get('decision') or {}
@@ -502,7 +547,12 @@ class BotDaemon:
                     execution_status="candidate",
                 )
             if not candidate_risk["ok"]:
-                self.log_message(f"🛡️ Compra bloqueada por riesgo {sym}: {', '.join(candidate_risk['reasons'])}")
+                self.log_message(
+                    f"[BLOCK] {sym} BUY->HOLD | reason=RISK_GUARD | "
+                    f"details={'; '.join(candidate_risk['reasons'])} | "
+                    f"amount={amount_usdt:.2f} USDT | bucket={candidate_risk.get('bucket', self.portfolio_bucket(sym))} | "
+                    f"exposure={candidate_risk.get('exposure_pct', 0):.2f}%"
+                )
                 if decision_journal_id:
                     self.db.update_decision_journal(
                         decision_journal_id,
@@ -513,9 +563,10 @@ class BotDaemon:
 
             if consultive_mode:
                 self.log_message(
-                    f"🧭 CONSULTIVO BUY {sym} @ {price} "
-                    f"score={item['score']:.3f} conf={float(decision.get('confidence') or 0):.2f} "
-                    f"importe_estimado={amount_usdt:.2f} USDT"
+                    f"[CONSULTIVE] {sym} BUY | px={price:.6g} | "
+                    f"score={self._safe_float(decision.get('decision_score'), 0):.2f} | "
+                    f"rank={item['score']:.3f} | conf={self._safe_float(decision.get('confidence'), 0):.2f} | "
+                    f"amount={amount_usdt:.2f} USDT"
                 )
                 if decision_journal_id:
                     self.db.update_decision_journal(
@@ -526,7 +577,11 @@ class BotDaemon:
                 return False
 
             if amount_usdt < config.MIN_POSITION_USDT:
-                self.log_message(f"{ _('LOG_INSUFFICIENT', lang=self.u_lang) } ({sizing.get('balance_usdt', 0):.2f}) { _('LOG_FOR', lang=self.u_lang) } {sym}")
+                self.log_message(
+                    f"[BLOCK] {sym} BUY->HOLD | reason=MIN_POSITION | "
+                    f"amount={amount_usdt:.4f} < min={config.MIN_POSITION_USDT:.4f} | "
+                    f"balance={sizing.get('balance_usdt', 0):.2f}"
+                )
                 if decision_journal_id:
                     self.db.update_decision_journal(
                         decision_journal_id,
@@ -566,12 +621,15 @@ class BotDaemon:
                         block_reason=f"trade_id={trade_id}",
                     )
                 self.log_message(
-                    f"{ _('LOG_BUY', lang=self.u_lang) } {sym} @ {price} "
-                    f"[{provider}] score={item['score']:.3f} conf={float(decision.get('confidence') or 0):.2f} size=${amount_usdt:.2f}"
+                    f"[BUY] {sym} amount={amount_usdt:.2f} USDT | px={price:.6g} | "
+                    f"qty={amount_coin:.8g} | score={self._safe_float(decision.get('decision_score'), 0):.2f} | "
+                    f"conf={self._safe_float(decision.get('confidence'), 0):.2f} | "
+                    f"sizing={sizing.get('sizing_reason')} | risk={sizing.get('risk_amount_usdt', 0):.4f} USDT | "
+                    f"provider={provider}"
                 )
                 return True
 
-            self.log_message(f"❌ Fallo compra {sym}: {res.get('reason', res)}")
+            self.log_message(f"[ERROR] {sym} BUY failed | reason={res.get('reason', res)}")
             if decision_journal_id:
                 self.db.update_decision_journal(
                     decision_journal_id,
@@ -656,8 +714,7 @@ class BotDaemon:
             })
             self.db.set_system_status('last_ia_decision', decision_json)
             self.db.set_system_status(f'decision_{symbol}', decision_json)
-            # Mostrar progreso
-            print(f"[DAEMON] {symbol}: {decision['action']} [{provider}] - {decision.get('reasoning')[:40]}...")
+            print(self._decision_log_line(symbol, decision, executable_action, provider))
             
             # 1. Lógica de VENTA (Si ya está abierta)
             if is_open:
@@ -672,7 +729,11 @@ class BotDaemon:
                 sell_res = self.logic.check_sell_conditions(symbol, current_price, pos, decision)
                 if sell_res['should_sell']:
                     if consultive_mode:
-                        self.log_message(f"🧭 CONSULTIVO SELL {symbol} @ {current_price:.4f} | Motivo: {sell_res['reason']}")
+                        self.log_message(
+                            f"[CONSULTIVE] {symbol} SELL | px={current_price:.6g} | "
+                            f"reason={self._short_reason(sell_res['reason'], 80)} | "
+                            f"score={self._safe_float(decision.get('decision_score'), 0):.2f}"
+                        )
                         self.db.update_decision_journal(
                             decision_journal_id,
                             execution_status="consultive",
@@ -716,11 +777,15 @@ class BotDaemon:
                                 open_positions[symbol] = still
                             else:
                                 del open_positions[symbol]
-                            self.log_message(f"{ _('LOG_SELL', lang=self.u_lang) } {symbol} @ {current_price:.4f} | { _('LOG_REASON', lang=self.u_lang) }: {sell_res['reason']}")
+                            self.log_message(
+                                f"[SELL] {symbol} qty={sold:.8g} | px={current_price:.6g} | "
+                                f"pnl={realized_pnl:+.2f}% | reason={self._short_reason(sell_res['reason'], 80)} | "
+                                f"provider={provider}"
+                            )
                         else:
-                            self.log_message(f"⚠️ Venta ejecutada pero posición {symbol} no encontrada en DB")
+                            self.log_message(f"[WARN] {symbol} SELL executed but DB position was not found")
                     else:
-                        self.log_message(f"❌ Fallo al vender {symbol}: {order_result.get('reason', 'Error desconocido')}")
+                        self.log_message(f"[ERROR] {symbol} SELL failed | reason={order_result.get('reason', 'Error desconocido')}")
                         self.db.update_decision_journal(
                             decision_journal_id,
                             execution_status="failed",
@@ -733,6 +798,11 @@ class BotDaemon:
                 if action == 'BUY':
                     if executable_action != "BUY":
                         skipped["LOW_DECISION_SCORE"] = skipped.get("LOW_DECISION_SCORE", 0) + 1
+                        self.log_message(
+                            f"[BLOCK] {symbol} BUY->HOLD | reason={execution_block or 'NOT_EXECUTABLE'} | "
+                            f"score={self._safe_float(decision.get('decision_score'), 0):.2f} | "
+                            f"conf={self._safe_float(decision.get('confidence'), 0):.2f}"
+                        )
                         self.db.update_decision_journal(
                             decision_journal_id,
                             execution_status="blocked_score",
@@ -753,10 +823,10 @@ class BotDaemon:
         buy_candidates.sort(key=lambda item: item['score'], reverse=True)
         if buy_candidates:
             top_preview = ", ".join(
-                f"{c['symbol']}({c['score']:.3f}/{float(c['decision'].get('confidence') or 0):.2f})"
+                f"{c['symbol']} rank={c['score']:.3f} score={self._safe_float(c['decision'].get('decision_score'), 0):.2f}"
                 for c in buy_candidates[:5]
             )
-            self.log_message(f"🧮 Candidatos BUY rankeados: {top_preview}")
+            self.log_message(f"[CANDIDATES] BUY top={top_preview}")
 
         executed_symbols = set()
         for candidate in buy_candidates:
@@ -787,19 +857,18 @@ class BotDaemon:
 
                 sym_sac = to_sacrifice['symbol']
                 self.log_message(
-                    f"{ _('LOG_ROTATION', lang=self.u_lang) }: { _('LOG_SACRIFICING', lang=self.u_lang) } "
-                    f"{sym_sac} (+{to_sacrifice['profit']:.2f}%) { _('LOG_FOR', lang=self.u_lang) } "
-                    f"{candidate['symbol']} (Conf: {decision.get('confidence')})"
+                    f"[ROTATION] plan sell={sym_sac} pnl={to_sacrifice['profit']:+.2f}% "
+                    f"for={candidate['symbol']} conf={self._safe_float(decision.get('confidence'), 0):.2f}"
                 )
                 sac_pos = open_positions[sym_sac]
                 sac_price = self.exchange.get_ticker(sym_sac)
                 if not sac_price:
-                    self.log_message(f"⚠️ No se pudo obtener precio para rotar {sym_sac}, rotación cancelada")
+                    self.log_message(f"[WARN] {sym_sac} rotation cancelled | reason=NO_PRICE")
                     break
 
                 rot_res = self.exchange.execute_order(sym_sac, 'sell', sac_pos['amount'], sac_price)
                 if rot_res.get('status') not in ['closed', 'simulated']:
-                    self.log_message(f"❌ Fallo venta rotación {sym_sac}: {rot_res.get('reason', rot_res)}")
+                    self.log_message(f"[ERROR] {sym_sac} rotation sell failed | reason={rot_res.get('reason', rot_res)}")
                     break
 
                 try:
@@ -825,7 +894,10 @@ class BotDaemon:
                     open_positions[sym_sac] = still_sac
                 else:
                     del open_positions[sym_sac]
-                self.log_message(f"{ _('LOG_ROTATION', lang=self.u_lang) } { _('LOG_EXECUTED', lang=self.u_lang) }: {sym_sac} { _('LOG_SOLD_AT', lang=self.u_lang) } {sac_price:.4f}")
+                self.log_message(
+                    f"[ROTATION] executed sell={sym_sac} px={sac_price:.6g} pnl={sac_pnl:+.2f}% "
+                    f"buy_candidate={candidate['symbol']}"
+                )
                 execute_buy_candidate(candidate)
                 break
 
@@ -853,6 +925,18 @@ class BotDaemon:
             "dynamic_max": getattr(self, "dynamic_max", None),
         }
         self.update_daemon_status("cycle_done", **diag)
+        top_summary = ", ".join(
+            f"{c['symbol']} {c['score']:.3f}"
+            for c in buy_candidates[:3]
+        ) or "-"
+        risk_ok = str(bool(cycle_risk.get("ok"))).lower()
+        self.log_message(
+            f"[CYCLE] scanned={scanned} | buy={action_counts.get('BUY', 0)} "
+            f"sell={action_counts.get('SELL', 0)} hold={action_counts.get('HOLD', 0)} | "
+            f"candidates={len(buy_candidates)} | top={top_summary} | "
+            f"risk_ok={risk_ok} | mode={'REAL' if not self.exchange.modo_simulacion else 'SIM'}/"
+            f"{getattr(config, 'TRADING_EXECUTION_MODE', 'auto')}/{getattr(config, 'DECISION_MODE', 'hybrid')}"
+        )
 
 if __name__ == "__main__":
     daemon = BotDaemon()

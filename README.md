@@ -597,6 +597,14 @@ Diagnostics use two timestamps:
 
 This prevents macro refresh from overwriting the last real scan statistics.
 
+Daemon console logs are structured for quick triage:
+
+- `[BACKTEST]` compact strategy summary with `WR`, `PF`, return and `status`.
+- `[DECISION]` per-symbol action with executable action, score, confidence, adaptive adjustment, provider, regime and strategy.
+- `[BLOCK]` explicit reason when a buy is converted to HOLD.
+- `[BUY]`, `[SELL]`, `[ROTATION]` execution lines with price, size, risk/PnL and provider.
+- `[CYCLE]` one-line cycle summary with counts, top candidates, risk state and mode.
+
 ---
 
 ## Risk Management
@@ -1323,6 +1331,14 @@ Estados:
 - `cycle_done`
 - `sleeping`
 - `error`
+
+Los logs de consola del daemon usan formato compacto:
+
+- `[BACKTEST]`: resumen de estrategia con `WR`, `PF`, retorno y `status`.
+- `[DECISION]`: acción por símbolo con acción ejecutable, score, confianza, ajuste adaptativo, provider, régimen y estrategia.
+- `[BLOCK]`: motivo explícito cuando una compra pasa a HOLD.
+- `[BUY]`, `[SELL]`, `[ROTATION]`: ejecución con precio, tamaño, riesgo/PnL y provider.
+- `[CYCLE]`: resumen del ciclo con conteos, top candidatos, estado de riesgo y modo.
 
 ---
 

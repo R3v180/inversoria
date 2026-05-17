@@ -109,13 +109,14 @@ class BacktestEngine:
     # DESCARGA DE DATOS HISTÓRICOS
     # ─────────────────────────────────────────────
 
-    def download_historical_data(self, symbol: str, timeframe: str = '4h', years: float = 2.0) -> pd.DataFrame:
+    def download_historical_data(self, symbol: str, timeframe: str = '4h', years: float = 2.0, verbose: bool = True) -> pd.DataFrame:
         """
         Descarga datos históricos via CCXT en múltiples llamadas para superar el límite de 1000 velas.
         Para 2 años de velas 4h: ~4380 velas → ~5 llamadas de API.
         Para 5 años de velas 1D: ~1825 velas → ~2 llamadas de API.
         """
-        print(f"[Backtest] { _('BT_DOWNLOADING', lang=self.u_lang) } {symbol} ({timeframe} · {years} { _('LOG_YEARS', lang=self.u_lang) })...")
+        if verbose:
+            print(f"[Backtest] { _('BT_DOWNLOADING', lang=self.u_lang) } {symbol} ({timeframe} · {years} { _('LOG_YEARS', lang=self.u_lang) })...")
 
         # Calcular timestamp de inicio
         ms_per_candle = {
@@ -161,7 +162,8 @@ class BacktestEngine:
         df = df.drop_duplicates('timestamp').sort_values('timestamp').reset_index(drop=True)
         df[['open', 'high', 'low', 'close', 'volume']] = df[['open', 'high', 'low', 'close', 'volume']].apply(pd.to_numeric)
 
-        print(f"[Backtest] {len(df)} { _('BT_CANDLES_LOADED', lang=self.u_lang) } ({df['timestamp'].iloc[0].date()} → {df['timestamp'].iloc[-1].date()})")
+        if verbose:
+            print(f"[Backtest] {len(df)} { _('BT_CANDLES_LOADED', lang=self.u_lang) } ({df['timestamp'].iloc[0].date()} → {df['timestamp'].iloc[-1].date()})")
         return df
 
     def calculate_indicators_for_backtest(self, df: pd.DataFrame) -> pd.DataFrame:
@@ -422,7 +424,7 @@ class BacktestEngine:
     # CONSTRUCCIÓN DE LA TABLA DE CONDICIONES
     # ─────────────────────────────────────────────
 
-    def build_conditions_table(self, symbol: str, trades_detail: list, timeframe: str = '4h'):
+    def build_conditions_table(self, symbol: str, trades_detail: list, timeframe: str = '4h', verbose: bool = True):
         """
         Agrupa los trades por condición de mercado y calcula el win rate por bucket.
         Esto genera la 'base de conocimiento' que el bot consulta en tiempo real.
@@ -477,7 +479,8 @@ class BacktestEngine:
             ''', rows_to_insert)
             conn.commit()
 
-        print(f"[Backtest] { _('ROTATION_MODULE', lang=self.u_lang) }: {len(rows_to_insert)} combinaciones para {symbol}")
+        if verbose:
+            print(f"[Backtest] { _('ROTATION_MODULE', lang=self.u_lang) }: {len(rows_to_insert)} combinaciones para {symbol}")
 
     # ─────────────────────────────────────────────
     # CONSULTA EN TIEMPO REAL (el bot llama esto en cada decisión)
@@ -587,7 +590,7 @@ class BacktestEngine:
     # ─────────────────────────────────────────────
 
     def run_full_backtest(self, symbol: str, timeframe: str = '4h',
-                          years: float = 2.0) -> dict:
+                          years: float = 2.0, verbose: bool = True) -> dict:
         """
         Pipeline completo para un símbolo:
         1. Descarga datos históricos
@@ -601,26 +604,29 @@ class BacktestEngine:
         - '1d' + 5 años: visión macro de largo plazo
         - '15m' + 0.5 años: patrones intraday (más ruidoso)
         """
-        df_raw = self.download_historical_data(symbol, timeframe, years)
+        df_raw = self.download_historical_data(symbol, timeframe, years, verbose=verbose)
         if df_raw.empty:
-            print(f"[Backtest] Sin datos para {symbol}")
+            if verbose:
+                print(f"[Backtest] Sin datos para {symbol}")
             return {}
 
         df = self.calculate_indicators_for_backtest(df_raw)
-        print(f"[Backtest] {len(df)} { _('BT_CANDLES_LOADED', lang=self.u_lang) } ({symbol})")
+        if verbose:
+            print(f"[Backtest] {len(df)} { _('BT_CANDLES_LOADED', lang=self.u_lang) } ({symbol})")
 
         results = {}
         all_trades = []
 
         for strategy_name in self.STRATEGIES:
-            print(f"[Backtest] { _('BT_SIMULATING', lang=self.u_lang) } {strategy_name} ({symbol})...")
+            if verbose:
+                print(f"[Backtest] { _('BT_SIMULATING', lang=self.u_lang) } {strategy_name} ({symbol})...")
             result = self.simulate_strategy(df, strategy_name)
             results[strategy_name] = result
             if result.get('trades_detail'):
                 all_trades.extend(result['trades_detail'])
 
         # Construir tabla de condiciones con todos los trades de todas las estrategias
-        self.build_conditions_table(symbol, all_trades, timeframe)
+        self.build_conditions_table(symbol, all_trades, timeframe, verbose=verbose)
 
         # Guardar resumen del backtest en DB
         best_strategy = max(results, key=lambda k: self._strategy_score(results[k]))
@@ -646,10 +652,11 @@ class BacktestEngine:
             ))
             conn.commit()
 
-        print(f"\n[Backtest] === { _('BT_SUMMARY', lang=self.u_lang) } {symbol} ({timeframe} · {years} { _('LOG_YEARS', lang=self.u_lang) }) ===")
-        for s, r in results.items():
-            if r.get('total_trades', 0) > 0:
-                print(f"  {s}: {r['total_trades']} { _('BT_TRADES', lang=self.u_lang) } | WR {r['win_rate']:.0%} | "
-                      f"PF {r['profit_factor']:.2f} | { _('BT_RETURN', lang=self.u_lang) } {r['total_return_pct']:+.1f}%")
+        if verbose:
+            print(f"\n[Backtest] === { _('BT_SUMMARY', lang=self.u_lang) } {symbol} ({timeframe} · {years} { _('LOG_YEARS', lang=self.u_lang) }) ===")
+            for s, r in results.items():
+                if r.get('total_trades', 0) > 0:
+                    print(f"  {s}: {r['total_trades']} { _('BT_TRADES', lang=self.u_lang) } | WR {r['win_rate']:.0%} | "
+                          f"PF {r['profit_factor']:.2f} | { _('BT_RETURN', lang=self.u_lang) } {r['total_return_pct']:+.1f}%")
 
         return results
