@@ -9,6 +9,21 @@ from multi_timeframe import MultiTimeframeAnalyzer
 from backtest_engine import BacktestEngine
 from i18n import _
 
+
+def _safe_float(value, default=0.0):
+    try:
+        f = float(value)
+        if f != f:
+            return default
+        return f
+    except (TypeError, ValueError):
+        return default
+
+
+def _clamp(value, low=0.0, high=1.0):
+    return max(low, min(high, value))
+
+
 class DecisionEngine:
     def __init__(self, sentiment=None, exchange=None, lang='es'):
         self.sentiment = sentiment if sentiment else SentimentEngine()
@@ -25,6 +40,89 @@ class DecisionEngine:
         self._macro_cache = None
         self._macro_cache_ts = 0
         self.MACRO_CACHE_TTL = 21600  # 6 horas
+
+    def build_decision_score(self, indicators, macro_regime, confluence_score, prior):
+        """Score determinista y auditable. La IA puede opinar, pero esta capa deja rastro cuantitativo."""
+        rsi = _safe_float(indicators.get('rsi'), 50.0)
+        adx = _safe_float(indicators.get('adx'), 0.0)
+        trend = indicators.get('trend', 'BEAR')
+
+        trend_score = 1.0 if trend == 'BULL' else 0.25
+        if 45 <= rsi <= 62:
+            rsi_score = 0.85
+        elif 35 <= rsi < 45:
+            rsi_score = 0.65
+        elif 62 < rsi <= 70:
+            rsi_score = 0.55
+        elif 30 <= rsi < 35:
+            rsi_score = 0.45
+        else:
+            rsi_score = 0.20
+
+        if adx < 15:
+            adx_score = 0.35
+        elif adx < 25:
+            adx_score = 0.70
+        elif adx < 40:
+            adx_score = 0.90
+        else:
+            adx_score = 0.70
+
+        technical_score = _clamp((trend_score * 0.45) + (rsi_score * 0.35) + (adx_score * 0.20))
+        macro_score = {
+            'ALTSEASON': 0.95,
+            'RISK_ON': 0.80,
+            'NEUTRAL': 0.60,
+            'CAUTION': 0.35,
+            'RISK_OFF': 0.10,
+        }.get(macro_regime, 0.55)
+        mtf_score = _clamp(_safe_float(confluence_score, 0.5))
+
+        if prior and prior.get('found'):
+            win_rate = _safe_float(prior.get('win_rate'), 0.5)
+            profit_factor = min(_safe_float(prior.get('profit_factor'), 1.0), 3.0)
+            historical_score = _clamp((win_rate * 0.65) + ((profit_factor / 3.0) * 0.35))
+        else:
+            historical_score = 0.50
+
+        final_score = _clamp(
+            technical_score * 0.30
+            + mtf_score * 0.25
+            + historical_score * 0.20
+            + macro_score * 0.15
+            + 0.10  # reserva conservadora para no sobrepremiar una sola capa
+        )
+        components = {
+            'technical': round(technical_score, 3),
+            'mtf': round(mtf_score, 3),
+            'historical': round(historical_score, 3),
+            'macro': round(macro_score, 3),
+        }
+        return round(final_score, 3), components
+
+    def build_rules_decision(self, score, components, indicators, strategy, macro_regime):
+        threshold = _safe_float(config.MIN_AUTO_DECISION_SCORE, 0.62)
+        action = "BUY" if score >= threshold else "HOLD"
+        if score <= 0.30 and indicators.get('trend') == 'BEAR':
+            action = "SELL"
+        return {
+            "regime": indicators.get('trend_regime', indicators.get('trend', 'RANGING')),
+            "best_strategy": strategy,
+            "action": action,
+            "confidence": score,
+            "position_size_multiplier": _clamp(0.75 + (score - threshold), 0.5, 1.25),
+            "stop_loss_atr": 2.0,
+            "take_profit_ratio": 2.0,
+            "reasoning": (
+                f"[RULE SCORE] score={score:.0%}, tech={components['technical']:.0%}, "
+                f"MTF={components['mtf']:.0%}, histórico={components['historical']:.0%}, macro={macro_regime}"
+            ),
+            "provider": "RulesEngine",
+            "decision_score": score,
+            "score_components": components,
+            "decision_mode": "rules",
+            "macro_regime": macro_regime,
+        }
         
     def quick_technical_filter(self, indicators, current_price):
         if not indicators: return False, _('FILTER_SIN_DATOS', lang=self.current_lang)
@@ -181,6 +279,26 @@ class DecisionEngine:
             self.decision_cache[symbol] = hold_decision
             return hold_decision
 
+        decision_score, score_components = self.build_decision_score(
+            indicators=indicators,
+            macro_regime=macro_regime,
+            confluence_score=confluence_score,
+            prior=prior if 'prior' in locals() else None,
+        )
+
+        decision_mode = getattr(config, 'DECISION_MODE', 'hybrid')
+        if decision_mode == 'rules':
+            rules_decision = self.build_rules_decision(
+                decision_score,
+                score_components,
+                indicators,
+                mtf_recommended_strategy,
+                macro_regime,
+            )
+            self.last_analysis[symbol] = now
+            self.decision_cache[symbol] = rules_decision
+            return rules_decision
+
         # ─── CONSTRUIR PROMPT ENRIQUECIDO ───
         df = pd.DataFrame(ohlcv[-100:], columns=['ts', 'open', 'high', 'low', 'close', 'volume'])
         df['close'] = pd.to_numeric(df['close'])
@@ -206,6 +324,11 @@ Fear & Greed Index: {fng_value} ({fng_class})
 === CONTEXTO HISTÓRICO ===
 Estrategia sugerida por MTF: {mtf_recommended_strategy} (confluencia {confluence_score:.0%})
 {prior_text}
+
+=== SCORE DETERMINISTA ===
+Score final: {decision_score:.0%}
+Componentes: técnico {score_components['technical']:.0%}, MTF {score_components['mtf']:.0%}, histórico {score_components['historical']:.0%}, macro {score_components['macro']:.0%}
+Modo de decisión configurado: {decision_mode}
 
 === NOTICIAS RECIENTES ===
 {chr(10).join(news[:4]) if news else 'Sin noticias disponibles'}
@@ -236,11 +359,26 @@ Si la confluencia MTF es fuerte ({confluence_score:.0%}), puedes aumentar positi
                     result['provider'] = provider
                     result['confluence_score'] = confluence_score
                     result['macro_regime'] = macro_regime
+                    result['decision_score'] = decision_score
+                    result['score_components'] = score_components
+                    result['decision_mode'] = decision_mode
+                    result['ai_action'] = result.get('action', 'HOLD')
 
                     # Ajuste de confianza por confluencia: si MTF es muy fuerte, boosteamos
                     if confluence_score >= 0.80 and result.get('action') == 'BUY':
                         original_conf = result.get('confidence', 0)
                         result['confidence'] = min(0.95, original_conf * 1.10)
+
+                    if decision_mode == 'hybrid':
+                        if result.get('action') == 'BUY' and decision_score < config.MIN_AUTO_DECISION_SCORE:
+                            result['action'] = 'HOLD'
+                            result['reasoning'] = (
+                                f"[LOW RULE SCORE] {result.get('reasoning', '')} "
+                                f"(score {decision_score:.0%} < {config.MIN_AUTO_DECISION_SCORE:.0%})"
+                            )
+                        else:
+                            ai_conf = _safe_float(result.get('confidence'), 0.0)
+                            result['confidence'] = round(_clamp((ai_conf * 0.70) + (decision_score * 0.30)), 3)
 
                     self.last_analysis[symbol] = now
                     self.decision_cache[symbol] = result

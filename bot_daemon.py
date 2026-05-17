@@ -92,6 +92,48 @@ class BotDaemon:
         payload.update(extra)
         self.db.set_system_status("daemon_diagnostics", json.dumps(payload))
 
+    def is_consultive_mode(self):
+        return getattr(config, "TRADING_EXECUTION_MODE", "auto") == "consultive"
+
+    def _open_exposure_usdt(self, open_positions):
+        exposure = 0.0
+        for sym, pos in (open_positions or {}).items():
+            price = self.exchange.get_ticker(sym) or pos.get('entry_price') or 0
+            exposure += float(pos.get('amount') or 0) * float(price or 0)
+        return exposure
+
+    def evaluate_risk_guards(self, total_value, open_positions, pending_buy_usdt=0.0):
+        guards = {
+            "ok": True,
+            "reasons": [],
+            "daily_loss_pct": 0.0,
+            "exposure_pct": 0.0,
+        }
+        if total_value <= 0:
+            guards["ok"] = False
+            guards["reasons"].append("NO_EQUITY")
+            return guards
+
+        ref = self.db.get_equity_reference_since(86400)
+        if ref and ref.get("total_value", 0) > 0:
+            daily_loss_pct = ((float(ref["total_value"]) - float(total_value)) / float(ref["total_value"])) * 100
+            guards["daily_loss_pct"] = round(max(0.0, daily_loss_pct), 2)
+            if daily_loss_pct >= config.MAX_DAILY_LOSS_PCT * 100:
+                guards["ok"] = False
+                guards["reasons"].append(
+                    f"DAILY_LOSS {daily_loss_pct:.2f}% >= {config.MAX_DAILY_LOSS_PCT * 100:.2f}%"
+                )
+
+        exposure = self._open_exposure_usdt(open_positions) + float(pending_buy_usdt or 0)
+        exposure_pct = (exposure / float(total_value)) * 100 if total_value else 0.0
+        guards["exposure_pct"] = round(exposure_pct, 2)
+        if exposure_pct > config.MAX_PORTFOLIO_EXPOSURE_PCT * 100:
+            guards["ok"] = False
+            guards["reasons"].append(
+                f"EXPOSURE {exposure_pct:.2f}% > {config.MAX_PORTFOLIO_EXPOSURE_PCT * 100:.2f}%"
+            )
+        return guards
+
     def is_allowed_radar_symbol(self, symbol):
         try:
             base, quote = str(symbol).strip().upper().split("/", 1)
@@ -207,6 +249,8 @@ class BotDaemon:
                     last_lang_check = self.u_lang
                 
                 now = time.time()
+                is_sim_str = self.db.get_system_status('simulacion', 'true')
+                is_sim = str(is_sim_str).lower() == 'true'
                 if now - self.last_watchlist_update > 43200:
                     self.update_dynamic_watchlist()
                     self.last_watchlist_update = now
@@ -225,8 +269,6 @@ class BotDaemon:
                     
                 is_running = self.db.get_system_status('is_running')
                 if str(is_running).lower() == 'true':
-                    is_sim_str = self.db.get_system_status('simulacion', 'true')
-                    is_sim = str(is_sim_str).lower() == 'true'
                     if self.exchange.modo_simulacion != is_sim:
                         self.exchange = ExchangeHelper(modo_simulacion=is_sim)
                         # Recrear decision_engine con el nuevo exchange
@@ -245,8 +287,15 @@ class BotDaemon:
                         self.db.set_system_status('real_start_balance', current_equity)
                         self.log_message(f"{ _('LOG_INITIAL_REAL', lang=self.u_lang) } ${current_equity:.2f}")
 
-                self.bot_iteration()
-                self.update_daemon_status("sleeping", next_cycle_in=60)
+                if str(is_running).lower() == 'true':
+                    self.bot_iteration()
+                    self.update_daemon_status("sleeping", next_cycle_in=60)
+                else:
+                    self.update_daemon_status(
+                        "idle",
+                        execution_mode=getattr(config, "TRADING_EXECUTION_MODE", "auto"),
+                        decision_mode=getattr(config, "DECISION_MODE", "hybrid"),
+                    )
                 time.sleep(60)
             except Exception as e:
                 self.update_daemon_status("error", error=str(e))
@@ -262,6 +311,7 @@ class BotDaemon:
         hold_reasons = {}
         scanned = 0
         skipped = {}
+        consultive_mode = self.is_consultive_mode()
         
         # El balance total ya incluye el valor de todas las criptos en USDT
         total_value = self.exchange.get_balance()
@@ -273,14 +323,18 @@ class BotDaemon:
         # Para el cálculo de cuánto podemos comprar, necesitamos el cash (USDT) disponible
         open_positions = self.db.get_open_positions()
         buy_candidates = []
+        cycle_risk = self.evaluate_risk_guards(total_value, open_positions)
+        if not cycle_risk["ok"]:
+            self.log_message(f"🛡️ Risk guard activo: {', '.join(cycle_risk['reasons'])}")
 
         def candidate_score(item):
             decision = item.get('decision') or {}
             confidence = float(decision.get('confidence') or 0)
             confluence = float(decision.get('confluence_score') or 0)
             size_mult = float(decision.get('position_size_multiplier') or 1.0)
-            # La confianza manda; MTF y sizing desempatan sin dominar.
-            return confidence + (confluence * 0.15) + (size_mult * 0.03)
+            decision_score = float(decision.get('decision_score') or confidence)
+            # El score determinista manda; confianza IA, MTF y sizing desempatan sin dominar.
+            return decision_score + (confidence * 0.20) + (confluence * 0.10) + (size_mult * 0.03)
 
         def execute_buy_candidate(item):
             sym = item['symbol']
@@ -290,6 +344,19 @@ class BotDaemon:
 
             balance_usdt_actual = self.exchange.get_usdt_balance()
             amount_usdt = balance_usdt_actual * config.RISK_PER_TRADE
+
+            candidate_risk = self.evaluate_risk_guards(total_value, open_positions, pending_buy_usdt=amount_usdt)
+            if not candidate_risk["ok"]:
+                self.log_message(f"🛡️ Compra bloqueada por riesgo {sym}: {', '.join(candidate_risk['reasons'])}")
+                return False
+
+            if consultive_mode:
+                self.log_message(
+                    f"🧭 CONSULTIVO BUY {sym} @ {price} "
+                    f"score={item['score']:.3f} conf={float(decision.get('confidence') or 0):.2f} "
+                    f"importe_estimado={amount_usdt:.2f} USDT"
+                )
+                return False
 
             if amount_usdt < 1.0:
                 self.log_message(f"{ _('LOG_INSUFFICIENT', lang=self.u_lang) } ({balance_usdt_actual:.2f}) { _('LOG_FOR', lang=self.u_lang) } {sym}")
@@ -356,7 +423,12 @@ class BotDaemon:
                 'regime': decision.get('regime', 'N/A'),
                 'best_strategy': decision.get('best_strategy', 'N/A'),
                 'confidence': decision.get('confidence', 0),
-                'action': decision.get('action', 'HOLD')
+                'action': decision.get('action', 'HOLD'),
+                'decision_score': decision.get('decision_score', 0),
+                'score_components': decision.get('score_components', {}),
+                'decision_mode': decision.get('decision_mode', getattr(config, 'DECISION_MODE', 'hybrid')),
+                'execution_mode': getattr(config, 'TRADING_EXECUTION_MODE', 'auto'),
+                'provider': provider,
             })
             self.db.set_system_status('last_ia_decision', decision_json)
             self.db.set_system_status(f'decision_{symbol}', decision_json)
@@ -375,6 +447,9 @@ class BotDaemon:
                 # Trailing Stop y AI Sell
                 sell_res = self.logic.check_sell_conditions(symbol, current_price, pos, decision)
                 if sell_res['should_sell']:
+                    if consultive_mode:
+                        self.log_message(f"🧭 CONSULTIVO SELL {symbol} @ {current_price:.4f} | Motivo: {sell_res['reason']}")
+                        continue
                     order_result = self.exchange.execute_order(symbol, 'sell', pos['amount'], current_price)
                     if order_result.get('status') in ['closed', 'simulated']:
                         try:
@@ -400,6 +475,12 @@ class BotDaemon:
             # 2. Lógica de COMPRA
             else:
                 if decision['action'] == 'BUY':
+                    if (
+                        getattr(config, "DECISION_MODE", "hybrid") != "ai_aggressive"
+                        and float(decision.get('decision_score') or decision.get('confidence') or 0) < config.MIN_AUTO_DECISION_SCORE
+                    ):
+                        skipped["LOW_DECISION_SCORE"] = skipped.get("LOW_DECISION_SCORE", 0) + 1
+                        continue
                     item = {
                         'symbol': symbol,
                         'price': current_price,
@@ -431,7 +512,7 @@ class BotDaemon:
             if c['symbol'] not in executed_symbols and c['symbol'] not in open_positions
         ]
 
-        if config.ROTATION_ENABLED and len(open_positions) >= self.dynamic_max and remaining_candidates:
+        if config.ROTATION_ENABLED and not consultive_mode and len(open_positions) >= self.dynamic_max and remaining_candidates:
             pos_details = {}
             for s, p in open_positions.items():
                 p_ticker = self.exchange.get_ticker(s)
@@ -486,11 +567,15 @@ class BotDaemon:
             "hold_reasons": dict(sorted(hold_reasons.items(), key=lambda kv: kv[1], reverse=True)[:5]),
             "skipped": skipped,
             "buy_candidates": len(buy_candidates),
+            "execution_mode": getattr(config, "TRADING_EXECUTION_MODE", "auto"),
+            "decision_mode": getattr(config, "DECISION_MODE", "hybrid"),
+            "risk_guards": cycle_risk,
             "top_buy_candidates": [
                 {
                     "symbol": c['symbol'],
                     "score": round(c['score'], 3),
                     "confidence": round(float(c['decision'].get('confidence') or 0), 3),
+                    "decision_score": round(float(c['decision'].get('decision_score') or 0), 3),
                 }
                 for c in buy_candidates[:5]
             ],

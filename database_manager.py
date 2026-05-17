@@ -436,6 +436,26 @@ class DatabaseManager:
                 df['timestamp'] = pd.to_datetime(df['timestamp'], unit='s')
             return df
 
+    def get_equity_reference_since(self, seconds=86400):
+        """Primer punto de equity dentro de la ventana indicada; útil para límites diarios."""
+        since_ts = time.time() - float(seconds)
+        with self._get_connection() as conn:
+            row = conn.execute(
+                '''
+                SELECT total_value, timestamp FROM equity_history
+                WHERE timestamp >= ?
+                ORDER BY timestamp ASC
+                LIMIT 1
+                ''',
+                (since_ts,),
+            ).fetchone()
+        if not row:
+            return None
+        return {
+            'total_value': float(row['total_value'] or 0),
+            'timestamp': float(row['timestamp'] or 0),
+        }
+
     # --- Chat History ---
     def save_chat_message(self, role, content):
         with self._get_connection() as conn:

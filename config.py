@@ -13,10 +13,17 @@ DEFAULT_SETTINGS = {
     'MONEDAS': 'BTC/USDT,ETH/USDT,SOL/USDT,ADA/USDT,DOT/USDT',
     'RISK_PER_TRADE': 0.10,
     'MAX_OPEN_POSITIONS': 5,
+    # Control operativo: "auto" ejecuta ordenes; "consultive" solo analiza y registra.
+    'TRADING_EXECUTION_MODE': 'auto',
+    # Cerebro de decision: "hybrid" fusiona reglas + IA; "ai_aggressive" da mas peso a IA; "rules" no usa IA para decidir.
+    'DECISION_MODE': 'hybrid',
+    'MIN_AUTO_DECISION_SCORE': 0.62,
     # False = límite por escala de capital (<100→3, etc.). True = usa solo "Máximo Posiciones".
     'MANUAL_MAX_POSITIONS_PRIORITY': False,
     'MIN_PROFIT_NET': 1.0,
     'STOP_LOSS_PERCENT': 3.0,
+    'MAX_DAILY_LOSS_PCT': 5.0,
+    'MAX_PORTFOLIO_EXPOSURE_PCT': 85.0,
     # Parámetros de Rotación
     'ROTATION_ENABLED': True,
     'ROTATION_MIN_PROFIT': 0.35, # Beneficio mínimo para rotar
@@ -82,8 +89,13 @@ SYMBOLS = [s.strip() for s in (monedas_raw if isinstance(monedas_raw, list) else
 
 RISK_PER_TRADE = get_setting('RISK_PER_TRADE', 0.10, float)
 MAX_OPEN_POSITIONS = get_setting('MAX_OPEN_POSITIONS', 5, int)
+TRADING_EXECUTION_MODE = get_setting('TRADING_EXECUTION_MODE', 'auto').lower()
+DECISION_MODE = get_setting('DECISION_MODE', 'hybrid').lower()
+MIN_AUTO_DECISION_SCORE = get_setting('MIN_AUTO_DECISION_SCORE', 0.62, float)
 PROFIT_OBJETIVO = get_setting('MIN_PROFIT_NET', 1.0, float) / 100.0
 STOP_LOSS_PCT = get_setting('STOP_LOSS_PERCENT', 3.0, float) / 100.0
+MAX_DAILY_LOSS_PCT = get_setting('MAX_DAILY_LOSS_PCT', 5.0, float) / 100.0
+MAX_PORTFOLIO_EXPOSURE_PCT = get_setting('MAX_PORTFOLIO_EXPOSURE_PCT', 85.0, float) / 100.0
 
 # Rotación
 ROTATION_ENABLED = get_setting('ROTATION_ENABLED', True, bool)

@@ -128,10 +128,35 @@ def render_settings():
 
         with tab2:
             st.subheader(_('CAPITAL_MGMT'))
+            exec_labels = {
+                "auto": "Auto",
+                "consultive": "Consultivo / señales",
+            }
+            decision_labels = {
+                "ai_aggressive": "IA agresiva",
+                "hybrid": "Híbrido",
+                "rules": "Reglas / quant",
+            }
+            execution_mode = st.selectbox(
+                _('EXECUTION_MODE_L'),
+                options=list(exec_labels.keys()),
+                format_func=lambda key: exec_labels.get(key, key),
+                index=list(exec_labels.keys()).index(get_setting('TRADING_EXECUTION_MODE', 'auto')) if get_setting('TRADING_EXECUTION_MODE', 'auto') in exec_labels else 0,
+                help=_('EXECUTION_MODE_HELP'),
+            )
+            decision_mode = st.selectbox(
+                _('DECISION_MODE_L'),
+                options=list(decision_labels.keys()),
+                format_func=lambda key: decision_labels.get(key, key),
+                index=list(decision_labels.keys()).index(get_setting('DECISION_MODE', 'hybrid')) if get_setting('DECISION_MODE', 'hybrid') in decision_labels else 1,
+                help=_('DECISION_MODE_HELP'),
+            )
             col1, col2 = st.columns(2)
             with col1:
                 modo_sim = st.checkbox(_('MODE_SIM'), value=get_setting('MODO_SIMULACION', True, bool))
                 presupuesto = st.number_input(_('INITIAL_CAPITAL'), value=get_setting('PRESUPUESTO_INICIAL', 60.0, float))
+                min_score = st.slider(_('MIN_SCORE_L'), 0.0, 1.0, get_setting('MIN_AUTO_DECISION_SCORE', 0.62, float), step=0.01)
+                max_daily_loss = st.slider(_('MAX_DAILY_LOSS_L'), 0.1, 50.0, get_setting('MAX_DAILY_LOSS_PCT', 5.0, float), step=0.1)
             with col2:
                 manual_cap = st.checkbox(
                     _('MANUAL_POS_PRIORITY'),
@@ -146,6 +171,7 @@ def render_settings():
                     help=_('MAX_POSITIONS_HELP'),
                 )
                 riesgo = st.slider(_('RISK_PER_TRADE_L'), 1, 100, int(get_setting('RISK_PER_TRADE', 0.1, float)*100))
+                max_exposure = st.slider(_('MAX_EXPOSURE_L'), 1.0, 100.0, get_setting('MAX_PORTFOLIO_EXPOSURE_PCT', 85.0, float), step=1.0)
                 min_profit = st.number_input(
                     _('MIN_PROFIT_L'),
                     min_value=0.1,
@@ -187,10 +213,15 @@ def render_settings():
                 "COINDESK_API_KEY": coindesk_api,
                 "MODO_SIMULACION": modo_sim,
                 "PRESUPUESTO_INICIAL": float(presupuesto),
+                "TRADING_EXECUTION_MODE": execution_mode,
+                "DECISION_MODE": decision_mode,
+                "MIN_AUTO_DECISION_SCORE": float(min_score),
                 "MANUAL_MAX_POSITIONS_PRIORITY": bool(manual_cap),
                 "MAX_OPEN_POSITIONS": int(max_pos),
                 "MIN_PROFIT_NET": float(min_profit),
                 "RISK_PER_TRADE": riesgo / 100.0,
+                "MAX_DAILY_LOSS_PCT": float(max_daily_loss),
+                "MAX_PORTFOLIO_EXPOSURE_PCT": float(max_exposure),
                 "ROTATION_ENABLED": rot_en,
                 "ROTATION_MIN_PROFIT": float(rot_prof),
                 "ROTATION_CONFIDENCE_GAP": float(rot_gap),

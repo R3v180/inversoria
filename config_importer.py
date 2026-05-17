@@ -21,10 +21,15 @@ CONFIG_SCHEMA = {
     "MODO_SIMULACION": {"type": bool},
     "PRESUPUESTO_INICIAL": {"type": float, "min": 1.0, "max": 1_000_000.0},
     "MONEDAS": {"type": "symbols"},
+    "TRADING_EXECUTION_MODE": {"type": "choice", "choices": {"auto", "consultive"}},
+    "DECISION_MODE": {"type": "choice", "choices": {"ai_aggressive", "hybrid", "rules"}},
+    "MIN_AUTO_DECISION_SCORE": {"type": float, "min": 0.0, "max": 1.0},
     "MANUAL_MAX_POSITIONS_PRIORITY": {"type": bool},
     "MAX_OPEN_POSITIONS": {"type": int, "min": 1, "max": 10},
     "MIN_PROFIT_NET": {"type": float, "min": 0.1, "max": 20.0},
     "STOP_LOSS_PERCENT": {"type": float, "min": 0.1, "max": 50.0},
+    "MAX_DAILY_LOSS_PCT": {"type": float, "min": 0.1, "max": 100.0},
+    "MAX_PORTFOLIO_EXPOSURE_PCT": {"type": float, "min": 1.0, "max": 100.0},
     "RISK_PER_TRADE": {"type": float, "min": 0.01, "max": 1.0, "percent": True},
     "ROTATION_ENABLED": {"type": bool},
     "ROTATION_MIN_PROFIT": {"type": float, "min": 0.0, "max": 20.0},
@@ -44,10 +49,15 @@ EXAMPLE_SAFE_CONFIG = {
     "MODO_SIMULACION": True,
     "PRESUPUESTO_INICIAL": 60.0,
     "MONEDAS": "BTC/USDT,ETH/USDT,SOL/USDT,XRP/USDT,LINK/USDT,SUI/USDT,RUNE/USDT,QNT/USDT,XLM/USDT",
+    "TRADING_EXECUTION_MODE": "auto",
+    "DECISION_MODE": "hybrid",
+    "MIN_AUTO_DECISION_SCORE": 0.62,
     "MANUAL_MAX_POSITIONS_PRIORITY": True,
     "MAX_OPEN_POSITIONS": 3,
     "RISK_PER_TRADE": 0.10,
     "MIN_PROFIT_NET": 1.5,
+    "MAX_DAILY_LOSS_PCT": 5.0,
+    "MAX_PORTFOLIO_EXPOSURE_PCT": 85.0,
     "ROTATION_ENABLED": True,
     "ROTATION_MIN_PROFIT": 2.0,
     "ROTATION_CONFIDENCE_GAP": 0.25,
@@ -141,6 +151,10 @@ def _coerce_value(key, value, spec, warnings):
             raise ValueError("texto demasiado largo")
     elif expected == "symbols":
         coerced = _coerce_symbols(value)
+    elif expected == "choice":
+        coerced = str(value).strip().lower()
+        if coerced not in spec["choices"]:
+            raise ValueError(f"debe ser uno de: {', '.join(sorted(spec['choices']))}")
     else:
         raise ValueError("tipo no soportado")
 

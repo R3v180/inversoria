@@ -180,7 +180,9 @@ def render_dashboard():
         diag_top = json.loads(diag_raw or "{}")
     except Exception:
         diag_top = {}
-    mode_label = "SIM" if exchange.modo_simulacion else "REAL"
+    exec_mode = diag_top.get("execution_mode", "-")
+    decision_mode = diag_top.get("decision_mode", "-")
+    mode_label = f"{'SIM' if exchange.modo_simulacion else 'REAL'} · {exec_mode}"
     state_label = diag_top.get("state", "-")
     _render_refresh_status(diag_top)
 
@@ -190,7 +192,7 @@ def render_dashboard():
     m3.metric(_('POSITIONS'), f"{len(open_positions)} / {dynamic_max}")
     m4.metric(_('PNL_USD'), f"${pnl:.2f}", f"{pnl_pct:.2f}%")
     m5.metric(_("DASH_MODE"), mode_label)
-    m6.metric(_("DAEMON_STATE"), state_label, f"{diag_top.get('scanned', 0)} scan")
+    m6.metric(_("DAEMON_STATE"), state_label, f"{decision_mode} · {diag_top.get('scanned', 0)} scan")
 
     # --- POSITIONS + LIVE EVENTS FIRST ---
     col_left, col_right = st.columns([1.5, 1])
@@ -409,11 +411,19 @@ def render_dashboard():
                     st.caption("Providers: " + ", ".join(f"{k}: {v}" for k, v in diag["providers"].items()))
                 if diag.get("skipped"):
                     st.caption("Skipped: " + ", ".join(f"{k}: {v}" for k, v in diag["skipped"].items()))
+                if diag.get("risk_guards"):
+                    rg = diag.get("risk_guards") or {}
+                    status = "OK" if rg.get("ok", True) else "BLOQUEANDO COMPRAS"
+                    st.caption(
+                        f"Riesgo: {status} · pérdida diaria {rg.get('daily_loss_pct', 0)}% · "
+                        f"exposición {rg.get('exposure_pct', 0)}%"
+                    )
                 if diag.get("top_buy_candidates"):
                     st.markdown("**Top candidatos BUY**")
                     for c in diag["top_buy_candidates"]:
                         st.caption(
                             f"{c.get('symbol')} · score {c.get('score')} · "
+                            f"decision {float(c.get('decision_score', 0)):.0%} · "
                             f"conf {float(c.get('confidence', 0)):.0%}"
                         )
                 if diag.get("hold_reasons"):

@@ -70,6 +70,10 @@ Available today:
 - Streamlit dashboard with equity, available cash, open positions, technical chart, radar, macro context and daemon diagnostics.
 - Manual sell button from the dashboard.
 - Buy candidates are collected during the scan, ranked, and only the best ones are executed after the full cycle evaluation.
+- Configurable execution mode: automatic trading or consultive signals without order execution.
+- Configurable decision mode: AI-aggressive, hybrid score+AI, or rules/quant-only.
+- Deterministic decision score with component breakdown for technical, MTF, historical and macro layers.
+- First risk guardrails for daily loss and total portfolio exposure before auto-buys.
 - Full exchange wallet view, including balances not tracked by the bot.
 - Dust/recoverable-balance classification.
 - Sell pre-check: free balance, precision, minimums, notional and order-book slippage.
@@ -202,7 +206,7 @@ bot_daemon.py
             └── HOLD if filters block the trade
     │
     ├── Rank all BUY candidates
-    │   └── score = confidence + MTF confluence bonus + position size bonus
+    │   └── score = deterministic decision score + AI confidence + MTF bonus
     ├── Execute top-ranked candidates until available slots are filled
     └── If full, evaluate one rotation using the best remaining candidate
 ```
@@ -230,6 +234,15 @@ Decision layers:
 6. **Hybrid AI**
   - Gemini / Groq / SambaNova fallback.
   - Returns structured JSON: action, confidence, regime, strategy, reasoning.
+7. **Decision score**
+  - Technical, multi-timeframe, historical and macro components are stored with each decision.
+  - `hybrid` mode can block an AI BUY if the deterministic score is too weak.
+  - `rules` mode can run without asking the AI to decide the action.
+
+Execution is controlled separately from decision-making:
+
+- `TRADING_EXECUTION_MODE=auto`: the daemon can place buys, sells and rotations.
+- `TRADING_EXECUTION_MODE=consultive`: the daemon scans, ranks, logs and updates diagnostics, but does not send orders.
 
 ---
 
@@ -374,6 +387,10 @@ Hot-editable settings:
 - Manual position limit priority.
 - Maximum positions.
 - Risk per trade.
+- Execution mode: automatic or consultive.
+- Decision mode: AI-aggressive, hybrid, or rules/quant.
+- Minimum deterministic score for automatic buys.
+- Daily loss and portfolio exposure guardrails.
 - Minimum profit target.
 - Rotation.
 - Minimum profit for rotation.
@@ -552,11 +569,16 @@ This prevents macro refresh from overwriting the last real scan statistics.
 | ------------------------------- | -------------------------------------------------- | -------------- |
 | `MODO_SIMULACION`               | Simulation vs real mode                            | `True`         |
 | `PRESUPUESTO_INICIAL`           | Simulation baseline                                | `60.0`         |
+| `TRADING_EXECUTION_MODE`        | `auto` executes, `consultive` only recommends       | `auto`         |
+| `DECISION_MODE`                 | `ai_aggressive`, `hybrid`, or `rules`               | `hybrid`       |
+| `MIN_AUTO_DECISION_SCORE`       | Minimum deterministic score for auto-buys           | `0.62`         |
 | `RISK_PER_TRADE`                | % of free USDT used per buy                        | `0.10`         |
 | `MAX_OPEN_POSITIONS`            | Manual max slots                                   | `5`            |
 | `MANUAL_MAX_POSITIONS_PRIORITY` | Use manual max instead of dynamic scaling          | `False`        |
 | `MIN_PROFIT_NET`                | Normal profit target                               | `1.0`          |
 | `STOP_LOSS_PERCENT`             | Base stop-loss                                     | `3.0`          |
+| `MAX_DAILY_LOSS_PCT`            | Blocks new auto-buys after this 24h equity loss     | `5.0`          |
+| `MAX_PORTFOLIO_EXPOSURE_PCT`    | Blocks new auto-buys above this exposure            | `85.0`         |
 | `ROTATION_ENABLED`              | Enable portfolio rotation                          | `True`         |
 | `ROTATION_MIN_PROFIT`           | Minimum profit before rotating out                 | `0.35`         |
 | `ROTATION_CONFIDENCE_GAP`       | New signal must exceed old confidence by this much | `0.20`         |
@@ -890,7 +912,7 @@ Possible future improvements:
 5. Web search for the assistant with a controlled API.
 6. Bot-quality metrics by provider, regime and strategy.
 7. Backtest improvements: fees, slippage, walk-forward, out-of-sample.
-8. Risk controls: daily loss limit, max drawdown kill-switch, sector exposure caps.
+8. Next risk controls: max drawdown kill-switch, correlation and sector exposure caps.
 
 ---
 
@@ -946,6 +968,10 @@ Modos disponibles:
 - Dashboard con equity, liquidez, posiciones, gráfico técnico, radar, macro y diagnóstico.
 - Botón de venta manual desde dashboard.
 - Los candidatos BUY se recopilan durante el escaneo, se rankean y solo se ejecutan los mejores al final del ciclo.
+- Modo de ejecución configurable: trading automático o señales consultivas sin ejecutar órdenes.
+- Modo de decisión configurable: IA agresiva, híbrido score+IA o reglas/quant.
+- Score determinista de decisión con desglose técnico, MTF, histórico y macro.
+- Primeros guardrails de riesgo por pérdida diaria y exposición total antes de auto-compras.
 - Vista de cartera exchange completa.
 - Clasificación de retales y polvo recuperable.
 - Pre-chequeo de venta: saldo libre, precisión, mínimos, notional y slippage.
@@ -1038,7 +1064,7 @@ bot_daemon.py
     └── HOLD si los filtros bloquean
 │
 ├── Rankea todos los candidatos BUY
-│   └── score = confianza + bonus confluencia MTF + bonus sizing
+│   └── score = score determinista + confianza IA + bonus MTF
 ├── Compra los mejores candidatos hasta llenar huecos
 └── Si está lleno, evalúa una rotación con el mejor candidato restante
 ```
@@ -1051,6 +1077,18 @@ Capas:
 4. Multi-timeframe.
 5. Backtest histórico.
 6. IA híbrida.
+7. Score de decisión auditable.
+
+La ejecución se controla aparte:
+
+- `TRADING_EXECUTION_MODE=auto`: el daemon puede comprar, vender y rotar.
+- `TRADING_EXECUTION_MODE=consultive`: el daemon analiza, rankea, registra y actualiza diagnóstico, pero no envía órdenes.
+
+El modo de decisión puede ser:
+
+- `ai_aggressive`: la IA tiene más peso, manteniendo filtros y riesgo.
+- `hybrid`: la IA participa, pero una compra debe superar el score determinista.
+- `rules`: decide con reglas/score sin pedir a la IA la acción final.
 
 ---
 
@@ -1096,7 +1134,7 @@ Trades, win rate, profit factor, curva aproximada y journal.
 
 ### Configuración
 
-Permite editar modo, riesgo, posiciones, rotación, frecuencia IA, APIs y prompts.
+Permite editar modo, ejecución automática/consultiva, cerebro de decisión, score mínimo, riesgo, posiciones, rotación, frecuencia IA, APIs y prompts.
 
 También incluye importación/exportación segura:
 
@@ -1223,11 +1261,16 @@ Estados:
 | ------------------------------- | -------------------------- | ------- |
 | `MODO_SIMULACION`               | Simulación vs real         | `True`  |
 | `PRESUPUESTO_INICIAL`           | Baseline sim               | `60.0`  |
+| `TRADING_EXECUTION_MODE`        | `auto` ejecuta, `consultive` recomienda | `auto` |
+| `DECISION_MODE`                 | `ai_aggressive`, `hybrid` o `rules` | `hybrid` |
+| `MIN_AUTO_DECISION_SCORE`       | Score mínimo para auto-compra | `0.62` |
 | `RISK_PER_TRADE`                | % de USDT libre por compra | `0.10`  |
 | `MAX_OPEN_POSITIONS`            | Máximo manual              | `5`     |
 | `MANUAL_MAX_POSITIONS_PRIORITY` | Prioriza máximo manual     | `False` |
 | `MIN_PROFIT_NET`                | Profit objetivo            | `1.0`   |
 | `STOP_LOSS_PERCENT`             | Stop loss base             | `3.0`   |
+| `MAX_DAILY_LOSS_PCT`            | Bloquea compras tras esta pérdida 24h | `5.0` |
+| `MAX_PORTFOLIO_EXPOSURE_PCT`    | Bloquea compras sobre esta exposición | `85.0` |
 | `ROTATION_ENABLED`              | Activa rotación            | `True`  |
 | `ROTATION_MIN_PROFIT`           | Profit mínimo para rotar   | `0.35`  |
 | `ROTATION_CONFIDENCE_GAP`       | Gap de confianza           | `0.20`  |
@@ -1455,7 +1498,7 @@ pip install pandas-ta
 5. Búsqueda web controlada para asistente.
 6. Métricas por provider/régimen/estrategia.
 7. Backtest con slippage, fees reales y walk-forward.
-8. Daily loss limit y kill-switch por drawdown.
+8. Próximos controles: kill-switch por drawdown, correlación y exposición por sector.
 
 ---
 
