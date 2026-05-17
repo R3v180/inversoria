@@ -1,4 +1,5 @@
 import datetime as dt
+import ast
 import json
 import os
 import re
@@ -52,9 +53,9 @@ CONFIG_SCHEMA = {
     "TRADING_FEE_RATE": {"type": float, "min": 0.0, "max": 0.05, "percent": True},
     "BUY_SLIPPAGE_LIMIT": {"type": float, "min": 0.0001, "max": 0.20, "percent": True},
     "SELL_SLIPPAGE_LIMIT": {"type": float, "min": 0.0001, "max": 0.20, "percent": True},
-    "PROMPT_SENTIMENT": {"type": str, "max_len": 2_000},
-    "PROMPT_DECISION": {"type": str, "max_len": 4_000},
-    "PROMPT_CURATION": {"type": str, "max_len": 3_000},
+    "PROMPT_SENTIMENT": {"type": str, "max_len": 2_000, "allow_empty": True},
+    "PROMPT_DECISION": {"type": str, "max_len": 4_000, "allow_empty": True},
+    "PROMPT_CURATION": {"type": str, "max_len": 3_000, "allow_empty": True},
 }
 
 
@@ -124,7 +125,12 @@ def parse_config_payload(raw_text: str) -> dict:
     elif "{" in text and "}" in text:
         text = text[text.find("{"): text.rfind("}") + 1]
 
-    payload = json.loads(text)
+    try:
+        payload = json.loads(text)
+    except json.JSONDecodeError:
+        # Be permissive with configs copied from Python repr/exported legacy values
+        # using single quotes, True/False or nested dict strings.
+        payload = ast.literal_eval(text)
     if isinstance(payload, dict) and isinstance(payload.get("settings"), dict):
         payload = payload["settings"]
     if not isinstance(payload, dict):
@@ -167,7 +173,10 @@ def _coerce_symbols(value):
 
 def _coerce_bucket_map(value):
     if isinstance(value, str):
-        value = json.loads(value)
+        try:
+            value = json.loads(value)
+        except json.JSONDecodeError:
+            value = ast.literal_eval(value)
     if not isinstance(value, dict):
         raise ValueError("debe ser un objeto con buckets y listas de símbolos")
     out = {}
@@ -208,7 +217,7 @@ def _coerce_value(key, value, spec, warnings):
             warnings.append(f"{key}: valor interpretado como porcentaje y convertido a {coerced:.4f}.")
     elif expected is str:
         coerced = str(value).strip()
-        if not coerced:
+        if not coerced and not spec.get("allow_empty"):
             raise ValueError("no puede estar vacío")
         if len(coerced) > spec.get("max_len", 10_000):
             raise ValueError("texto demasiado largo")

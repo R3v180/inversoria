@@ -433,6 +433,7 @@ Safe configuration import/export:
 - Download the current safe configuration without API keys or secrets.
 - Paste JSON from an AI recommendation.
 - Validate fields against an allowlist before applying.
+- Accept strict JSON and legacy copied settings using Python-style booleans, single quotes or bucket maps saved as strings.
 - Preview before/after values.
 - Block API keys and sensitive fields automatically.
 - Create a `user_settings.json.backup-*.json` backup before applying.
@@ -775,6 +776,8 @@ Open `InversorIA.exe` from the project root. It is the main entry point for norm
 The launcher provides a bilingual Windows control panel. It starts the web app, controls the daemon, opens the dashboard, switches between simulation and real mode, configures local API keys, prevents system sleep while running, and shows live daemon logs. Real mode requires explicit confirmation and exchange keys in `.env`.
 
 In simulation mode, the launcher and the app can create and switch complete simulation profiles. Each profile has its own initial capital, virtual account, SQLite DB, trades, equity history and `decision_journal`, so experiments with different risk settings do not contaminate each other.
+
+The Streamlit UI reloads the active profile paper account before reading balances, equity, coin inventory or manual orders, so dashboard values stay aligned with daemon writes to `simulated_account.json`.
 
 Developer note: `dist/InversorIA.exe` is the PyInstaller build output. To rebuild and copy the executable to the project root:
 
@@ -1460,6 +1463,7 @@ La UI permite importar/exportar configuración segura:
 - ejemplo para IA,
 - config actual sin secretos,
 - validación de JSON pegado,
+- compatibilidad con JSON estricto y ajustes copiados en formato Python antiguo (`True`/`False`, comillas simples o buckets guardados como texto),
 - preview de cambios,
 - backup automático antes de aplicar.
 
@@ -1478,6 +1482,8 @@ Abre `InversorIA.exe` desde la raíz del proyecto. Es el punto de entrada princi
 El launcher ofrece un panel bilingüe para Windows. Inicia la web, controla el daemon, abre el dashboard, cambia entre simulación y real, configura las APIs locales, evita la suspensión del sistema mientras está activo y muestra logs vivos del daemon. El modo real pide confirmación explícita y exige claves de exchange en `.env`.
 
 En modo simulación, el launcher y la app pueden crear y cambiar perfiles completos de simulación. Cada perfil tiene su propio capital inicial, cuenta virtual, SQLite, trades, equity y `decision_journal`, así que los experimentos con configuraciones distintas no se contaminan entre sí.
+
+La UI de Streamlit recarga la cuenta ficticia del perfil activo antes de leer balances, equity, cartera u órdenes manuales, para que el dashboard se mantenga alineado con lo que escribe el daemon en `simulated_account.json`.
 
 Nota para desarrollo: `dist/InversorIA.exe` es la salida de PyInstaller. Para reconstruir y copiar el ejecutable a la raíz:
 

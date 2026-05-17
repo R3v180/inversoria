@@ -53,9 +53,17 @@ class ExchangeHelper:
             except Exception as e:
                 print(f"Error cargando estado simulado: {e}")
 
+    def _refresh_simulated_state(self):
+        """Reload simulation state written by the daemon or another UI process."""
+        if not self.modo_simulacion:
+            return
+        self.simulated_account_path = get_active_account_path()
+        self._load_simulated_state()
+
     def get_usdt_balance(self):
         """Retorna solo el cash disponible (USDT)"""
         if self.modo_simulacion:
+            self._refresh_simulated_state()
             return self.virtual_balance
         else:
             try:
@@ -68,6 +76,7 @@ class ExchangeHelper:
     def get_balance(self):
         """Retorna la Equity Total (Cash + Valor de Criptos)"""
         if self.modo_simulacion:
+            self._refresh_simulated_state()
             total = self.virtual_balance
             for sym, amount in self.virtual_portfolio.items():
                 price = self.get_ticker(sym)
@@ -96,6 +105,7 @@ class ExchangeHelper:
     def get_coin_balance(self, symbol):
         coin = symbol.split('/')[0]
         if self.modo_simulacion:
+            self._refresh_simulated_state()
             return self.virtual_portfolio.get(symbol, 0.0)
         else:
             try:
@@ -156,6 +166,7 @@ class ExchangeHelper:
         force_market=True omite el bloqueo de slippage para ventas manuales.
         """
         if self.modo_simulacion:
+            self._refresh_simulated_state()
             if price is None:
                 price = self.get_ticker(symbol)
             
@@ -262,11 +273,13 @@ class ExchangeHelper:
                     backoff *= 2 # Exponential backoff
 
     def get_virtual_portfolio(self):
+        self._refresh_simulated_state()
         return self.virtual_portfolio
 
     def liquidate_all_to_usdt(self):
         results = {"exitos": [], "fallos": []}
         if self.modo_simulacion:
+            self._refresh_simulated_state()
             symbols_to_sell = list(self.virtual_portfolio.keys())
             for symbol in symbols_to_sell:
                 amount = self.virtual_portfolio[symbol]
