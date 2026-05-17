@@ -65,6 +65,10 @@ class BotDaemon:
         self.last_macro_update = 0
         self.MACRO_INTERVAL = 900 # 15 min: actualiza 1 activo vencido por ciclo, sin bloquear
         self._last_idle_log = 0
+        try:
+            self._launcher_arm_until = float(os.getenv("INVERSORIA_LAUNCHER_ARM_UNTIL", "0") or 0)
+        except (TypeError, ValueError):
+            self._launcher_arm_until = 0
 
         self.log_message(_('LOG_DAEMON_INIT', lang=self.u_lang))
 
@@ -435,10 +439,12 @@ class BotDaemon:
                         armed_until = float(self.db.get_system_status('launcher_start_armed_until', '0') or 0)
                     except (TypeError, ValueError):
                         armed_until = 0
-                    if armed_until > time.time():
+                    env_armed = getattr(self, "_launcher_arm_until", 0) > time.time()
+                    if armed_until > time.time() or env_armed:
                         self.db.set_system_status('is_running', 'true')
                         is_running = 'true'
                         self.log_message("[ARMED] Launcher start detected; trading rearmado.")
+                        self._launcher_arm_until = 0
                 if str(is_running).lower() != 'true':
                     if time.time() - getattr(self, "_last_idle_log", 0) > 300:
                         self.log_message("[IDLE] Trading pausado: is_running=false. Esperando Start/Arrancar bot.")

@@ -718,6 +718,8 @@ class InversoriaLauncher(ctk.CTk):
                 pass
         self._set_system_status("launcher_start_armed_until", str(time.time() + 300))
         self._set_system_status("is_running", "true")
+        daemon_env = self._child_env()
+        daemon_env["INVERSORIA_LAUNCHER_ARM_UNTIL"] = str(time.time() + 300)
         self.daemon_process = subprocess.Popen(
             [python, "-u", str(ROOT / "bot_daemon.py")],
             cwd=str(ROOT),
@@ -725,7 +727,7 @@ class InversoriaLauncher(ctk.CTk):
             stderr=subprocess.STDOUT,
             creationflags=self._creation_flags(),
             startupinfo=self._startup_info(),
-            env=self._child_env(),
+            env=daemon_env,
         )
         self.set_status("daemon_started")
 
