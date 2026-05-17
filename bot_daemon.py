@@ -81,6 +81,36 @@ class BotDaemon:
             print(safe_text, flush=True)
         self.db.add_log(msg)
 
+    def _macro_cache_status(self):
+        macro_data = self.db.get_all_macro_data()
+        if not macro_data:
+            return "sin cache"
+        oldest = min(float((row or {}).get('last_update') or 0) for row in macro_data.values())
+        if time.time() - oldest >= self.macro_analyzer.STALE_AFTER_SECONDS:
+            return "cache stale"
+        return "cache vigente"
+
+    def _macro_provider_blocked(self, now):
+        state = self.macro_analyzer.get_provider_refresh_state()
+        cooldown_until = float((state or {}).get('cooldown_until') or 0)
+        last_attempt = float((state or {}).get('last_attempt') or 0)
+        if cooldown_until > now:
+            self.log_message(
+                f"[Macro] Alpha Vantage cooldown hasta {self.macro_analyzer._format_ts(cooldown_until)}; "
+                f"usando cache existente ({self._macro_cache_status()})."
+            )
+            return True
+        min_interval = self.macro_analyzer.MIN_ATTEMPT_INTERVAL_SECONDS
+        if last_attempt and now - last_attempt < min_interval:
+            next_attempt = last_attempt + min_interval
+            self.log_message(
+                f"[Macro] Skipping macro refresh: last attempt {self.macro_analyzer._format_ts(last_attempt)}; "
+                f"próximo intento >= {self.macro_analyzer._format_ts(next_attempt)}; "
+                f"usando cache existente ({self._macro_cache_status()})."
+            )
+            return True
+        return False
+
     def update_daemon_status(self, state, **extra):
         try:
             payload = json.loads(self.db.get_system_status("daemon_diagnostics", "{}") or "{}")
@@ -689,10 +719,14 @@ class BotDaemon:
 
                 # Actualización macro incremental: 1 activo vencido cada intervalo
                 if now - self.last_macro_update > self.MACRO_INTERVAL:
-                    self.update_daemon_status("macro_refresh")
-                    from macro_analyzer import MacroAnalyzer
-                    macro = MacroAnalyzer(lang=self.u_lang)
-                    macro.fetch_global_market_status(max_assets=1)
+                    if self._macro_provider_blocked(now):
+                        self.last_macro_update = now
+                    else:
+                        self.update_daemon_status("macro_refresh")
+                        from macro_analyzer import MacroAnalyzer
+                        macro = MacroAnalyzer(lang=self.u_lang)
+                        macro.fetch_global_market_status(max_assets=1)
+                        self.macro_analyzer = macro
                     self.last_macro_update = now
                     
                 if str(is_running).lower() == 'true':

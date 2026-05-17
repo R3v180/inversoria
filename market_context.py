@@ -226,6 +226,11 @@ class MarketContext:
         estructurado y compacto listo para insertar en el prompt de la IA.
         También determina el MACRO_REGIME del mercado.
         """
+        cached_context = self._get_cache('full_context')
+        if cached_context:
+            self.db.set_system_status('macro_context', json.dumps(cached_context))
+            return cached_context
+
         global_m = self.get_global_metrics()
         btc_chain = self.get_bitcoin_onchain()
         eth_gas = self.get_ethereum_gas()
@@ -292,6 +297,7 @@ ETH actividad de red: {eth_gas.get('eth_network_activity', 'N/A')} ({eth_gas.get
 
         # Guardar en DB para que la UI lo pueda mostrar
         self.db.set_system_status('macro_context', json.dumps(result))
+        self._set_cache('full_context', result)
 
         return result
 
@@ -331,10 +337,36 @@ ETH actividad de red: {eth_gas.get('eth_network_activity', 'N/A')} ({eth_gas.get
     # ─────────────────────────────────────────────
 
     def _get_cache(self, key):
+        now = time.time()
         entry = self._cache.get(key)
-        if entry and time.time() - entry['ts'] < self.CACHE_TTL:
+        if entry and now - entry['ts'] < self.CACHE_TTL:
+            print(f"[MarketContext] cache hit {key}")
             return entry['data']
+        try:
+            raw = self.db.get_system_status(f"market_context_cache_{key}")
+            if not raw and key == 'full_context':
+                raw = self.db.get_system_status('macro_context')
+            if raw:
+                persisted = json.loads(raw)
+                ts = float(persisted.get('ts') or 0)
+                if now - ts < self.CACHE_TTL:
+                    self._cache[key] = {'data': persisted.get('data') or {}, 'ts': ts}
+                    print(f"[MarketContext] cache hit {key} (persistente)")
+                    return self._cache[key]['data']
+                if key == 'full_context':
+                    legacy_ts = float(persisted.get('timestamp') or 0)
+                    if now - legacy_ts < self.CACHE_TTL:
+                        self._cache[key] = {'data': persisted, 'ts': legacy_ts}
+                        print("[MarketContext] cache hit full_context (macro_context)")
+                        return persisted
+        except Exception as e:
+            print(f"[MarketContext] cache read skipped {key}: {e}")
         return None
 
     def _set_cache(self, key, data):
-        self._cache[key] = {'data': data, 'ts': time.time()}
+        entry = {'data': data, 'ts': time.time()}
+        self._cache[key] = entry
+        try:
+            self.db.set_system_status(f"market_context_cache_{key}", json.dumps(entry))
+        except Exception as e:
+            print(f"[MarketContext] cache persist skipped {key}: {e}")
