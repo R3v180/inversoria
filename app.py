@@ -53,6 +53,34 @@ st.markdown("""
         border-radius: 5px;
         border-left: 4px solid #00FFAA;
     }
+    [data-testid="stAppViewContainer"] h1,
+    [data-testid="stAppViewContainer"] h2,
+    [data-testid="stAppViewContainer"] h3,
+    [data-testid="stAppViewContainer"] h4,
+    [data-testid="stAppViewContainer"] h5,
+    [data-testid="stAppViewContainer"] h6 {
+        color: #F9FAFB;
+    }
+    [data-testid="stAppViewContainer"] p,
+    [data-testid="stAppViewContainer"] label,
+    [data-testid="stAppViewContainer"] [data-testid="stMarkdownContainer"],
+    [data-testid="stAppViewContainer"] [data-testid="stCaptionContainer"] {
+        color: #E5E7EB;
+    }
+    [data-testid="stMetricLabel"] p {
+        color: #D1D5DB !important;
+        font-weight: 700;
+    }
+    [data-testid="stMetricValue"] {
+        color: #F9FAFB !important;
+    }
+    [data-testid="stMetricDelta"] {
+        font-weight: 700;
+    }
+    [data-testid="stDataFrame"],
+    [data-testid="stTable"] {
+        color: #E5E7EB;
+    }
     section[data-testid="stSidebar"],
     section[data-testid="stSidebar"] > div,
     div[data-testid="stSidebar"] {
