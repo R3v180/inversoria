@@ -1014,6 +1014,8 @@ InversorIA is licensed under the Apache License 2.0.
 
 Contributions are welcome, but changes to the official repository require maintainer review and explicit approval before merge. Please read [CONTRIBUTING.md](CONTRIBUTING.md) before opening large issues or pull requests.
 
+The `main` branch is protected. Maintainers and AI agents should work from feature branches and update the official repository through pull requests.
+
 Unless explicitly stated otherwise, any contribution submitted to this repository is accepted under the same Apache-2.0 license. This keeps the local open-source core usable by the community while preserving the option to build commercial hosted services, support plans or premium infrastructure around it later.
 
 ---
@@ -1718,6 +1720,8 @@ InversorIA usa la licencia Apache 2.0.
 Mantenido por Olivier Hottelet, bajo el nombre comercial OHCodex: https://ohcodex.com
 
 Las contribuciones son bienvenidas, pero los cambios al repositorio oficial requieren revisión y aprobación explícita del mantenedor antes de hacer merge. Lee [CONTRIBUTING.md](CONTRIBUTING.md) antes de abrir issues grandes o pull requests.
+
+La rama `main` está protegida. Mantenedores y agentes IA deben trabajar desde ramas de feature y actualizar el repositorio oficial mediante pull requests.
 
 Salvo que se indique explícitamente lo contrario, cualquier contribución enviada a este repositorio se acepta bajo la misma licencia Apache-2.0. Esto mantiene abierto el core local para la comunidad y conserva la posibilidad de crear servicios hosted, soporte o infraestructura premium alrededor del proyecto en el futuro.
 
