@@ -229,7 +229,7 @@ Available today:
 - Safe AI diagnostic package in settings, copyable/downloadable, with sanitized relevant config and recent logs; it excludes `.env` and known secrets.
 - AI assistant can propose configuration changes, but the UI requires explicit confirmation before applying them.
 - Historical backtesting engine with SQLite priors.
-- Incremental global macro refresh with Alpha Vantage.
+- Incremental global macro refresh with Alpha Vantage, persistent cache and provider cooldowns to avoid wasting free-tier requests after restarts or rate limits.
 - Daemon telemetry in the dashboard, with structured `[SKIP]`, `[BLOCK]`, `[ROTATION]` and `[CYCLE]` logs for executions, skipped actions and blocked BUY/SELL/rotation decisions.
 
 ---
@@ -353,7 +353,8 @@ Decision layers:
 1. **Global macro**
   - Alpha Vantage: `SPY`, `UUP`, `GLD`, `USO`, `VXX`.
   - Incremental refresh: one stale asset per macro interval.
-  - Avoids long synchronous blocking.
+  - Persistent SQLite cache plus provider cooldowns: recent attempts are not retried on every EXE restart, and rate-limit responses pause Alpha Vantage before falling back to cached macro context.
+  - Avoids long synchronous blocking and avoids logging known API secrets from provider error messages.
 2. **Crypto macro**
   - BTC dominance.
   - Market regime: `RISK_ON`, `ALTSEASON`, `NEUTRAL`, `CAUTION`, `RISK_OFF`.
@@ -1227,7 +1228,7 @@ Modos disponibles:
 - Paquete de diagnóstico seguro para IA en configuración, copiable/descargable, con config relevante saneada y logs recientes; excluye `.env` y secretos conocidos.
 - El asistente IA puede proponer cambios de configuración, pero la UI exige confirmación explícita antes de aplicarlos.
 - Backtesting histórico guardado en SQLite.
-- Macro global incremental con Alpha Vantage.
+- Macro global incremental con Alpha Vantage, caché persistente y cooldowns de proveedor para no gastar llamadas del free tier tras reinicios o rate limits.
 - Diagnóstico del daemon en UI, con logs estructurados `[SKIP]`, `[BLOCK]`, `[ROTATION]` y `[CYCLE]` para ejecuciones, skips y bloqueos de BUY/SELL/rotación.
 
 ---
@@ -1314,7 +1315,7 @@ bot_daemon.py
 
 Capas:
 
-1. Macro global.
+1. Macro global con Alpha Vantage, caché SQLite persistente y cooldowns de proveedor: no reintenta consultas recientes en cada arranque del EXE y, si hay rate limit, usa contexto macro cacheado sin exponer claves en logs.
 2. Macro cripto.
 3. Filtro técnico rápido.
 4. Multi-timeframe.

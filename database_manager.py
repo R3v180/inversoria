@@ -59,6 +59,27 @@ class DatabaseManager:
                 )
             ''')
 
+            # Provider Cooldowns (rate limits / API backoff persisted across restarts)
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS provider_cooldowns (
+                    provider TEXT NOT NULL,
+                    scope TEXT NOT NULL DEFAULT 'global',
+                    last_attempt REAL,
+                    last_error TEXT,
+                    cooldown_until REAL,
+                    PRIMARY KEY (provider, scope)
+                )
+            ''')
+            for column_name, column_def in {
+                'last_attempt': 'REAL',
+                'last_error': 'TEXT',
+                'cooldown_until': 'REAL',
+            }.items():
+                try:
+                    cursor.execute(f'ALTER TABLE provider_cooldowns ADD COLUMN {column_name} {column_def}')
+                except sqlite3.OperationalError:
+                    pass
+
             # Chat History
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS chat_history (
@@ -331,6 +352,80 @@ class DatabaseManager:
             timestamp = time.time()
         with self._get_connection() as conn:
             conn.execute('INSERT OR REPLACE INTO cooldowns (symbol, timestamp) VALUES (?, ?)', (symbol, timestamp))
+            conn.commit()
+
+    def get_provider_cooldown(self, provider, scope='global'):
+        with self._get_connection() as conn:
+            cursor = conn.execute(
+                '''
+                SELECT provider, scope, last_attempt, last_error, cooldown_until
+                FROM provider_cooldowns
+                WHERE provider = ? AND scope = ?
+                ''',
+                (provider, scope),
+            )
+            row = cursor.fetchone()
+            if not row and str(scope or 'global') == 'global':
+                row = conn.execute(
+                    '''
+                    SELECT provider, scope, last_attempt, last_error, cooldown_until
+                    FROM provider_cooldowns
+                    WHERE provider = ? AND scope = ''
+                    ''',
+                    (provider,),
+                ).fetchone()
+            if not row:
+                return {
+                    'provider': provider,
+                    'scope': scope,
+                    'last_attempt': 0.0,
+                    'last_error': '',
+                    'cooldown_until': 0.0,
+                }
+            data = dict(row)
+            data['last_attempt'] = float(data.get('last_attempt') or 0)
+            data['cooldown_until'] = float(data.get('cooldown_until') or 0)
+            data['last_error'] = data.get('last_error') or ''
+            data['reason'] = data['last_error']
+            data['updated_at'] = data['last_attempt']
+            return data
+
+    def set_provider_cooldown(
+        self,
+        provider,
+        cooldown_until=0,
+        reason='',
+        scope='global',
+        last_attempt=None,
+        last_error=None,
+    ):
+        if last_attempt is None:
+            last_attempt = time.time()
+        if last_error is not None:
+            reason = last_error
+        with self._get_connection() as conn:
+            conn.execute(
+                '''
+                INSERT OR REPLACE INTO provider_cooldowns
+                    (provider, scope, last_attempt, last_error, cooldown_until)
+                VALUES (?, ?, ?, ?, ?)
+                ''',
+                (
+                    str(provider),
+                    str(scope or 'global'),
+                    float(last_attempt or 0),
+                    str(reason or ''),
+                    float(cooldown_until or 0),
+                ),
+            )
+            conn.commit()
+
+    def clear_provider_cooldown(self, provider, scope='global'):
+        with self._get_connection() as conn:
+            conn.execute(
+                'DELETE FROM provider_cooldowns WHERE provider = ? AND scope = ?',
+                (str(provider), str(scope or 'global')),
+            )
             conn.commit()
 
     # --- Trades ---
