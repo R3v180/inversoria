@@ -36,9 +36,49 @@ st.set_page_config(
 # Estilos CSS para Bloomberg style
 st.markdown("""
 <style>
-    .stApp { background-color: #0E1117; }
-    .stMetric { background-color: #1E1E1E; padding: 10px; border-radius: 5px; border-left: 4px solid #00FFAA; }
-    div[data-testid="stSidebar"] { background-color: #161A22; border-right: 1px solid #333; }
+    .stApp,
+    [data-testid="stAppViewContainer"],
+    [data-testid="stMain"],
+    [data-testid="stHeader"] {
+        background-color: #0E1117;
+    }
+    [data-testid="stHeader"],
+    [data-testid="stToolbar"] {
+        visibility: hidden;
+        height: 0;
+    }
+    .stMetric {
+        background-color: #1E1E1E;
+        padding: 10px;
+        border-radius: 5px;
+        border-left: 4px solid #00FFAA;
+    }
+    section[data-testid="stSidebar"],
+    section[data-testid="stSidebar"] > div,
+    div[data-testid="stSidebar"] {
+        background-color: #111827;
+        border-right: 1px solid #30363D;
+    }
+    section[data-testid="stSidebar"] *,
+    div[data-testid="stSidebar"] * {
+        color: #E5E7EB;
+    }
+    section[data-testid="stSidebar"] label,
+    section[data-testid="stSidebar"] p,
+    section[data-testid="stSidebar"] span {
+        color: #E5E7EB !important;
+    }
+    section[data-testid="stSidebar"] hr {
+        border-color: #30363D;
+    }
+    section[data-testid="stSidebar"] [role="radiogroup"] label {
+        background: transparent;
+    }
+    section[data-testid="stSidebar"] button {
+        background-color: #1F2937;
+        color: #F9FAFB;
+        border: 1px solid #374151;
+    }
     .iversoria-brand {
         display: flex;
         align-items: center;
