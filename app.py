@@ -33,25 +33,30 @@ st.set_page_config(
     page_icon=APP_LOGO if os.path.exists(APP_LOGO) else "📈",
 )
 
-# Estilos CSS para Bloomberg style
+# Estilos globales: no pintan el fondo principal; dejan que el tema nativo de
+# Streamlit controle claro/oscuro y solo definen tokens adaptativos para HTML propio.
 st.markdown("""
 <style>
     .stApp,
-    [data-testid="stAppViewContainer"],
-    [data-testid="stMain"],
-    [data-testid="stHeader"] {
-        background-color: #0E1117;
-    }
-    [data-testid="stHeader"],
-    [data-testid="stToolbar"] {
-        visibility: hidden;
-        height: 0;
+    [data-testid="stAppViewContainer"] {
+        --iv-accent: #008A63;
+        --iv-accent-soft: rgba(0, 138, 99, 0.14);
+        --iv-danger: #E5484D;
+        --iv-warning: #B7791F;
+        --iv-info: #3A86FF;
+        --iv-text: currentColor;
+        --iv-muted: color-mix(in srgb, currentColor 64%, transparent);
+        --iv-border: color-mix(in srgb, currentColor 16%, transparent);
+        --iv-border-strong: color-mix(in srgb, currentColor 28%, transparent);
+        --iv-card-bg: color-mix(in srgb, currentColor 5%, transparent);
+        --iv-code-bg: color-mix(in srgb, currentColor 10%, transparent);
     }
     .stMetric {
-        background-color: #1E1E1E;
+        background-color: var(--iv-card-bg);
         padding: 10px;
         border-radius: 5px;
-        border-left: 4px solid #00FFAA;
+        border: 1px solid var(--iv-border);
+        border-left: 4px solid var(--iv-accent);
     }
     [data-testid="stAppViewContainer"] h1,
     [data-testid="stAppViewContainer"] h2,
@@ -59,80 +64,52 @@ st.markdown("""
     [data-testid="stAppViewContainer"] h4,
     [data-testid="stAppViewContainer"] h5,
     [data-testid="stAppViewContainer"] h6 {
-        color: #F9FAFB;
+        color: var(--iv-text);
     }
     [data-testid="stAppViewContainer"] p,
     [data-testid="stAppViewContainer"] label,
     [data-testid="stAppViewContainer"] [data-testid="stMarkdownContainer"],
     [data-testid="stAppViewContainer"] [data-testid="stCaptionContainer"] {
-        color: #E5E7EB;
+        color: var(--iv-text);
     }
     [data-testid="stMetricLabel"] p {
-        color: #D1D5DB !important;
+        color: var(--iv-muted) !important;
         font-weight: 700;
     }
     [data-testid="stMetricValue"] {
-        color: #F9FAFB !important;
+        color: var(--iv-text) !important;
     }
     [data-testid="stMetricDelta"] {
         font-weight: 700;
     }
-    [data-testid="stDataFrame"],
-    [data-testid="stTable"] {
-        color: #E5E7EB;
+    [data-testid="stExpander"],
+    [data-testid="stVerticalBlockBorderWrapper"] {
+        border-color: var(--iv-border);
     }
-    [data-testid="stAppViewContainer"] [data-testid="stButton"] button,
-    [data-testid="stAppViewContainer"] button[kind="secondary"],
-    [data-testid="stAppViewContainer"] button[data-testid="baseButton-secondary"] {
-        background-color: #1F2937;
-        color: #F9FAFB !important;
-        border: 1px solid #4B5563;
-        border-radius: 0.5rem;
+    .iv-card {
+        background: var(--iv-card-bg);
+        color: var(--iv-text);
+        border: 1px solid var(--iv-border);
+        border-radius: 12px;
     }
-    [data-testid="stAppViewContainer"] [data-testid="stButton"] button *,
-    [data-testid="stAppViewContainer"] button[kind="secondary"] *,
-    [data-testid="stAppViewContainer"] button[data-testid="baseButton-secondary"] * {
-        color: #F9FAFB !important;
+    .iv-muted {
+        color: var(--iv-muted);
     }
-    [data-testid="stAppViewContainer"] [data-testid="stButton"] button:hover,
-    [data-testid="stAppViewContainer"] button[kind="secondary"]:hover,
-    [data-testid="stAppViewContainer"] button[data-testid="baseButton-secondary"]:hover {
-        background-color: #374151;
-        border-color: #00FFAA;
-        color: #FFFFFF !important;
+    .iv-log-box {
+        background: var(--iv-code-bg);
+        color: var(--iv-text);
+        border: 1px solid var(--iv-border);
+        border-radius: 8px;
+        font-family: 'Courier New', monospace;
     }
-    [data-testid="stAppViewContainer"] [data-testid="stButton"] button:disabled,
-    [data-testid="stAppViewContainer"] button:disabled {
-        background-color: #111827;
-        color: #9CA3AF !important;
-        border-color: #30363D;
-        opacity: 0.75;
-    }
-    section[data-testid="stSidebar"],
-    section[data-testid="stSidebar"] > div,
-    div[data-testid="stSidebar"] {
-        background-color: #111827;
-        border-right: 1px solid #30363D;
-    }
-    section[data-testid="stSidebar"] *,
-    div[data-testid="stSidebar"] * {
-        color: #E5E7EB;
-    }
-    section[data-testid="stSidebar"] label,
-    section[data-testid="stSidebar"] p,
-    section[data-testid="stSidebar"] span {
-        color: #E5E7EB !important;
-    }
+    .iv-positive { color: var(--iv-accent); }
+    .iv-negative { color: var(--iv-danger); }
+    .iv-warning { color: var(--iv-warning); }
     section[data-testid="stSidebar"] hr {
-        border-color: #30363D;
+        border-color: var(--iv-border);
     }
     section[data-testid="stSidebar"] [role="radiogroup"] label {
         background: transparent;
-    }
-    section[data-testid="stSidebar"] button {
-        background-color: #1F2937;
-        color: #F9FAFB;
-        border: 1px solid #374151;
     }
     .iversoria-brand {
         display: flex;
@@ -150,12 +127,12 @@ st.markdown("""
         font-weight: 800;
         font-size: 1.05rem;
         line-height: 1.05;
-        color: #F9FAFB;
+        color: var(--iv-text);
     }
     .iversoria-brand-subtitle {
         font-size: 0.68rem;
         line-height: 1.15;
-        color: #9CA3AF;
+        color: var(--iv-muted);
         margin-top: 0.1rem;
     }
 </style>
@@ -262,9 +239,14 @@ with st.sidebar:
         st.session_state.db.set_system_status('is_running', 'true' if new_status else 'false')
         st.rerun()
     
-    status_color = "#00FFAA" if is_running else "#FF4444"
+    status_color = "var(--iv-accent)" if is_running else "var(--iv-danger)"
     status_text = _('STATUS_ONLINE') if is_running else _('STATUS_OFFLINE')
-    st.markdown(f"<div style='text-align:center; padding:10px; border-radius:5px; background:#1E1E1E; color:{status_color}; font-weight:bold;'>{status_text}</div>", unsafe_allow_html=True)
+    st.markdown(
+        f"<div style='text-align:center; padding:10px; border-radius:5px; "
+        f"background:var(--iv-card-bg); border:1px solid var(--iv-border); "
+        f"color:{status_color}; font-weight:bold;'>{status_text}</div>",
+        unsafe_allow_html=True,
+    )
     
     st.markdown("---")
     st.subheader(f"⚙️ { _('NAV_SETTINGS') }")

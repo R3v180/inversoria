@@ -6,22 +6,20 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import pandas_ta as ta
 from config import SYMBOLS
+from ui_theme import apply_plotly_theme, plotly_theme_values
 
 def render_terminal():
     st.markdown("""
         <style>
         .stSelectbox div[data-baseweb="select"] {
-            background-color: #161B22;
+            background-color: var(--iv-card-bg);
+            color: var(--iv-text);
             border-radius: 8px;
         }
         .log-container {
             height:300px;
             overflow-y:auto;
-            background-color:#0D1117;
             padding:15px;
-            border-radius:8px;
-            border: 1px solid #30363D;
-            font-family: 'Courier New', monospace;
             font-size: 0.85em;
         }
         </style>
@@ -91,6 +89,7 @@ def render_terminal():
             
             # Filtrar para no mostrar las 300 velas, solo las últimas 100 para mejor visibilidad
             df = df.tail(100)
+            theme_values = plotly_theme_values()
             
             # Crear Subplots
             fig = make_subplots(rows=3, cols=1, shared_xaxes=True, 
@@ -105,7 +104,7 @@ def render_terminal():
                                         
             # EMAs
             fig.add_trace(go.Scatter(x=df.index, y=df['EMA_50'], line=dict(color='orange', width=1.5), name='EMA 50'), row=1, col=1)
-            fig.add_trace(go.Scatter(x=df.index, y=df['EMA_200'], line=dict(color='white', width=2), name='EMA 200'), row=1, col=1)
+            fig.add_trace(go.Scatter(x=df.index, y=df['EMA_200'], line=dict(color=theme_values["ema_slow"], width=2), name='EMA 200'), row=1, col=1)
             
             # RSI
             fig.add_trace(go.Scatter(x=df.index, y=df['RSI_14'], line=dict(color='purple', width=1.5), name='RSI 14'), row=2, col=1)
@@ -115,9 +114,12 @@ def render_terminal():
             # ATR
             fig.add_trace(go.Scatter(x=df.index, y=df['ATR_14'], line=dict(color='cyan', width=1.5), name='ATR 14'), row=3, col=1)
             
-            fig.update_layout(height=700, margin=dict(l=0, r=0, t=30, b=0),
-                              paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
-                              xaxis_rangeslider_visible=False)
+            apply_plotly_theme(
+                fig,
+                height=700,
+                margin=dict(l=0, r=0, t=30, b=0),
+                xaxis_rangeslider_visible=False,
+            )
                               
             fig.update_yaxes(title_text=_('PRICE'), row=1, col=1)
             fig.update_yaxes(title_text="RSI", row=2, col=1)
@@ -152,11 +154,11 @@ def render_terminal():
         st.markdown("---")
         st.markdown(f"**{ _('LIVE_LOGS') }:**")
         
-        log_html = "<div class='log-container'>"
+        log_html = "<div class='log-container iv-log-box'>"
         raw_logs = st.session_state.db.get_logs()
         logs_to_show = [l for l in raw_logs if "Escaneo" not in l and "Ciclo" not in l][-20:]
         for log in logs_to_show:
-            log_html += f"<span style='color:#00FFAA;'>>></span> <span style='color:#D4D4D4;'>{log}</span><br/>"
+            log_html += f"<span class='iv-positive'>>></span> <span>{log}</span><br/>"
         log_html += "</div>"
         
         st.markdown(log_html, unsafe_allow_html=True)

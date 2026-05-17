@@ -31,10 +31,10 @@ def _label_impact(value: str) -> str:
 
 def _badge_colors(sentiment: str):
     return {
-        "positive": ("#00FFAA", "rgba(0,255,170,0.12)"),
-        "negative": ("#FF4444", "rgba(255,68,68,0.12)"),
-        "neutral": ("#FFD166", "rgba(255,209,102,0.12)"),
-    }.get(sentiment, ("#9CA3AF", "rgba(156,163,175,0.12)"))
+        "positive": ("var(--iv-accent)", "var(--iv-accent-soft)"),
+        "negative": ("var(--iv-danger)", "rgba(255,68,68,0.12)"),
+        "neutral": ("var(--iv-warning)", "rgba(255,209,102,0.12)"),
+    }.get(sentiment, ("var(--iv-muted)", "rgba(156,163,175,0.12)"))
 
 
 def _news_styles():
@@ -43,38 +43,41 @@ def _news_styles():
         <style>
         .news-card {
             display: flex; gap: 14px; padding: 14px; margin-bottom: 14px;
-            border: 1px solid #30363D; border-radius: 12px; background: #111827;
+            border: 1px solid var(--iv-border); border-radius: 12px; background: var(--iv-card-bg);
+            color: var(--iv-text);
         }
         .news-card img {
             width: 150px; height: 96px; object-fit: cover; border-radius: 10px;
-            border: 1px solid #30363D; background: #0D1117;
+            border: 1px solid var(--iv-border); background: var(--iv-bg);
         }
         .news-thumb-empty {
-            width: 150px; height: 96px; border-radius: 10px; border: 1px solid #30363D;
-            background: linear-gradient(135deg, rgba(0,255,170,.14), rgba(58,134,255,.12));
-            display: flex; align-items: center; justify-content: center; color: #00FFAA;
+            width: 150px; height: 96px; border-radius: 10px; border: 1px solid var(--iv-border);
+            background: linear-gradient(135deg, var(--iv-accent-soft), rgba(58,134,255,.12));
+            display: flex; align-items: center; justify-content: center; color: var(--iv-accent);
             font-weight: 700; font-size: 1.8em; flex-shrink: 0;
         }
         .news-body { flex: 1; min-width: 0; }
         .news-title { font-size: 1.05em; font-weight: 700; line-height: 1.25; margin-bottom: 7px; }
-        .news-meta { color: #9CA3AF; font-size: .82em; margin-bottom: 8px; }
-        .news-summary { color: #D1D5DB; font-size: .9em; line-height: 1.35; }
+        .news-title a { color: var(--iv-text); }
+        .news-meta { color: var(--iv-muted); font-size: .82em; margin-bottom: 8px; }
+        .news-summary { color: var(--iv-text); font-size: .9em; line-height: 1.35; }
         .news-pill {
             display: inline-block; padding: 3px 8px; border-radius: 999px;
             font-size: .75em; font-weight: 700; margin-right: 5px; border: 1px solid currentColor;
         }
         .news-mini-card {
             display:flex; gap:10px; padding:10px; margin-bottom:9px; border-radius:10px;
-            border:1px solid #30363D; background:#111827;
+            border:1px solid var(--iv-border); background:var(--iv-card-bg); color:var(--iv-text);
         }
         .news-mini-card img { width:72px; height:52px; object-fit:cover; border-radius:7px; flex-shrink:0; }
         .news-mini-empty {
             width:72px; height:52px; border-radius:7px; flex-shrink:0;
-            background:linear-gradient(135deg, rgba(0,255,170,.14), rgba(58,134,255,.12));
-            color:#00FFAA; display:flex; align-items:center; justify-content:center; font-weight:800;
+            background:linear-gradient(135deg, var(--iv-accent-soft), rgba(58,134,255,.12));
+            color:var(--iv-accent); display:flex; align-items:center; justify-content:center; font-weight:800;
         }
         .news-mini-title { font-size:.88em; font-weight:700; line-height:1.25; margin-bottom:4px; }
-        .news-mini-meta { color:#9CA3AF; font-size:.72em; line-height:1.25; }
+        .news-mini-title a { color: var(--iv-text); }
+        .news-mini-meta { color:var(--iv-muted); font-size:.72em; line-height:1.25; }
         </style>
         """,
         unsafe_allow_html=True,
@@ -246,7 +249,7 @@ def render_news():
                         <span class="news-pill" style="color:{color}; background:{bg};">
                             {_label_sentiment(sentiment)}
                         </span>
-                        <span class="news-pill" style="color:#93C5FD; background:rgba(147,197,253,.10);">
+                        <span class="news-pill" style="color:var(--iv-info); background:rgba(147,197,253,.10);">
                             {_label_impact(item.get('impact'))}
                         </span>
                         <div class="news-summary">{summary}</div>

@@ -286,15 +286,22 @@ def render_wallet():
     st.markdown(
         """
         <style>
-        .wallet-box { background-color: #161B22; padding: 14px; border-radius: 10px;
-        border: 1px solid #30363D; margin-bottom: 12px; }
+        .wallet-box {
+            background-color: var(--iv-card-bg);
+            color: var(--iv-text);
+            padding: 14px;
+            border-radius: 10px;
+            border: 1px solid var(--iv-border);
+            margin-bottom: 12px;
+        }
         .wallet-recover-chip {
             display: inline-block; margin: 4px 6px 4px 0; padding: 6px 12px;
-            border-radius: 8px; background: rgba(0, 255, 170, 0.15);
-            border: 1px solid #00FFAA; color: #00FFAA; font-weight: 600; font-size: 0.9em;
+            border-radius: 8px; background: var(--iv-accent-soft);
+            border: 1px solid var(--iv-accent); color: var(--iv-accent); font-weight: 600; font-size: 0.9em;
         }
         .wallet-recover-panel {
-            background: rgba(0, 255, 170, 0.08); border: 1px solid #00FFAA;
+            background: var(--iv-accent-soft); border: 1px solid var(--iv-accent);
+            color: var(--iv-text);
             border-radius: 10px; padding: 12px 14px; margin-bottom: 16px;
         }
         </style>

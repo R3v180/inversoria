@@ -10,7 +10,41 @@ from config_importer import (
     parse_config_payload,
     validate_config_payload,
 )
+from diagnostic_utils import build_safe_diagnostic_package
 from i18n import _
+
+
+def _render_ai_diagnostic_package():
+    with st.container(border=True):
+        st.subheader(_("DIAG_AI_TITLE"))
+        st.caption(_("DIAG_AI_HELP"))
+
+        db = st.session_state.get("db")
+        exchange = st.session_state.get("exchange")
+        if st.button(_("DIAG_AI_GENERATE"), type="secondary"):
+            st.session_state["settings_ai_diagnostic_package"] = build_safe_diagnostic_package(
+                db=db,
+                exchange=exchange,
+            )
+
+        package = st.session_state.get("settings_ai_diagnostic_package")
+        if not package:
+            st.info(_("DIAG_AI_EMPTY"))
+            return
+
+        st.text_area(
+            _("DIAG_AI_TEXT_LABEL"),
+            value=package,
+            height=360,
+            help=_("DIAG_AI_TEXT_HELP"),
+        )
+        st.download_button(
+            _("DIAG_AI_DOWNLOAD"),
+            data=package,
+            file_name="inversoria_diagnostico_ia.txt",
+            mime="text/plain",
+            width="stretch",
+        )
 
 
 def _render_config_import_export():
@@ -35,6 +69,8 @@ def _render_config_import_export():
             mime="application/json",
             width="stretch",
         )
+
+    _render_ai_diagnostic_package()
 
     raw_config = st.text_area(
         _("CONFIG_IMPORT_LABEL"),

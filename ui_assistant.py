@@ -10,6 +10,7 @@ from config_importer import (
     parse_config_payload,
     validate_config_payload,
 )
+from diagnostic_utils import read_recent_log_summary
 from i18n import _
 
 
@@ -652,7 +653,7 @@ def _build_assistant_context(db, exchange):
             f"{k} {v['price']} ({v['change_24h']:+.2f}%)" for k, v in macro_db.items()
         ))
 
-    logs = db.get_logs()[-8:]
+    logs = read_recent_log_summary(db=db, tail_lines=60, focus_lines=40)
     return f"""
 === CONTEXTO OPERATIVO COMPACTO INVERSORIA ===
 

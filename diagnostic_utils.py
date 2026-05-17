@@ -1,0 +1,210 @@
+import json
+import re
+import time
+from pathlib import Path
+
+import config
+from config_importer import CONFIG_SCHEMA
+
+
+ROOT = Path(__file__).resolve().parent
+LOG_DIR = ROOT / "launcher_logs"
+FOCUS_TAGS = ("[SKIP]", "[BLOCK]", "[BUY]", "[SELL]", "[ROTATION]", "[ERROR]", "[WARN]")
+
+DIAGNOSTIC_CONFIG_KEYS = (
+    "MODO_SIMULACION",
+    "SIMULATION_PROFILE_ID",
+    "PRESUPUESTO_INICIAL",
+    "TRADING_EXECUTION_MODE",
+    "DECISION_MODE",
+    "MIN_AUTO_DECISION_SCORE",
+    "MANUAL_MAX_POSITIONS_PRIORITY",
+    "MAX_OPEN_POSITIONS",
+    "RISK_PER_TRADE",
+    "MIN_PROFIT_NET",
+    "STOP_LOSS_PERCENT",
+    "MAX_DAILY_LOSS_PCT",
+    "MAX_PORTFOLIO_EXPOSURE_PCT",
+    "VOLATILITY_SIZING_ENABLED",
+    "MAX_POSITION_RISK_PCT",
+    "MAX_VOLATILITY_POSITION_MULTIPLIER",
+    "MIN_POSITION_USDT",
+    "MAX_SYMBOL_EXPOSURE_PCT",
+    "MAX_ALT_EXPOSURE_PCT",
+    "MAX_BUCKET_EXPOSURE_PCT",
+    "ADAPTIVE_SCORING_ENABLED",
+    "ADAPTIVE_MIN_TRADES",
+    "ADAPTIVE_MAX_SCORE_ADJUSTMENT",
+    "METRICS_ROLLING_WINDOW",
+    "ROTATION_ENABLED",
+    "ROTATION_MIN_PROFIT",
+    "ROTATION_CONFIDENCE_GAP",
+    "ROTATION_MIN_NEW_CONFIDENCE",
+    "AI_ANALYSIS_INTERVAL",
+    "TRADING_FEE_RATE",
+    "BUY_SLIPPAGE_LIMIT",
+    "SELL_SLIPPAGE_LIMIT",
+)
+
+_SENSITIVE_KEY_RE = re.compile(
+    r"(?i)([\"']?\b[A-Z0-9_.-]*(?:API[_-]?KEY|TOKEN|SECRET|PASSWORD|PASS|PRIVATE[_-]?KEY|"
+    r"ACCESS[_-]?KEY|AUTHORIZATION)[A-Z0-9_.-]*[\"']?\s*[:=]\s*)([\"']?)([^\s,\"'}]+)"
+)
+_AUTH_HEADER_RE = re.compile(r"(?i)\b(Authorization\s*[:=]\s*)(?:Bearer|Basic)?\s*[A-Za-z0-9._~+/=-]{12,}")
+_BEARER_RE = re.compile(r"(?i)\b(Bearer|Basic)\s+[A-Za-z0-9._~+/=-]{12,}")
+_EMAIL_RE = re.compile(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b")
+_LONG_TOKEN_RE = re.compile(r"\b(?=[A-Za-z0-9+/_.=-]*[A-Za-z])(?=[A-Za-z0-9+/_.=-]*\d)[A-Za-z0-9+/_.=-]{36,}\b")
+
+
+def sanitize_text(text) -> str:
+    """Redacta secretos comunes sin eliminar señales operativas útiles."""
+    safe = str(text or "")
+    safe = _EMAIL_RE.sub("[email-redacted]", safe)
+    safe = _AUTH_HEADER_RE.sub(lambda m: f"{m.group(1)}[redacted]", safe)
+    safe = _BEARER_RE.sub(lambda m: f"{m.group(1)} [redacted]", safe)
+    safe = _SENSITIVE_KEY_RE.sub(lambda m: f"{m.group(1)}{m.group(2)}[redacted]", safe)
+    safe = _LONG_TOKEN_RE.sub("[redacted-token]", safe)
+    return safe
+
+
+def _safe_float(value, default=0.0):
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _tail_file(path: Path, limit: int) -> list[str]:
+    if not path.exists() or not path.is_file():
+        return []
+    try:
+        return path.read_text(encoding="utf-8", errors="replace").splitlines()[-limit:]
+    except OSError as exc:
+        return [f"No se pudo leer {path.name}: {exc}"]
+
+
+def _bounded_lines(lines, limit: int, max_len: int = 420) -> list[str]:
+    out = []
+    for line in lines[-limit:]:
+        clean = sanitize_text(line).strip()
+        if len(clean) > max_len:
+            clean = clean[: max_len - 1].rstrip() + "…"
+        if clean:
+            out.append(clean)
+    return out
+
+
+def read_recent_log_summary(db=None, tail_lines: int = 80, focus_lines: int = 80) -> str:
+    sections = []
+
+    db_lines = []
+    if db is not None and hasattr(db, "get_logs"):
+        try:
+            db_lines = db.get_logs()[-tail_lines:]
+        except Exception as exc:
+            db_lines = [f"No se pudieron leer logs de DB: {exc}"]
+    if db_lines:
+        sections.append("DB logs recientes:\n" + "\n".join(_bounded_lines(db_lines, min(tail_lines, 60))))
+
+    for filename in ("daemon.log", "streamlit.log"):
+        lines = _tail_file(LOG_DIR / filename, tail_lines)
+        if not lines:
+            continue
+        focus = [line for line in lines if any(tag in line for tag in FOCUS_TAGS)]
+        chosen = focus[-focus_lines:] if focus else lines[-min(tail_lines, 40):]
+        sections.append(f"{filename} reciente:\n" + "\n".join(_bounded_lines(chosen, min(focus_lines, 80))))
+
+    return "\n\n".join(sections) if sections else "Sin logs locales recientes disponibles."
+
+
+def _safe_config_snapshot() -> dict:
+    snapshot = {}
+    for key in DIAGNOSTIC_CONFIG_KEYS:
+        if key not in CONFIG_SCHEMA:
+            continue
+        default = config.DEFAULT_SETTINGS.get(key, "")
+        snapshot[key] = config.get_setting(key, default)
+    return snapshot
+
+
+def _daemon_diagnostics(db) -> str:
+    if db is None or not hasattr(db, "get_system_status"):
+        return "No disponible: base de datos no inicializada."
+    try:
+        raw = db.get_system_status("daemon_diagnostics", "{}") or "{}"
+        diag = json.loads(raw)
+    except Exception as exc:
+        return f"No disponible: {exc}"
+    if not diag:
+        return "Sin diagnóstico del daemon todavía."
+
+    compact = {
+        "state": diag.get("state"),
+        "seconds_since_cycle": None,
+        "scanned": diag.get("scanned"),
+        "actions": diag.get("actions"),
+        "providers": diag.get("providers"),
+        "hold_reasons": dict(list((diag.get("hold_reasons") or {}).items())[:8]),
+        "skipped": diag.get("skipped"),
+        "open_positions": diag.get("open_positions"),
+        "dynamic_max": diag.get("dynamic_max"),
+        "risk_guards": diag.get("risk_guards"),
+        "top_buy_candidates": (diag.get("top_buy_candidates") or [])[:5],
+    }
+    if diag.get("cycle_ts"):
+        compact["seconds_since_cycle"] = int(max(0, time.time() - float(diag["cycle_ts"])))
+    return sanitize_text(json.dumps(compact, indent=2, ensure_ascii=False))
+
+
+def build_safe_diagnostic_package(db=None, exchange=None, include_instructions: bool = True) -> str:
+    mode = "simulación" if config.get_setting("MODO_SIMULACION", True, bool) else "REAL"
+    if exchange is not None and hasattr(exchange, "modo_simulacion"):
+        mode = "simulación" if exchange.modo_simulacion else "REAL"
+
+    balance = None
+    effective_max = None
+    if exchange is not None and hasattr(exchange, "get_balance"):
+        try:
+            balance = _safe_float(exchange.get_balance())
+            effective_max = config.get_effective_max_positions(balance)
+        except Exception:
+            balance = None
+
+    config_snapshot = _safe_config_snapshot()
+    lines = [
+        "=== PAQUETE DIAGNÓSTICO SEGURO INVERSORIA ===",
+        "",
+    ]
+    if include_instructions:
+        lines.extend([
+            "Instrucciones para IA:",
+            "- Analiza estos ajustes y logs recientes sin pedir claves API ni secretos.",
+            "- Si propones cambios de configuración, devuelve solo claves permitidas y evita credenciales.",
+            "- Prioriza riesgos operativos: modo real/simulación, límites, mínimos, rotación, bloqueos y errores.",
+            "",
+        ])
+
+    lines.extend([
+        "MODO / EJECUCIÓN:",
+        f"- Modo actual: {mode}",
+        f"- TRADING_EXECUTION_MODE: {config_snapshot.get('TRADING_EXECUTION_MODE')}",
+        f"- DECISION_MODE: {config_snapshot.get('DECISION_MODE')}",
+        f"- Balance estimado para límite dinámico: {balance:.2f} USDT" if balance is not None else "- Balance estimado: no disponible en esta pantalla",
+        f"- Límite efectivo de posiciones: {effective_max}" if effective_max is not None else "- Límite efectivo de posiciones: no calculado",
+        "",
+        "CONFIGURACIÓN SEGURA RELEVANTE:",
+        sanitize_text(json.dumps(config_snapshot, indent=2, ensure_ascii=False)),
+        "",
+        "DIAGNÓSTICO DEL DAEMON:",
+        _daemon_diagnostics(db),
+        "",
+        "LOGS RECIENTES SANEADOS:",
+        read_recent_log_summary(db=db),
+        "",
+        "NOTAS DE SEGURIDAD:",
+        "- No se incluye .env ni JSON privado completo.",
+        "- Las claves con API_KEY, TOKEN, SECRET, PASSWORD, AUTHORIZATION y correos se redactan.",
+        "- Los logs se recortan para evitar enviar miles de líneas.",
+    ])
+    return sanitize_text("\n".join(lines))
+

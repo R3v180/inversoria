@@ -149,6 +149,102 @@ class BotDaemon:
             f"provider={provider} | regime={regime} | strategy={strategy} | reason={reason}"
         )
 
+    def _sell_confidence_threshold(self, decision):
+        regime = (decision or {}).get('regime', 'RANGING')
+        return 0.75 if regime == 'TRENDING_UP' else 0.65
+
+    def _is_expected_order_block(self, reason):
+        text = str(reason or "").lower()
+        expected = (
+            "slippage",
+            "insufficient",
+            "saldo",
+            "balance",
+            "fondos",
+            "mínimo",
+            "minimo",
+            "menor al mínimo",
+            "cantidad virtual insuficiente",
+            "no vendible",
+        )
+        return any(token in text for token in expected)
+
+    def _sell_notional_floor(self, symbol, price=None, validation=None):
+        floor = self._safe_float(getattr(config, "MIN_POSITION_USDT", 1.0), 1.0)
+        validation = validation or {}
+        min_cost = self._safe_float(validation.get("min_cost"), 0.0)
+        if min_cost > 0:
+            floor = max(floor, min_cost)
+        min_amount = self._safe_float(validation.get("min_amount"), 0.0)
+        px = self._safe_float(price, 0.0)
+        if min_amount > 0 and px > 0:
+            floor = max(floor, min_amount * px)
+        try:
+            constraints = self.exchange.get_market_sell_constraints(symbol)
+        except Exception:
+            constraints = None
+        if constraints:
+            min_cost = self._safe_float(constraints.get("min_cost"), 0.0)
+            if min_cost > 0:
+                floor = max(floor, min_cost)
+            min_amount = self._safe_float(constraints.get("min_amount"), 0.0)
+            if min_amount > 0 and px > 0:
+                floor = max(floor, min_amount * px)
+        return floor
+
+    def _balance_is_below_sell_minimum(self, value_usdt, min_notional, validation=None):
+        errors = validation.get("errors") if validation else []
+        below_market_min = any(
+            str(err).startswith(("BELOW_MIN_AMOUNT", "BELOW_MIN_COST", "PRECISION_ZERO", "ZERO_AMOUNT"))
+            for err in (errors or [])
+        )
+        return self._safe_float(value_usdt, 0.0) < self._safe_float(min_notional, 0.0) or below_market_min
+
+    def _sellable_balance_snapshot(self, symbol, current_price=None, amount_override=None, check_slippage=False):
+        try:
+            amount = self._safe_float(
+                amount_override if amount_override is not None else self.exchange.get_coin_balance(symbol),
+                0.0,
+            )
+        except Exception:
+            amount = 0.0
+        price = self._safe_float(current_price, 0.0)
+        if price <= 0:
+            try:
+                price = self._safe_float(self.exchange.get_ticker(symbol), 0.0)
+            except Exception:
+                price = 0.0
+        value = amount * price if amount > 0 and price > 0 else 0.0
+        validation = None
+        if amount > 0:
+            try:
+                validation = self.exchange.prevalidate_market_sell(
+                    symbol,
+                    amount,
+                    price_hint=price or None,
+                    free_override=amount,
+                    check_slippage=check_slippage,
+                )
+            except Exception as exc:
+                validation = {"ok": False, "errors": [f"PREVALIDATION:{exc}"]}
+        min_notional = self._sell_notional_floor(symbol, price=price, validation=validation)
+        if amount <= 0:
+            status = "NO_SELLABLE_BALANCE"
+        elif self._balance_is_below_sell_minimum(value, min_notional, validation):
+            status = "DUST_BELOW_MIN_ORDER"
+        elif validation and not validation.get("ok"):
+            status = "SELL_PREVALIDATION"
+        else:
+            status = "SELLABLE_ADOPTABLE_BALANCE"
+        return {
+            "status": status,
+            "amount": amount,
+            "price": price,
+            "value": value,
+            "min_notional": min_notional,
+            "validation": validation or {},
+        }
+
     def _position_extra(self, pos):
         raw = (pos or {}).get('extra_data')
         if not raw:
@@ -334,6 +430,38 @@ class BotDaemon:
             "capped": capped + 1e-8 < amount_usdt,
         }
 
+    def _record_adopted_position(self, symbol, price, amount, notional, open_positions):
+        mode_label = "simulated" if self.exchange.modo_simulacion else "real"
+        extra = {
+            "external_adopted": True,
+            "provider": "ExchangeBalance" if not self.exchange.modo_simulacion else "SimulatedBalance",
+            "reasoning": f"Saldo {mode_label} vendible adoptado para protección automática.",
+            "decision_mode": getattr(config, "DECISION_MODE", "hybrid"),
+            "execution_mode": getattr(config, "TRADING_EXECUTION_MODE", "auto"),
+        }
+        entry_time = time.time()
+        extra_data = json.dumps(extra, ensure_ascii=False)
+        self.db.add_open_position(
+            symbol,
+            price,
+            price,
+            amount,
+            entry_time=entry_time,
+            extra_data=extra_data,
+        )
+        open_positions[symbol] = {
+            "symbol": symbol,
+            "entry_price": price,
+            "highest_price": price,
+            "amount": amount,
+            "entry_time": entry_time,
+            "extra_data": extra_data,
+        }
+        self.log_message(
+            f"[ADOPT] {symbol} {mode_label} balance managed | qty={amount:.8g} | "
+            f"value={notional:.2f} USDT | reason=sellable_exchange_balance"
+        )
+
     def adopt_sellable_positions(self, open_positions):
         """Adopta saldos vendibles aunque no pertenezcan al universo de nuevas compras."""
         adopted = []
@@ -364,19 +492,34 @@ class BotDaemon:
                 skipped["ADOPT_NO_VALUE"] = skipped.get("ADOPT_NO_VALUE", 0) + 1
                 continue
 
+            balance_state = self._sellable_balance_snapshot(
+                symbol,
+                current_price=price,
+                amount_override=free_amount,
+                check_slippage=False,
+            )
+            min_notional = self._safe_float(balance_state.get("min_notional"), config.MIN_POSITION_USDT)
+            notional_est = self._safe_float(balance_state.get("value"), usd_free)
+            if balance_state.get("status") == "DUST_BELOW_MIN_ORDER":
+                skipped["ADOPT_DUST_BELOW_MIN_ORDER"] = skipped.get("ADOPT_DUST_BELOW_MIN_ORDER", 0) + 1
+                self.log_message(
+                    f"[SKIP] {symbol} adopt ignored | reason=DUST_BELOW_MIN_ORDER | "
+                    f"value={notional_est:.4f} < min={min_notional:.4f} | qty={free_amount:.8g}"
+                )
+                continue
+
             if self.exchange.modo_simulacion:
                 amount = free_amount
                 notional = amount * price
             else:
-                validation = self.exchange.prevalidate_market_sell(
-                    symbol,
-                    free_amount,
-                    price_hint=price,
-                    free_override=free_amount,
-                    check_slippage=False,
-                )
+                validation = balance_state.get("validation") or {}
                 if not validation.get("ok"):
+                    errors = ",".join(validation.get("errors") or ["UNKNOWN"])
                     skipped["ADOPT_UNSELLABLE"] = skipped.get("ADOPT_UNSELLABLE", 0) + 1
+                    self.log_message(
+                        f"[SKIP] {symbol} adopt ignored | reason=ADOPT_UNSELLABLE | "
+                        f"errors={errors} | value={notional_est:.4f} | min={min_notional:.4f} | qty={free_amount:.8g}"
+                    )
                     continue
                 amount = self._safe_float(validation.get("amount_after_precision"), free_amount)
                 notional = self._safe_float(validation.get("notional"), amount * price)
@@ -384,37 +527,8 @@ class BotDaemon:
                 skipped["ADOPT_ZERO_AFTER_PRECISION"] = skipped.get("ADOPT_ZERO_AFTER_PRECISION", 0) + 1
                 continue
 
-            mode_label = "simulated" if self.exchange.modo_simulacion else "real"
-            extra = {
-                "external_adopted": True,
-                "provider": "ExchangeBalance" if not self.exchange.modo_simulacion else "SimulatedBalance",
-                "reasoning": f"Saldo {mode_label} vendible adoptado para protección automática.",
-                "decision_mode": getattr(config, "DECISION_MODE", "hybrid"),
-                "execution_mode": getattr(config, "TRADING_EXECUTION_MODE", "auto"),
-            }
-            entry_time = time.time()
-            extra_data = json.dumps(extra, ensure_ascii=False)
-            self.db.add_open_position(
-                symbol,
-                price,
-                price,
-                amount,
-                entry_time=entry_time,
-                extra_data=extra_data,
-            )
-            open_positions[symbol] = {
-                "symbol": symbol,
-                "entry_price": price,
-                "highest_price": price,
-                "amount": amount,
-                "entry_time": entry_time,
-                "extra_data": extra_data,
-            }
+            self._record_adopted_position(symbol, price, amount, notional, open_positions)
             adopted.append(symbol)
-            self.log_message(
-                f"[ADOPT] {symbol} {mode_label} balance managed | qty={amount:.8g} | "
-                f"value={notional:.2f} USDT | reason=sellable_exchange_balance"
-            )
 
         return adopted, skipped
 
@@ -723,17 +837,22 @@ class BotDaemon:
                     )
                 return False
 
+            quote_balance = self._safe_float(sizing.get('balance_usdt'), 0.0)
             if amount_usdt < config.MIN_POSITION_USDT:
+                block_reason = "INSUFFICIENT_QUOTE_BALANCE" if quote_balance < config.MIN_POSITION_USDT else "MIN_POSITION"
                 self.log_message(
-                    f"[BLOCK] {sym} BUY->HOLD | reason=MIN_POSITION | "
+                    f"[BLOCK] {sym} BUY->HOLD | reason={block_reason} | "
                     f"amount={amount_usdt:.4f} < min={config.MIN_POSITION_USDT:.4f} | "
-                    f"balance={sizing.get('balance_usdt', 0):.2f}"
+                    f"quote_balance={quote_balance:.2f}"
                 )
                 if decision_journal_id:
                     self.db.update_decision_journal(
                         decision_journal_id,
-                        execution_status="blocked_min_size",
-                        block_reason=f"amount_usdt {amount_usdt:.4f} < MIN_POSITION_USDT {config.MIN_POSITION_USDT:.4f}",
+                        execution_status="blocked_balance" if block_reason == "INSUFFICIENT_QUOTE_BALANCE" else "blocked_min_size",
+                        block_reason=(
+                            f"{block_reason}: amount_usdt {amount_usdt:.4f} < "
+                            f"MIN_POSITION_USDT {config.MIN_POSITION_USDT:.4f}; quote_balance {quote_balance:.4f}"
+                        ),
                     )
                 return False
 
@@ -783,12 +902,17 @@ class BotDaemon:
                 )
                 return True
 
-            self.log_message(f"[ERROR] {sym} BUY failed | reason={res.get('reason', res)}")
+            fail_reason = str(res.get('reason', res))
+            tag = "[BLOCK]" if self._is_expected_order_block(fail_reason) else "[ERROR]"
+            self.log_message(
+                f"{tag} {sym} BUY failed | reason={fail_reason} | "
+                f"amount={amount_usdt:.2f} USDT | qty={amount_coin:.8g}"
+            )
             if decision_journal_id:
                 self.db.update_decision_journal(
                     decision_journal_id,
                     execution_status="failed",
-                    block_reason=str(res.get('reason', res)),
+                    block_reason=fail_reason,
                     sizing=sizing,
                     risk=candidate_risk,
                 )
@@ -820,7 +944,8 @@ class BotDaemon:
                 continue
             
             provider = decision.get('provider', 'IA')
-            action = decision.get('action', 'HOLD')
+            action = str(decision.get('action', 'HOLD')).upper()
+            raw_action = str(decision.get('ai_action', action)).upper()
             executable_action, execution_block = self.resolve_executable_action(decision)
             action_counts[action] = action_counts.get(action, 0) + 1
             providers[provider] = providers.get(provider, 0) + 1
@@ -893,6 +1018,30 @@ class BotDaemon:
                             exit_reason=sell_res['reason'],
                         )
                         continue
+                    validation = self.exchange.prevalidate_market_sell(
+                        symbol,
+                        pos['amount'],
+                        price_hint=current_price,
+                    )
+                    if not validation.get("ok"):
+                        errors = ",".join(validation.get("errors") or ["UNKNOWN"])
+                        reason = "NO_SELLABLE_BALANCE" if any(
+                            err in errors for err in ("NO_FREE_BALANCE", "INSUFFICIENT_VIRTUAL", "ZERO_AMOUNT")
+                        ) else "SELL_PREVALIDATION"
+                        self.log_message(
+                            f"[BLOCK] {symbol} SELL ignored | reason={reason} | "
+                            f"errors={errors} | requested={self._safe_float(pos.get('amount')):.8g} | "
+                            f"free={self._safe_float(validation.get('free_amount')):.8g} | "
+                            f"notional={self._safe_float(validation.get('notional')):.4f}"
+                        )
+                        self.db.update_decision_journal(
+                            decision_journal_id,
+                            execution_status="blocked_sell_prevalidation",
+                            execution_side="sell",
+                            block_reason=errors,
+                            exit_reason=sell_res['reason'],
+                        )
+                        continue
                     order_result = self.exchange.execute_order(symbol, 'sell', pos['amount'], current_price)
                     if order_result.get('status') in ['closed', 'simulated']:
                         try:
@@ -943,9 +1092,95 @@ class BotDaemon:
                             execution_side="sell",
                             block_reason=str(order_result.get('reason', 'Error desconocido')),
                         )
+                elif raw_action == "SELL":
+                    confidence = self._safe_float(decision.get('confidence'), 0.0)
+                    threshold = self._sell_confidence_threshold(decision)
+                    if confidence < threshold:
+                        self.log_message(
+                            f"[SKIP] {symbol} SELL ignored | reason=CONF_BELOW_SELL_THRESHOLD | "
+                            f"conf={confidence:.2f} < threshold={threshold:.2f} | "
+                            f"regime={decision.get('regime', 'N/A')} | protective=false"
+                        )
+                        self.db.update_decision_journal(
+                            decision_journal_id,
+                            execution_status="ignored_low_sell_confidence",
+                            execution_side="sell",
+                            block_reason=f"SELL confidence {confidence:.2f} < threshold {threshold:.2f}; no protective trigger",
+                        )
             
             # 2. Lógica de COMPRA
             else:
+                if raw_action == 'SELL' or action == 'SELL':
+                    balance_state = self._sellable_balance_snapshot(symbol, current_price=current_price, check_slippage=False)
+                    sellable_balance = self._safe_float(balance_state.get("amount"), 0.0)
+                    value_usdt = self._safe_float(balance_state.get("value"), 0.0)
+                    min_notional = self._safe_float(balance_state.get("min_notional"), config.MIN_POSITION_USDT)
+                    status = balance_state.get("status")
+                    if status == "NO_SELLABLE_BALANCE":
+                        reason = "NO_OPEN_POSITION_OR_SELLABLE_BALANCE"
+                        self.log_message(
+                            f"[SKIP] {symbol} SELL ignored | reason={reason} | "
+                            f"open_position=false | sellable_balance=0 | value=0.0000 | "
+                            f"conf={self._safe_float(decision.get('confidence'), 0):.2f}"
+                        )
+                    elif status == "DUST_BELOW_MIN_ORDER":
+                        reason = "DUST_BELOW_MIN_ORDER"
+                        self.log_message(
+                            f"[SKIP] {symbol} SELL ignored | reason={reason} | "
+                            f"open_position=false | sellable_balance={sellable_balance:.8g} | "
+                            f"value={value_usdt:.4f} < min={min_notional:.4f} | "
+                            f"conf={self._safe_float(decision.get('confidence'), 0):.2f}"
+                        )
+                    elif status == "SELL_PREVALIDATION":
+                        validation = balance_state.get("validation") or {}
+                        errors = ",".join(validation.get("errors") or ["UNKNOWN"])
+                        reason = "SELL_PREVALIDATION"
+                        self.log_message(
+                            f"[BLOCK] {symbol} SELL ignored | reason={reason} | "
+                            f"open_position=false | errors={errors} | sellable_balance={sellable_balance:.8g} | "
+                            f"value={value_usdt:.4f} | min={min_notional:.4f}"
+                        )
+                    else:
+                        reason = "ADOPTABLE_BALANCE_MANAGED"
+                        self._record_adopted_position(
+                            symbol,
+                            self._safe_float(balance_state.get("price"), current_price),
+                            sellable_balance,
+                            value_usdt,
+                            open_positions,
+                        )
+                        adopted_symbols.append(symbol)
+                        confidence = self._safe_float(decision.get('confidence'), 0.0)
+                        threshold = self._sell_confidence_threshold(decision)
+                        if confidence < threshold:
+                            reason = "CONF_BELOW_SELL_THRESHOLD"
+                            self.log_message(
+                                f"[SKIP] {symbol} SELL ignored | reason={reason} | "
+                                f"open_position=adopted | sellable_balance={sellable_balance:.8g} | "
+                                f"value={value_usdt:.4f} >= min={min_notional:.4f} | "
+                                f"conf={confidence:.2f} < threshold={threshold:.2f} | protective=false"
+                            )
+                        else:
+                            self.log_message(
+                                f"[SKIP] {symbol} SELL deferred | reason=ADOPTED_EVALUATE_NEXT_CYCLE | "
+                                f"open_position=adopted | sellable_balance={sellable_balance:.8g} | "
+                                f"value={value_usdt:.4f} >= min={min_notional:.4f} | conf={confidence:.2f}"
+                            )
+                    self.log_message(
+                        f"[BALANCE] {symbol} no_open_position_sell | state={status} | "
+                        f"reason={reason} | qty={sellable_balance:.8g} | value={value_usdt:.4f} | min={min_notional:.4f}"
+                    )
+                    self.db.update_decision_journal(
+                        decision_journal_id,
+                        execution_status="adopted_balance" if reason == "ADOPTABLE_BALANCE_MANAGED" else "ignored_no_open_position",
+                        execution_side="sell",
+                        block_reason=(
+                            f"{reason}; sellable_balance={sellable_balance:.8g}; "
+                            f"value_usdt={value_usdt:.4f}; min_notional={min_notional:.4f}"
+                        ),
+                    )
+                    continue
+
                 if action == 'BUY':
                     if executable_action != "BUY":
                         skipped["LOW_DECISION_SCORE"] = skipped.get("LOW_DECISION_SCORE", 0) + 1
@@ -982,8 +1217,33 @@ class BotDaemon:
         executed_symbols = set()
         for candidate in buy_candidates:
             if len(open_positions) >= self.dynamic_max:
-                break
+                skipped["MAX_OPEN_POSITIONS"] = skipped.get("MAX_OPEN_POSITIONS", 0) + 1
+                self.log_message(
+                    f"[SKIP] {candidate['symbol']} BUY skipped | reason=MAX_OPEN_POSITIONS | "
+                    f"open={len(open_positions)} | max={self.dynamic_max} | "
+                    f"rank={candidate['score']:.3f} | score={self._safe_float(candidate['decision'].get('decision_score'), 0):.2f}"
+                )
+                decision_journal_id = candidate.get('decision_journal_id')
+                if decision_journal_id:
+                    self.db.update_decision_journal(
+                        decision_journal_id,
+                        execution_status="blocked_slots",
+                        block_reason=f"MAX_OPEN_POSITIONS open={len(open_positions)} max={self.dynamic_max}",
+                    )
+                continue
             if candidate['symbol'] in open_positions:
+                skipped["DUPLICATE_POSITION"] = skipped.get("DUPLICATE_POSITION", 0) + 1
+                self.log_message(
+                    f"[SKIP] {candidate['symbol']} BUY skipped | reason=DUPLICATE_POSITION | "
+                    f"open={len(open_positions)} | rank={candidate['score']:.3f}"
+                )
+                decision_journal_id = candidate.get('decision_journal_id')
+                if decision_journal_id:
+                    self.db.update_decision_journal(
+                        decision_journal_id,
+                        execution_status="blocked_duplicate",
+                        block_reason="Symbol already has an open position",
+                    )
                 continue
             if execute_buy_candidate(candidate):
                 executed_symbols.add(candidate['symbol'])
@@ -1002,8 +1262,21 @@ class BotDaemon:
 
             for candidate in remaining_candidates:
                 decision = candidate['decision']
+                new_conf = self._safe_float(decision.get('confidence'), 0.0)
+                if new_conf < config.ROTATION_MIN_NEW_CONFIDENCE:
+                    self.log_message(
+                        f"[ROTATION] skipped candidate={candidate['symbol']} | reason=CONF_BELOW_MIN | "
+                        f"conf={new_conf:.2f} < min={config.ROTATION_MIN_NEW_CONFIDENCE:.2f} | "
+                        f"rank={candidate['score']:.3f}"
+                    )
+                    continue
                 to_sacrifice = self.decision_engine.evaluate_rotation_potential(decision, pos_details)
                 if not to_sacrifice:
+                    self.log_message(
+                        f"[ROTATION] skipped candidate={candidate['symbol']} | reason=NO_WEAKER_POSITION | "
+                        f"conf={new_conf:.2f} | min_profit={config.ROTATION_MIN_PROFIT:.2f}% | "
+                        f"gap_required={config.ROTATION_CONFIDENCE_GAP:.2f} | open={len(pos_details)}"
+                    )
                     continue
 
                 sym_sac = to_sacrifice['symbol']

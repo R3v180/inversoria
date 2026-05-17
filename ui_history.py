@@ -3,6 +3,7 @@ import pandas as pd
 import plotly.express as px
 import json
 from i18n import _
+from ui_theme import apply_plotly_theme
 
 
 def _fmt_trade_price(value):
@@ -287,9 +288,9 @@ def render_history():
         
         fig = px.line(ventas, x='Date', y='pnl_acumulado', title=_('HISTORY_PNL_CURVE'), markers=True)
         # Dar color verde si es positivo, rojo si es negativo
-        color = "#00FFAA" if ventas['pnl_acumulado'].iloc[-1] >= 0 else "#FF4444"
+        color = "#008A63" if ventas['pnl_acumulado'].iloc[-1] >= 0 else "#E5484D"
         fig.update_traces(line_color=color, line_width=3, marker=dict(size=8))
-        fig.update_layout(paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)")
+        apply_plotly_theme(fig)
         st.plotly_chart(fig, width="stretch")
     else:
         st.write(_('NO_TRADES_MSG'))
