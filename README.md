@@ -73,6 +73,7 @@ Available today:
 - Configurable execution mode: automatic trading or consultive signals without order execution.
 - Configurable decision mode: AI-aggressive, hybrid score+AI, or rules/quant-only.
 - Deterministic decision score with component breakdown for technical, MTF, historical and macro layers.
+- Adaptive scoring from `decision_journal`: dynamic weights by regime/macro plus conservative edge adjustments by symbol, strategy, regime and provider.
 - First risk guardrails for daily loss and total portfolio exposure before auto-buys.
 - Persistent decision journal for AI suggestion, final action, score, sizing, risk blocks and realized outcome.
 - ATR volatility sizing with configurable caps and portfolio concentration guards.
@@ -209,8 +210,8 @@ bot_daemon.py
             └── HOLD if filters block the trade
     │
     ├── Rank all BUY candidates
-    │   └── score = deterministic decision score + AI confidence + MTF bonus
-    ├── Size candidates with ATR volatility and portfolio caps
+    │   └── score = adaptive deterministic score + AI confidence + MTF bonus
+    ├── Size candidates with ATR volatility, adaptive edge and portfolio caps
     ├── Execute top-ranked candidates until available slots are filled
     ├── Write decision_journal rows for signals, blocks and executions
     └── If full, evaluate one rotation using the best remaining candidate
@@ -241,11 +242,15 @@ Decision layers:
   - Returns structured JSON: action, confidence, regime, strategy, reasoning.
 7. **Decision score**
   - Technical, multi-timeframe, historical and macro components are stored with each decision.
+  - Weights adapt by regime: trend, range, high volatility or macro caution.
+  - Realized `decision_journal` performance can nudge the score by symbol, regime, strategy and provider after enough trades.
+  - If there is not enough sample, the adaptive layer stays neutral.
   - `hybrid` mode can block an AI BUY if the deterministic score is too weak.
   - `rules` mode can run without asking the AI to decide the action.
 8. **Execution governance**
   - The AI may suggest an action, but the daemon records the executable action after score, sizing and risk guards.
   - ATR sizing estimates stop distance and risk amount before placing an order.
+  - Adaptive edge can slightly reduce or increase sizing, capped conservatively.
   - Portfolio guards can block overexposure by symbol, alt basket or narrative bucket.
 
 Execution is controlled separately from decision-making:
@@ -618,6 +623,9 @@ This prevents macro refresh from overwriting the last real scan statistics.
 | `MAX_SYMBOL_EXPOSURE_PCT`       | Max exposure per symbol                              | `30.0`         |
 | `MAX_ALT_EXPOSURE_PCT`          | Max aggregate non-BTC/ETH exposure                   | `75.0`         |
 | `MAX_BUCKET_EXPOSURE_PCT`       | Max exposure per configured narrative bucket         | `45.0`         |
+| `ADAPTIVE_SCORING_ENABLED`      | Use realized journal edge to nudge scores/sizing     | `True`         |
+| `ADAPTIVE_MIN_TRADES`           | Minimum closed samples before adapting a bucket      | `5`            |
+| `ADAPTIVE_MAX_SCORE_ADJUSTMENT` | Max score nudge from adaptive edge                   | `0.12`         |
 | `METRICS_ROLLING_WINDOW`        | Window for rolling analytics                         | `30`           |
 | `PORTFOLIO_BUCKETS`             | Symbol buckets for portfolio concentration checks    | built-in map   |
 | `ROTATION_ENABLED`              | Enable portfolio rotation                          | `True`         |
@@ -1013,6 +1021,7 @@ Modos disponibles:
 - Modo de ejecución configurable: trading automático o señales consultivas sin ejecutar órdenes.
 - Modo de decisión configurable: IA agresiva, híbrido score+IA o reglas/quant.
 - Score determinista de decisión con desglose técnico, MTF, histórico y macro.
+- Scoring adaptativo desde `decision_journal`: pesos dinámicos por régimen/macro y ajustes conservadores por símbolo, estrategia, régimen y provider.
 - Primeros guardrails de riesgo por pérdida diaria y exposición total antes de auto-compras.
 - Journal persistente de decisiones con sugerencia IA, acción final, score, sizing, bloqueos y resultado.
 - Sizing por volatilidad ATR con caps configurables y guardrails de concentración de cartera.
@@ -1109,8 +1118,8 @@ bot_daemon.py
     └── HOLD si los filtros bloquean
 │
 ├── Rankea todos los candidatos BUY
-│   └── score = score determinista + confianza IA + bonus MTF
-├── Calcula sizing por ATR y límites de cartera
+│   └── score = score adaptativo determinista + confianza IA + bonus MTF
+├── Calcula sizing por ATR, edge adaptativo y límites de cartera
 ├── Compra los mejores candidatos hasta llenar huecos
 ├── Registra señales, bloqueos y ejecuciones en decision_journal
 └── Si está lleno, evalúa una rotación con el mejor candidato restante
@@ -1124,8 +1133,9 @@ Capas:
 4. Multi-timeframe.
 5. Backtest histórico.
 6. IA híbrida.
-7. Score de decisión auditable.
-8. Gobernanza de ejecución, sizing por ATR y guardrails de cartera.
+7. Score de decisión auditable con pesos dinámicos por régimen.
+8. Edge adaptativo desde resultados reales del `decision_journal`.
+9. Gobernanza de ejecución, sizing por ATR y guardrails de cartera.
 
 La ejecución se controla aparte:
 
@@ -1139,6 +1149,8 @@ El modo de decisión puede ser:
 - `rules`: decide con reglas/score sin pedir a la IA la acción final.
 
 La IA puede sugerir acción en modo híbrido, pero el daemon registra la acción ejecutable después de score, sizing y riesgo.
+
+La capa adaptativa solo actúa cuando hay muestra cerrada suficiente. Si no hay datos, se queda neutral. Cuando hay evidencia, puede ajustar ligeramente el score y el tamaño por símbolo, régimen, estrategia o provider, siempre capado por `ADAPTIVE_MAX_SCORE_ADJUSTMENT`.
 
 ---
 
@@ -1338,6 +1350,9 @@ Estados:
 | `MAX_SYMBOL_EXPOSURE_PCT`       | Exposición máxima por símbolo | `30.0` |
 | `MAX_ALT_EXPOSURE_PCT`          | Exposición máxima agregada en alts | `75.0` |
 | `MAX_BUCKET_EXPOSURE_PCT`       | Exposición máxima por narrativa/bucket | `45.0` |
+| `ADAPTIVE_SCORING_ENABLED`      | Usa edge realizado del journal para ajustar score/sizing | `True` |
+| `ADAPTIVE_MIN_TRADES`           | Muestra cerrada mínima antes de adaptar | `5` |
+| `ADAPTIVE_MAX_SCORE_ADJUSTMENT` | Ajuste máximo permitido al score | `0.12` |
 | `METRICS_ROLLING_WINDOW`        | Ventana de métricas rolling | `30` |
 | `PORTFOLIO_BUCKETS`             | Buckets de símbolos para concentración | mapa incluido |
 | `ROTATION_ENABLED`              | Activa rotación            | `True`  |

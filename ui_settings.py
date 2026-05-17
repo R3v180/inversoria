@@ -178,6 +178,9 @@ def render_settings():
                 max_symbol_exposure = st.slider(_('MAX_SYMBOL_EXPOSURE_L'), 1.0, 100.0, get_setting('MAX_SYMBOL_EXPOSURE_PCT', 30.0, float), step=1.0)
                 max_alt_exposure = st.slider(_('MAX_ALT_EXPOSURE_L'), 1.0, 100.0, get_setting('MAX_ALT_EXPOSURE_PCT', 75.0, float), step=1.0)
                 max_bucket_exposure = st.slider(_('MAX_BUCKET_EXPOSURE_L'), 1.0, 100.0, get_setting('MAX_BUCKET_EXPOSURE_PCT', 45.0, float), step=1.0)
+                adaptive_scoring = st.checkbox(_('ADAPTIVE_SCORING_L'), value=get_setting('ADAPTIVE_SCORING_ENABLED', True, bool))
+                adaptive_min_trades = st.number_input(_('ADAPTIVE_MIN_TRADES_L'), min_value=3, max_value=100, value=get_setting('ADAPTIVE_MIN_TRADES', 5, int), step=1)
+                adaptive_max_adjustment = st.slider(_('ADAPTIVE_MAX_ADJ_L'), 0.0, 0.30, get_setting('ADAPTIVE_MAX_SCORE_ADJUSTMENT', 0.12, float), step=0.01)
                 max_vol_mult = st.slider(_('MAX_VOL_MULT_L'), 0.1, 3.0, get_setting('MAX_VOLATILITY_POSITION_MULTIPLIER', 1.0, float), step=0.1)
                 metrics_window = st.number_input(_('METRICS_WINDOW_L'), min_value=5, max_value=500, value=get_setting('METRICS_ROLLING_WINDOW', 30, int), step=5)
                 min_profit = st.number_input(
@@ -237,6 +240,9 @@ def render_settings():
                 "MAX_SYMBOL_EXPOSURE_PCT": float(max_symbol_exposure),
                 "MAX_ALT_EXPOSURE_PCT": float(max_alt_exposure),
                 "MAX_BUCKET_EXPOSURE_PCT": float(max_bucket_exposure),
+                "ADAPTIVE_SCORING_ENABLED": bool(adaptive_scoring),
+                "ADAPTIVE_MIN_TRADES": int(adaptive_min_trades),
+                "ADAPTIVE_MAX_SCORE_ADJUSTMENT": float(adaptive_max_adjustment),
                 "METRICS_ROLLING_WINDOW": int(metrics_window),
                 "ROTATION_ENABLED": rot_en,
                 "ROTATION_MIN_PROFIT": float(rot_prof),

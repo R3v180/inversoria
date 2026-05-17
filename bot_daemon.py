@@ -228,6 +228,8 @@ class BotDaemon:
         score = self._safe_float(decision.get('decision_score'), self._safe_float(decision.get('confidence'), 0.0))
         size_mult = self._safe_float(decision.get('position_size_multiplier'), 1.0)
         size_mult = self._clamp(size_mult, 0.25, config.MAX_VOLATILITY_POSITION_MULTIPLIER)
+        adaptive_adjustment = self._safe_float(decision.get('adaptive_adjustment'), 0.0)
+        adaptive_size_mult = self._clamp(1.0 + (adaptive_adjustment * 2.0), 0.75, 1.20)
         cap_amount = base_amount * max(0.1, config.MAX_VOLATILITY_POSITION_MULTIPLIER)
 
         atr = self._safe_float(indicators.get('atr'), 0.0)
@@ -242,10 +244,10 @@ class BotDaemon:
             if stop_distance_pct > 0:
                 volatility_amount = risk_budget / stop_distance_pct
             score_mult = self._clamp(0.75 + (score - config.MIN_AUTO_DECISION_SCORE), 0.5, 1.15)
-            raw_amount = min(volatility_amount, cap_amount) * size_mult * score_mult
+            raw_amount = min(volatility_amount, cap_amount) * size_mult * score_mult * adaptive_size_mult
             reason = "volatility_atr"
         else:
-            raw_amount = base_amount * size_mult
+            raw_amount = base_amount * size_mult * adaptive_size_mult
 
         amount_usdt = min(raw_amount, cap_amount, balance_usdt)
         amount_usdt = max(0.0, amount_usdt)
@@ -259,6 +261,8 @@ class BotDaemon:
             "stop_distance_pct": round(stop_distance_pct * 100, 4),
             "risk_amount_usdt": round(risk_amount, 8),
             "position_size_multiplier": round(size_mult, 4),
+            "adaptive_size_multiplier": round(adaptive_size_mult, 4),
+            "adaptive_adjustment": round(adaptive_adjustment, 4),
             "sizing_reason": reason,
             "portfolio_bucket": self.portfolio_bucket(symbol),
         }
@@ -644,6 +648,8 @@ class BotDaemon:
                 'executable_action': executable_action,
                 'decision_score': decision.get('decision_score', 0),
                 'score_components': decision.get('score_components', {}),
+                'adaptive_adjustment': decision.get('adaptive_adjustment', decision.get('score_components', {}).get('adaptive_adjustment', 0)),
+                'adaptive_evidence': decision.get('adaptive_evidence', decision.get('score_components', {}).get('adaptive_evidence', {})),
                 'decision_mode': decision.get('decision_mode', getattr(config, 'DECISION_MODE', 'hybrid')),
                 'execution_mode': getattr(config, 'TRADING_EXECUTION_MODE', 'auto'),
                 'provider': provider,

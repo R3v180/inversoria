@@ -40,8 +40,102 @@ class DecisionEngine:
         self._macro_cache = None
         self._macro_cache_ts = 0
         self.MACRO_CACHE_TTL = 21600  # 6 horas
+        self._adaptive_cache = None
+        self._adaptive_cache_ts = 0
+        self.ADAPTIVE_CACHE_TTL = 900  # 15 minutos
 
-    def build_decision_score(self, indicators, macro_regime, confluence_score, prior):
+    def _dynamic_score_weights(self, indicators, macro_regime):
+        regime = str(indicators.get('trend_regime') or indicators.get('trend') or '').upper()
+        macro = str(macro_regime or '').upper()
+        if macro in {'RISK_OFF', 'CAUTION'}:
+            weights = {'technical': 0.22, 'mtf': 0.22, 'historical': 0.16, 'macro': 0.25, 'adaptive': 0.15}
+        elif regime in {'TRENDING_UP', 'BULL'}:
+            weights = {'technical': 0.30, 'mtf': 0.30, 'historical': 0.15, 'macro': 0.10, 'adaptive': 0.15}
+        elif regime in {'HIGH_VOLATILITY'}:
+            weights = {'technical': 0.20, 'mtf': 0.25, 'historical': 0.15, 'macro': 0.25, 'adaptive': 0.15}
+        elif regime in {'RANGING'}:
+            weights = {'technical': 0.25, 'mtf': 0.20, 'historical': 0.25, 'macro': 0.10, 'adaptive': 0.20}
+        else:
+            weights = {'technical': 0.28, 'mtf': 0.25, 'historical': 0.20, 'macro': 0.12, 'adaptive': 0.15}
+        total = sum(weights.values()) or 1.0
+        return {key: value / total for key, value in weights.items()}
+
+    def _adaptive_snapshot(self):
+        if not getattr(config, 'ADAPTIVE_SCORING_ENABLED', True):
+            return {}
+        now = time.time()
+        if self._adaptive_cache is not None and now - self._adaptive_cache_ts < self.ADAPTIVE_CACHE_TTL:
+            return self._adaptive_cache
+        try:
+            from database_manager import DatabaseManager
+            db = DatabaseManager()
+            self._adaptive_cache = db.get_adaptive_edge_snapshot(
+                limit=1000,
+                min_trades=getattr(config, 'ADAPTIVE_MIN_TRADES', 5),
+            )
+            self._adaptive_cache_ts = now
+        except Exception as exc:
+            print(f"[DecisionEngine] Adaptive edge unavailable: {exc}")
+            self._adaptive_cache = {}
+            self._adaptive_cache_ts = now
+        return self._adaptive_cache or {}
+
+    def _edge_adjustment(self, snapshot, *, symbol=None, regime=None, strategy=None, provider=None):
+        if not snapshot or not snapshot.get('enabled'):
+            return 0.0, {}
+        max_adj = abs(_safe_float(getattr(config, 'ADAPTIVE_MAX_SCORE_ADJUSTMENT', 0.12), 0.12))
+        weighted = []
+
+        def add(bucket, key, weight):
+            if not key:
+                return
+            stats = (snapshot.get(bucket) or {}).get(str(key))
+            if stats:
+                weighted.append((weight, _safe_float(stats.get('adjustment')), bucket, str(key), stats))
+
+        global_stats = snapshot.get('global')
+        if global_stats and _safe_float(global_stats.get('trades')) >= getattr(config, 'ADAPTIVE_MIN_TRADES', 5):
+            weighted.append((0.15, _safe_float(global_stats.get('adjustment')), 'global', 'ALL', global_stats))
+        add('by_regime', regime, 0.25)
+        add('by_strategy', strategy, 0.20)
+        add('by_symbol', symbol, 0.20)
+        add('by_provider', provider, 0.30)
+        if not weighted:
+            return 0.0, {}
+        weight_sum = sum(w for w, *_ in weighted) or 1.0
+        raw = sum(w * adj for w, adj, *_ in weighted) / weight_sum
+        adjustment = _clamp(raw, -max_adj, max_adj)
+        evidence = {
+            'adjustment': round(adjustment, 4),
+            'max_adjustment': round(max_adj, 4),
+            'rolling_expectancy_pct': snapshot.get('rolling_expectancy_pct'),
+            'edge_decay_pct': snapshot.get('edge_decay_pct'),
+            'sources': [
+                {
+                    'type': bucket,
+                    'key': key,
+                    'weight': weight,
+                    'trades': stats.get('trades'),
+                    'expectancy_pct': stats.get('expectancy_pct'),
+                    'profit_factor': stats.get('profit_factor'),
+                    'win_rate': stats.get('win_rate'),
+                    'source_adjustment': stats.get('adjustment'),
+                }
+                for weight, _, bucket, key, stats in weighted
+            ],
+        }
+        return adjustment, evidence
+
+    def _apply_adaptive_adjustment(self, score, components, evidence):
+        adjustment = _safe_float((evidence or {}).get('adjustment'), 0.0)
+        adjusted = _clamp(score + adjustment)
+        components = dict(components or {})
+        components['adaptive'] = round(_clamp(0.5 + adjustment * 3.0), 3)
+        components['adaptive_adjustment'] = round(adjustment, 4)
+        components['adaptive_evidence'] = evidence or {}
+        return round(adjusted, 3), components
+
+    def build_decision_score(self, indicators, macro_regime, confluence_score, prior, symbol=None, strategy=None):
         """Score determinista y auditable. La IA puede opinar, pero esta capa deja rastro cuantitativo."""
         rsi = _safe_float(indicators.get('rsi'), 50.0)
         adx = _safe_float(indicators.get('adx'), 0.0)
@@ -85,18 +179,31 @@ class DecisionEngine:
         else:
             historical_score = 0.50
 
+        snapshot = self._adaptive_snapshot()
+        adaptive_adjustment, adaptive_evidence = self._edge_adjustment(
+            snapshot,
+            symbol=symbol,
+            regime=indicators.get('trend_regime', indicators.get('trend')),
+            strategy=strategy,
+        )
+        adaptive_score = _clamp(0.5 + adaptive_adjustment * 3.0)
+        weights = self._dynamic_score_weights(indicators, macro_regime)
         final_score = _clamp(
-            technical_score * 0.30
-            + mtf_score * 0.25
-            + historical_score * 0.20
-            + macro_score * 0.15
-            + 0.10  # reserva conservadora para no sobrepremiar una sola capa
+            technical_score * weights['technical']
+            + mtf_score * weights['mtf']
+            + historical_score * weights['historical']
+            + macro_score * weights['macro']
+            + adaptive_score * weights['adaptive']
         )
         components = {
             'technical': round(technical_score, 3),
             'mtf': round(mtf_score, 3),
             'historical': round(historical_score, 3),
             'macro': round(macro_score, 3),
+            'adaptive': round(adaptive_score, 3),
+            'adaptive_adjustment': round(adaptive_adjustment, 4),
+            'weights': {key: round(value, 3) for key, value in weights.items()},
+            'adaptive_evidence': adaptive_evidence,
         }
         return round(final_score, 3), components
 
@@ -115,11 +222,14 @@ class DecisionEngine:
             "take_profit_ratio": 2.0,
             "reasoning": (
                 f"[RULE SCORE] score={score:.0%}, tech={components['technical']:.0%}, "
-                f"MTF={components['mtf']:.0%}, histórico={components['historical']:.0%}, macro={macro_regime}"
+                f"MTF={components['mtf']:.0%}, histórico={components['historical']:.0%}, "
+                f"adaptativo={components.get('adaptive', 0.5):.0%}, macro={macro_regime}"
             ),
             "provider": "RulesEngine",
             "decision_score": score,
             "score_components": components,
+            "adaptive_adjustment": components.get('adaptive_adjustment', 0.0),
+            "adaptive_evidence": components.get('adaptive_evidence', {}),
             "decision_mode": "rules",
             "macro_regime": macro_regime,
         }
@@ -284,6 +394,8 @@ class DecisionEngine:
             macro_regime=macro_regime,
             confluence_score=confluence_score,
             prior=prior if 'prior' in locals() else None,
+            symbol=symbol,
+            strategy=mtf_recommended_strategy,
         )
 
         decision_mode = getattr(config, 'DECISION_MODE', 'hybrid')
@@ -327,7 +439,9 @@ Estrategia sugerida por MTF: {mtf_recommended_strategy} (confluencia {confluence
 
 === SCORE DETERMINISTA ===
 Score final: {decision_score:.0%}
-Componentes: técnico {score_components['technical']:.0%}, MTF {score_components['mtf']:.0%}, histórico {score_components['historical']:.0%}, macro {score_components['macro']:.0%}
+Componentes: técnico {score_components['technical']:.0%}, MTF {score_components['mtf']:.0%}, histórico {score_components['historical']:.0%}, macro {score_components['macro']:.0%}, adaptativo {score_components.get('adaptive', 0.5):.0%}
+Pesos dinámicos: {score_components.get('weights', {})}
+Edge adaptativo: ajuste {score_components.get('adaptive_adjustment', 0):+.2%}; evidencia {score_components.get('adaptive_evidence', {})}
 Modo de decisión configurado: {decision_mode}
 
 === NOTICIAS RECIENTES ===
@@ -363,6 +477,38 @@ Si la confluencia MTF es fuerte ({confluence_score:.0%}), puedes aumentar positi
                     result['score_components'] = score_components
                     result['decision_mode'] = decision_mode
                     result['ai_action'] = result.get('action', 'HOLD')
+                    result['adaptive_adjustment'] = score_components.get('adaptive_adjustment', 0.0)
+                    result['adaptive_evidence'] = score_components.get('adaptive_evidence', {})
+
+                    snapshot = self._adaptive_snapshot()
+                    provider_stats = (snapshot.get('by_provider') or {}).get(str(provider)) if snapshot else None
+                    provider_adjustment = 0.0
+                    provider_evidence = {}
+                    if provider_stats:
+                        max_adj = abs(_safe_float(getattr(config, 'ADAPTIVE_MAX_SCORE_ADJUSTMENT', 0.12), 0.12))
+                        provider_adjustment = _clamp(_safe_float(provider_stats.get('adjustment')), -max_adj, max_adj)
+                        provider_evidence = {
+                            'adjustment': round(provider_adjustment, 4),
+                            'max_adjustment': round(max_adj, 4),
+                            'sources': [{
+                                'type': 'by_provider',
+                                'key': str(provider),
+                                'weight': 1.0,
+                                'trades': provider_stats.get('trades'),
+                                'expectancy_pct': provider_stats.get('expectancy_pct'),
+                                'profit_factor': provider_stats.get('profit_factor'),
+                                'win_rate': provider_stats.get('win_rate'),
+                                'source_adjustment': provider_stats.get('adjustment'),
+                            }],
+                        }
+                    if provider_evidence:
+                        result['decision_score'], result['score_components'] = self._apply_adaptive_adjustment(
+                            result['decision_score'],
+                            result['score_components'],
+                            provider_evidence,
+                        )
+                        result['adaptive_adjustment'] = result['score_components'].get('adaptive_adjustment', provider_adjustment)
+                        result['adaptive_evidence'] = provider_evidence
 
                     # Ajuste de confianza por confluencia: si MTF es muy fuerte, boosteamos
                     if confluence_score >= 0.80 and result.get('action') == 'BUY':
@@ -370,15 +516,16 @@ Si la confluencia MTF es fuerte ({confluence_score:.0%}), puedes aumentar positi
                         result['confidence'] = min(0.95, original_conf * 1.10)
 
                     if decision_mode == 'hybrid':
-                        if result.get('action') == 'BUY' and decision_score < config.MIN_AUTO_DECISION_SCORE:
+                        effective_score = _safe_float(result.get('decision_score'), decision_score)
+                        if result.get('action') == 'BUY' and effective_score < config.MIN_AUTO_DECISION_SCORE:
                             result['action'] = 'HOLD'
                             result['reasoning'] = (
                                 f"[LOW RULE SCORE] {result.get('reasoning', '')} "
-                                f"(score {decision_score:.0%} < {config.MIN_AUTO_DECISION_SCORE:.0%})"
+                                f"(score {effective_score:.0%} < {config.MIN_AUTO_DECISION_SCORE:.0%})"
                             )
                         else:
                             ai_conf = _safe_float(result.get('confidence'), 0.0)
-                            result['confidence'] = round(_clamp((ai_conf * 0.70) + (decision_score * 0.30)), 3)
+                            result['confidence'] = round(_clamp((ai_conf * 0.70) + (effective_score * 0.30)), 3)
 
                     self.last_analysis[symbol] = now
                     self.decision_cache[symbol] = result

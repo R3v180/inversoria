@@ -114,6 +114,14 @@ def render_history():
                 f"BUY ejecutadas {metrics.get('accepted_buys', 0)} · "
                 f"IA alineada {metrics.get('ai_alignment_pct', 0):.1f}%"
             )
+        edge = st.session_state.db.get_adaptive_edge_snapshot(limit=1000, min_trades=5)
+        if edge.get("enabled") and edge.get("global"):
+            g = edge.get("global", {})
+            st.caption(
+                f"Adaptive edge: expectancy {g.get('expectancy_pct', 0):.2f}% · "
+                f"PF {g.get('profit_factor', 0):.2f} · ajuste base {g.get('adjustment', 0):+.3f} · "
+                f"decay {edge.get('edge_decay_pct', 0):+.2f}%"
+            )
     except Exception:
         pass
     

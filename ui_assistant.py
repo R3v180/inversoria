@@ -454,6 +454,7 @@ def _compact_settings_context(exchange):
         f"RISK_PER_TRADE={config.RISK_PER_TRADE:.2%}",
         f"VOLATILITY_SIZING_ENABLED={getattr(config, 'VOLATILITY_SIZING_ENABLED', True)}; MAX_POSITION_RISK={getattr(config, 'MAX_POSITION_RISK_PCT', 0):.2%}; MIN_POSITION_USDT={getattr(config, 'MIN_POSITION_USDT', 1.0):.2f}",
         f"MAX_DAILY_LOSS={getattr(config, 'MAX_DAILY_LOSS_PCT', 0):.2%}; MAX_PORTFOLIO_EXPOSURE={getattr(config, 'MAX_PORTFOLIO_EXPOSURE_PCT', 0):.2%}; MAX_SYMBOL_EXPOSURE={getattr(config, 'MAX_SYMBOL_EXPOSURE_PCT', 0):.2%}; MAX_ALT_EXPOSURE={getattr(config, 'MAX_ALT_EXPOSURE_PCT', 0):.2%}; MAX_BUCKET_EXPOSURE={getattr(config, 'MAX_BUCKET_EXPOSURE_PCT', 0):.2%}",
+        f"ADAPTIVE_SCORING_ENABLED={getattr(config, 'ADAPTIVE_SCORING_ENABLED', True)}; ADAPTIVE_MIN_TRADES={getattr(config, 'ADAPTIVE_MIN_TRADES', 5)}; ADAPTIVE_MAX_SCORE_ADJUSTMENT={getattr(config, 'ADAPTIVE_MAX_SCORE_ADJUSTMENT', 0.12):.2f}",
         f"MAX_OPEN_POSITIONS={config.MAX_OPEN_POSITIONS}; límite efectivo={effective}; prioridad manual={config.get_setting('MANUAL_MAX_POSITIONS_PRIORITY', False, bool)}",
         f"MIN_PROFIT_NET={config.get_setting('MIN_PROFIT_NET', 1.0, float):.2f}%",
         f"ROTATION_ENABLED={config.ROTATION_ENABLED}; ROTATION_MIN_PROFIT={config.ROTATION_MIN_PROFIT:.2f}%; GAP={config.ROTATION_CONFIDENCE_GAP:.2f}; MIN_NEW_CONF={config.ROTATION_MIN_NEW_CONFIDENCE:.2f}",
@@ -793,6 +794,7 @@ def render_assistant():
                   "MANUAL_MAX_POSITIONS_PRIORITY": true,
                   "RISK_PER_TRADE": 0.10,
                   "VOLATILITY_SIZING_ENABLED": true,
+                  "ADAPTIVE_SCORING_ENABLED": true,
                   "MAX_DAILY_LOSS_PCT": 5.0,
                   "MAX_PORTFOLIO_EXPOSURE_PCT": 85.0
                 }}

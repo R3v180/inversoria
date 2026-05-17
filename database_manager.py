@@ -466,6 +466,101 @@ class DatabaseManager:
             'regime_stats': grouped_stats('regime'),
         }
 
+    def get_adaptive_edge_snapshot(self, limit=1000, min_trades=5):
+        """
+        Resume el edge realizado del decision_journal para ajustar el score de forma conservadora.
+        Devuelve solo datos con muestra mínima suficiente; si no hay datos, el motor no cambia.
+        """
+        df = self.get_decision_journal(limit=limit)
+        if df.empty:
+            return {
+                'enabled': False,
+                'global': None,
+                'by_provider': {},
+                'by_regime': {},
+                'by_strategy': {},
+                'by_symbol': {},
+            }
+
+        realized = pd.to_numeric(
+            df['realized_pnl_pct'] if 'realized_pnl_pct' in df.columns else pd.Series([None] * len(df)),
+            errors='coerce',
+        )
+        closed = df[realized.notna()].copy()
+        if closed.empty:
+            return {
+                'enabled': False,
+                'global': None,
+                'by_provider': {},
+                'by_regime': {},
+                'by_strategy': {},
+                'by_symbol': {},
+            }
+        closed['realized_pnl_pct'] = pd.to_numeric(closed['realized_pnl_pct'], errors='coerce')
+        closed = closed.dropna(subset=['realized_pnl_pct'])
+        if closed.empty:
+            return {
+                'enabled': False,
+                'global': None,
+                'by_provider': {},
+                'by_regime': {},
+                'by_strategy': {},
+                'by_symbol': {},
+            }
+
+        def summarize(group):
+            pnl = pd.to_numeric(group['realized_pnl_pct'], errors='coerce').dropna()
+            trades = len(pnl)
+            wins = pnl[pnl > 0]
+            losses = pnl[pnl <= 0]
+            win_rate = len(wins) / trades * 100 if trades else 0.0
+            expectancy = pnl.mean() if trades else 0.0
+            profit_sum = wins.sum()
+            loss_sum = abs(losses.sum())
+            profit_factor = profit_sum / loss_sum if loss_sum > 0 else (profit_sum if profit_sum > 0 else 0.0)
+            # Ajuste deliberadamente pequeño: convierte edge realizado a una señal [-0.12, +0.12] aprox.
+            adjustment = (expectancy / 25.0) + ((min(profit_factor, 3.0) - 1.0) * 0.035) + ((win_rate - 50.0) / 1000.0)
+            adjustment = max(-0.20, min(0.20, adjustment))
+            return {
+                'trades': int(trades),
+                'win_rate': round(win_rate, 1),
+                'expectancy_pct': round(expectancy, 3),
+                'profit_factor': round(float(profit_factor), 3),
+                'adjustment': round(float(adjustment), 4),
+            }
+
+        def grouped(column):
+            if column not in closed.columns:
+                return {}
+            out = {}
+            for name, group in closed.groupby(column):
+                key = str(name or '').strip()
+                if not key:
+                    continue
+                stats = summarize(group)
+                if stats['trades'] >= int(min_trades):
+                    out[key] = stats
+            return out
+
+        closed_sorted = closed.sort_values('timestamp') if 'timestamp' in closed.columns else closed
+        window = max(int(min_trades), min(50, len(closed_sorted)))
+        recent = closed_sorted.tail(window)
+        older = closed_sorted.iloc[:-window]
+        recent_exp = float(pd.to_numeric(recent['realized_pnl_pct'], errors='coerce').mean()) if not recent.empty else 0.0
+        older_exp = float(pd.to_numeric(older['realized_pnl_pct'], errors='coerce').mean()) if not older.empty else recent_exp
+
+        return {
+            'enabled': True,
+            'min_trades': int(min_trades),
+            'global': summarize(closed),
+            'rolling_expectancy_pct': round(recent_exp, 3),
+            'edge_decay_pct': round(recent_exp - older_exp, 3),
+            'by_provider': grouped('provider'),
+            'by_regime': grouped('regime'),
+            'by_strategy': grouped('strategy'),
+            'by_symbol': grouped('symbol'),
+        }
+
     def get_cost_basis(self, symbol: str, open_positions=None):
         """
         Precio medio de compra estimado (USDT por moneda base) y origen del dato.
