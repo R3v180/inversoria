@@ -683,17 +683,17 @@ Exceptions:
 
 ## Running The System
 
-Desktop launcher:
+Recommended on Windows:
 
 ```text
 InversorIA.exe
 ```
 
-The launcher is copied to the project root after each build so it is the first file to open. `dist/InversorIA.exe` is only the internal PyInstaller output.
+Open `InversorIA.exe` from the project root. It is the main entry point for normal use.
 
-The launcher provides a bilingual control panel for Windows. It can start Streamlit, start/stop the daemon, open the web UI, switch between simulation and real mode, configure local API keys, prevent system sleep while running, show live daemon logs, and display separate status cards for Web, Daemon, Trading and APIs. Real mode requires explicit confirmation and exchange keys in `.env`.
+The launcher provides a bilingual Windows control panel. It starts the web app, controls the daemon, opens the dashboard, switches between simulation and real mode, configures local API keys, prevents system sleep while running, and shows live daemon logs. Real mode requires explicit confirmation and exchange keys in `.env`.
 
-To rebuild it:
+Developer note: `dist/InversorIA.exe` is the PyInstaller build output. To rebuild and copy the executable to the project root:
 
 ```bash
 build_launcher.bat
@@ -1314,17 +1314,17 @@ La UI permite importar/exportar configuración segura:
 
 ## Ejecución
 
-Launcher de escritorio:
+Recomendado en Windows:
 
 ```text
 InversorIA.exe
 ```
 
-El launcher se copia a la raíz del proyecto tras cada build para que sea lo primero que se vea. `dist/InversorIA.exe` queda como salida interna de PyInstaller.
+Abre `InversorIA.exe` desde la raíz del proyecto. Es el punto de entrada principal para usar la aplicación.
 
-El launcher ofrece un panel bilingüe para Windows. Puede iniciar Streamlit, iniciar/detener el daemon, abrir la web, cambiar entre simulación y real, configurar APIs locales, evitar suspensión del sistema mientras está activo, mostrar logs vivos del daemon y enseñar estados separados para Web, Daemon, Trading y APIs. El modo real pide confirmación explícita y exige claves de exchange en `.env`.
+El launcher ofrece un panel bilingüe para Windows. Inicia la web, controla el daemon, abre el dashboard, cambia entre simulación y real, configura las APIs locales, evita la suspensión del sistema mientras está activo y muestra logs vivos del daemon. El modo real pide confirmación explícita y exige claves de exchange en `.env`.
 
-Para reconstruirlo:
+Nota para desarrollo: `dist/InversorIA.exe` es la salida de PyInstaller. Para reconstruir y copiar el ejecutable a la raíz:
 
 ```bash
 build_launcher.bat
