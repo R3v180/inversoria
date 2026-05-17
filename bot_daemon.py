@@ -334,11 +334,8 @@ class BotDaemon:
             "capped": capped + 1e-8 < amount_usdt,
         }
 
-    def adopt_sellable_real_positions(self, open_positions):
-        """Adopta saldos reales vendibles aunque no pertenezcan al universo de nuevas compras."""
-        if self.exchange.modo_simulacion:
-            return [], {}
-
+    def adopt_sellable_positions(self, open_positions):
+        """Adopta saldos vendibles aunque no pertenezcan al universo de nuevas compras."""
         adopted = []
         skipped = {}
         ignored_coins = {"USDT", "USD", "EUR", "USDC", "DAI", "TUSD", "BUSD", "PYUSD"}
@@ -367,26 +364,30 @@ class BotDaemon:
                 skipped["ADOPT_NO_VALUE"] = skipped.get("ADOPT_NO_VALUE", 0) + 1
                 continue
 
-            validation = self.exchange.prevalidate_market_sell(
-                symbol,
-                free_amount,
-                price_hint=price,
-                free_override=free_amount,
-            )
-            if not validation.get("ok"):
-                skipped["ADOPT_UNSELLABLE"] = skipped.get("ADOPT_UNSELLABLE", 0) + 1
-                continue
-
-            amount = self._safe_float(validation.get("amount_after_precision"), free_amount)
-            notional = self._safe_float(validation.get("notional"), amount * price)
+            if self.exchange.modo_simulacion:
+                amount = free_amount
+                notional = amount * price
+            else:
+                validation = self.exchange.prevalidate_market_sell(
+                    symbol,
+                    free_amount,
+                    price_hint=price,
+                    free_override=free_amount,
+                )
+                if not validation.get("ok"):
+                    skipped["ADOPT_UNSELLABLE"] = skipped.get("ADOPT_UNSELLABLE", 0) + 1
+                    continue
+                amount = self._safe_float(validation.get("amount_after_precision"), free_amount)
+                notional = self._safe_float(validation.get("notional"), amount * price)
             if amount <= 0 or notional <= 0:
                 skipped["ADOPT_ZERO_AFTER_PRECISION"] = skipped.get("ADOPT_ZERO_AFTER_PRECISION", 0) + 1
                 continue
 
+            mode_label = "simulated" if self.exchange.modo_simulacion else "real"
             extra = {
                 "external_adopted": True,
-                "provider": "ExchangeBalance",
-                "reasoning": "Saldo real vendible adoptado para protección automática.",
+                "provider": "ExchangeBalance" if not self.exchange.modo_simulacion else "SimulatedBalance",
+                "reasoning": f"Saldo {mode_label} vendible adoptado para protección automática.",
                 "decision_mode": getattr(config, "DECISION_MODE", "hybrid"),
                 "execution_mode": getattr(config, "TRADING_EXECUTION_MODE", "auto"),
             }
@@ -410,7 +411,7 @@ class BotDaemon:
             }
             adopted.append(symbol)
             self.log_message(
-                f"[ADOPT] {symbol} real balance managed | qty={amount:.8g} | "
+                f"[ADOPT] {symbol} {mode_label} balance managed | qty={amount:.8g} | "
                 f"value={notional:.2f} USDT | reason=sellable_exchange_balance"
             )
 
@@ -635,7 +636,7 @@ class BotDaemon:
         
         # Para el cálculo de cuánto podemos comprar, necesitamos el cash (USDT) disponible
         open_positions = self.db.get_open_positions()
-        adopted_symbols, adoption_skipped = self.adopt_sellable_real_positions(open_positions)
+        adopted_symbols, adoption_skipped = self.adopt_sellable_positions(open_positions)
         for reason, count in adoption_skipped.items():
             skipped[reason] = skipped.get(reason, 0) + count
         buy_candidates = []
@@ -804,15 +805,6 @@ class BotDaemon:
                 continue
             scanned += 1
             
-            # Adopción de posiciones externas de simulación o símbolos ya escaneados.
-            # En real, los saldos vendibles se adoptan antes desde toda la cartera.
-            if self.exchange.modo_simulacion and symbol not in open_positions:
-                coin_amount = self.exchange.get_coin_balance(symbol)
-                if (coin_amount * current_price) > 5.0:
-                    self.db.add_open_position(symbol, current_price, current_price, coin_amount)
-                    open_positions[symbol] = {'entry_price': current_price, 'amount': coin_amount}
-                    self.log_message(f"[{symbol}] { _('LOG_POS_ADOPTED', lang=self.u_lang) }.")
-
             # Análisis
             ohlcv = self.exchange.get_historical_data(symbol)
             indicators = self.logic.calculate_indicators(ohlcv)
