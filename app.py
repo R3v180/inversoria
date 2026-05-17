@@ -240,11 +240,11 @@ with st.sidebar:
         
     # Detectar cambio de modo
     if st.session_state.current_mode != is_simulacion:
+        was_running = str(st.session_state.db.get_system_status('is_running', 'false')).lower() == 'true'
         st.session_state.current_mode = is_simulacion
         save_settings({"MODO_SIMULACION": bool(is_simulacion)})
-        st.session_state.db.set_system_status('is_running', 'false')
         st.session_state.db = new_database_manager()
-        st.session_state.db.set_system_status('is_running', 'false')
+        st.session_state.db.set_system_status('is_running', 'true' if was_running else 'false')
         st.session_state.db.set_system_status('simulacion', 'true' if is_simulacion else 'false')
         st.session_state.exchange = ExchangeHelper(modo_simulacion=is_simulacion)
         st.rerun()

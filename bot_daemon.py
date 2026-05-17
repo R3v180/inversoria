@@ -435,6 +435,18 @@ class BotDaemon:
                 now = time.time()
                 is_sim_str = self.db.get_system_status('simulacion', 'true')
                 is_sim = str(is_sim_str).lower() == 'true'
+                is_running = self.db.get_system_status('is_running')
+                if str(is_running).lower() != 'true':
+                    if time.time() - getattr(self, "_last_idle_log", 0) > 300:
+                        self.log_message("[IDLE] Trading pausado: is_running=false. Esperando Start/Arrancar bot.")
+                        self._last_idle_log = time.time()
+                    self.update_daemon_status(
+                        "idle",
+                        execution_mode=getattr(config, "TRADING_EXECUTION_MODE", "auto"),
+                        decision_mode=getattr(config, "DECISION_MODE", "hybrid"),
+                    )
+                    time.sleep(60)
+                    continue
                 if now - self.last_watchlist_update > 43200:
                     self.update_dynamic_watchlist()
                     self.last_watchlist_update = now
@@ -451,7 +463,6 @@ class BotDaemon:
                     macro.fetch_global_market_status(max_assets=1)
                     self.last_macro_update = now
                     
-                is_running = self.db.get_system_status('is_running')
                 if str(is_running).lower() == 'true':
                     if self.exchange.modo_simulacion != is_sim:
                         self.exchange = ExchangeHelper(modo_simulacion=is_sim)
