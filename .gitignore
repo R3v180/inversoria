@@ -15,6 +15,15 @@ exports/
 export_code.py
 export_code.bat
 instruccionesia.md
+github_stats_local.bat
+github_stats_local.ps1
+github_stats_report.md
+github_stats_report.html
+shortcuts/
+*.lnk
+scratch/
+docs/screenshots/review-temp/
+trades_history*.csv
 
 # Builds / runtime del launcher
 build/
