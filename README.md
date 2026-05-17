@@ -14,6 +14,124 @@ Maintained by Olivier Hottelet, trading as OHCodex: https://ohcodex.com
 
 > Disclaimer: InversorIA is not financial advice. Real mode can place real orders on Crypto.com. Use minimal API permissions, start in simulation, and verify every behavior before trading real funds.
 
+## Qué Hace Diferente A InversorIA
+
+- **No es trading ciego por IA**: las sugerencias de IA se contrastan con score determinista, indicadores técnicos, contexto multi-timeframe, filtros macro y priors históricos.
+- **Primero simulación**: los perfiles aislados permiten probar configuraciones de riesgo sin contaminar datos reales.
+- **Decisiones auditables**: cada señal, bloqueo, ejecución, tamaño, motivo de riesgo y resultado puede quedar en `decision_journal`.
+- **Riesgo antes que ejecución**: los guardrails de cartera, símbolo, alts y buckets pueden recortar tamaño o bloquear compras inseguras.
+- **Protección de saldos existentes**: los saldos vendibles pueden adoptarse para gestión activa aunque estén fuera de la watchlist de nuevas compras.
+- **Arquitectura local-first**: UI Streamlit, daemon y SQLite corren en local; las claves API se quedan en tu máquina.
+
+## Inicio Rápido
+
+```bash
+git clone https://github.com/R3v180/inversoria
+cd inversoria
+python -m venv venv
+```
+
+Windows PowerShell:
+
+```powershell
+.\venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+python -m streamlit run app.py
+```
+
+Uso normal en Windows:
+
+```bat
+build_launcher.bat
+InversorIA.exe
+```
+
+## Módulos Core: Por Dónde Empezar
+
+- `bot_daemon.py`: ciclo autónomo, gobierno de ejecución, adopción, sizing y rotación.
+- `decision_engine.py`: lógica híbrida IA/quant y ajustes de score adaptativo.
+- `trading_logic.py`: indicadores, stop loss, trailing stop y condiciones de venta.
+- `database_manager.py`: SQLite, trades, posiciones, diagnóstico y `decision_journal`.
+- `exchange_helper.py`: Crypto.com/CCXT, cuenta simulada, balances y prevalidaciones.
+- `app.py` y `ui_*.py`: interfaz Streamlit.
+
+## Limitaciones Y Riesgos
+
+- Este proyecto **no** promete beneficios y no debe interpretarse como asesoramiento financiero.
+- Backtests y simulaciones pueden sobreajustar, ignorar liquidez real o no representar mercados futuros.
+- Los proveedores de IA pueden fallar, alucinar, sobrerreaccionar a noticias o producir razonamientos inconsistentes.
+- El modo real puede enviar órdenes reales. Usa poco capital, sin permisos de retirada y con claves API muy limitadas.
+- SQLite es adecuado para la app local, pero una versión hosted/SaaS futura necesitaría otra arquitectura de persistencia y workers.
+- Los controles de riesgo reducen daño potencial, pero no eliminan riesgo de mercado, exchange, API, slippage o implementación.
+
+## Capturas
+
+![Demo de InversorIA](docs/screenshots/inversoria-demo.gif)
+
+- [Dashboard](docs/screenshots/inversoria-dashboard.png)
+- [Historial y Analítica](docs/screenshots/inversoria-history.png)
+- [Cartera exchange](docs/screenshots/inversoria-wallet.png)
+- [Asistente IA](docs/screenshots/inversoria-assistant.png)
+
+## What Makes InversorIA Different
+
+- **Not blind AI trading**: AI suggestions are checked against deterministic scoring, technical indicators, multi-timeframe context, macro filters and historical priors.
+- **Simulation-first workflow**: isolated paper-trading profiles let you test different risk settings without contaminating real data.
+- **Auditable decisions**: every signal, block, execution, size, risk reason and realized outcome can be written to `decision_journal`.
+- **Risk controls before execution**: portfolio, symbol, alt and bucket exposure guards can cap size or block unsafe buys.
+- **Real balances are protected**: existing sellable balances can be adopted into active management even if they are outside the new-buy watchlist.
+- **Local-first architecture**: Streamlit UI, daemon and SQLite run locally; API keys stay on your machine.
+
+## Quick Start
+
+```bash
+git clone https://github.com/R3v180/inversoria
+cd inversoria
+python -m venv venv
+```
+
+Windows PowerShell:
+
+```powershell
+.\venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+python -m streamlit run app.py
+```
+
+For normal Windows use, build or run the launcher and start in simulation mode:
+
+```bat
+build_launcher.bat
+InversorIA.exe
+```
+
+## Core Modules: Start Here
+
+- `bot_daemon.py`: autonomous scan cycle, execution governance, adoption, sizing and rotation.
+- `decision_engine.py`: hybrid AI/quant decision logic and adaptive score adjustments.
+- `trading_logic.py`: indicators, stop loss, trailing stop and sell conditions.
+- `database_manager.py`: SQLite persistence, trades, positions, diagnostics and `decision_journal`.
+- `exchange_helper.py`: Crypto.com/CCXT access, simulation account, balances and pre-checks.
+- `app.py` and `ui_*.py`: Streamlit interface.
+
+## Limitations And Risks
+
+- This project does **not** promise profit and should not be treated as financial advice.
+- Backtests and simulated trades can overfit, ignore liquidity reality or fail to represent future markets.
+- AI providers can be unavailable, hallucinate, overreact to news or produce inconsistent reasoning.
+- Real mode can place real orders. Use small capital, no withdrawal permissions and strict API key controls.
+- SQLite is appropriate for the local app, but a future hosted/SaaS version would need a different persistence and worker architecture.
+- Risk controls reduce damage, but they cannot remove market, exchange, API, slippage or implementation risk.
+
+## Screenshots
+
+![InversorIA demo](docs/screenshots/inversoria-demo.gif)
+
+- [Dashboard](docs/screenshots/inversoria-dashboard.png)
+- [History & Analytics](docs/screenshots/inversoria-history.png)
+- [Exchange wallet](docs/screenshots/inversoria-wallet.png)
+- [AI Assistant](docs/screenshots/inversoria-assistant.png)
+
 
 
 ---

@@ -168,22 +168,23 @@ def render_history():
     df['Side'] = df['Side'].astype(str).str.lower()
     df['Symbol'] = df['Symbol'].astype(str)
 
-    with st.expander("Filtros y paginación", expanded=True):
+    with st.expander(_('HISTORY_FILTERS'), expanded=True):
         f1, f2, f3, f4 = st.columns(4)
-        symbols = ["Todos"] + sorted(df['Symbol'].dropna().unique().tolist())
-        selected_symbol = f1.selectbox("Símbolo", symbols, key="hist_symbol")
-        selected_side = f2.selectbox("Tipo", ["Todos", "buy", "sell"], key="hist_side")
-        result_filter = f3.selectbox("Resultado", ["Todos", "Ganadoras", "Perdedoras / break-even"], key="hist_result")
-        page_size = int(f4.selectbox("Por página", [25, 50, 100, 250, 500], index=1, key="hist_page_size"))
+        all_label = _('HISTORY_ALL')
+        symbols = [all_label] + sorted(df['Symbol'].dropna().unique().tolist())
+        selected_symbol = f1.selectbox(_('HISTORY_SYMBOL'), symbols, key="hist_symbol")
+        selected_side = f2.selectbox(_('HISTORY_TYPE'), [all_label, "buy", "sell"], key="hist_side")
+        result_filter = f3.selectbox(_('HISTORY_RESULT'), [all_label, _('HISTORY_WINNERS'), _('HISTORY_LOSERS')], key="hist_result")
+        page_size = int(f4.selectbox(_('HISTORY_PER_PAGE'), [25, 50, 100, 250, 500], index=1, key="hist_page_size"))
 
         d1, d2, d3 = st.columns([1, 1, 2])
         min_date = df['Date'].min().date()
         max_date = df['Date'].max().date()
-        start_date = d1.date_input("Desde", min_date, min_value=min_date, max_value=max_date, key="hist_start")
-        end_date = d2.date_input("Hasta", max_date, min_value=min_date, max_value=max_date, key="hist_end")
+        start_date = d1.date_input(_('HISTORY_FROM'), min_date, min_value=min_date, max_value=max_date, key="hist_start")
+        end_date = d2.date_input(_('HISTORY_TO'), max_date, min_value=min_date, max_value=max_date, key="hist_end")
         metrics_scope = d3.radio(
-            "Métricas",
-            ["Histórico completo", "Solo filtro actual"],
+            _('HISTORY_METRICS'),
+            [_('HISTORY_FULL'), _('HISTORY_FILTER_ONLY')],
             horizontal=True,
             key="hist_metrics_scope",
         )
@@ -193,18 +194,18 @@ def render_history():
         (filtered['Date'].dt.date >= start_date)
         & (filtered['Date'].dt.date <= end_date)
     ]
-    if selected_symbol != "Todos":
+    if selected_symbol != all_label:
         filtered = filtered[filtered['Symbol'] == selected_symbol]
-    if selected_side != "Todos":
+    if selected_side != all_label:
         filtered = filtered[filtered['Side'] == selected_side]
-    if result_filter == "Ganadoras":
+    if result_filter == _('HISTORY_WINNERS'):
         filtered = filtered[(filtered['Side'] == 'sell') & (filtered[pnl_col] > 0)]
-    elif result_filter == "Perdedoras / break-even":
+    elif result_filter == _('HISTORY_LOSERS'):
         filtered = filtered[(filtered['Side'] == 'sell') & (filtered[pnl_col] <= 0)]
 
-    metric_df = filtered if metrics_scope == "Solo filtro actual" else df
+    metric_df = filtered if metrics_scope == _('HISTORY_FILTER_ONLY') else df
     if filtered.empty:
-        st.warning("No hay operaciones para los filtros seleccionados.")
+        st.warning(_('HISTORY_NO_FILTER_RESULTS'))
         return
     
     # Cálculos de Métricas Pro (Sincronización v2.3)
@@ -242,27 +243,26 @@ def render_history():
     c5.metric("Expectancy", f"{expectancy:.2f}%")
     c6.metric("Rolling DD", f"{rolling_dd:.2f}%")
 
-    st.caption(f"Rolling PF últimos 30 cierres: {rolling_pf:.2f}")
+    st.caption(_('HISTORY_ROLLING_PF').format(f"{rolling_pf:.2f}"))
     if total_trades == 0:
-        st.info(
-            "Las métricas de Win Rate, Profit Factor, Best Trade y Expectancy se calculan "
-            "solo con operaciones cerradas. Mientras solo haya compras abiertas, es normal que salgan a 0."
-        )
+        st.info(_('HISTORY_REALIZED_NOTE'))
     try:
         metrics = st.session_state.db.get_decision_metrics(limit=500)
         provider_stats = metrics.get("provider_stats")
         regime_stats = metrics.get("regime_stats")
         if provider_stats is not None and not provider_stats.empty:
-            st.markdown("#### Provider / estrategia real")
+            st.markdown(f"#### {_('HISTORY_PROVIDER_STRATEGY')}")
             st.dataframe(provider_stats, width="stretch", hide_index=True)
         if regime_stats is not None and not regime_stats.empty:
-            st.markdown("#### Régimen")
+            st.markdown(f"#### {_('HISTORY_REGIME')}")
             st.dataframe(regime_stats, width="stretch", hide_index=True)
         if metrics.get("total_decisions", 0):
             st.caption(
-                f"Journal: {metrics.get('total_decisions', 0)} decisiones · "
-                f"BUY ejecutadas {metrics.get('accepted_buys', 0)} · "
-                f"IA alineada {metrics.get('ai_alignment_pct', 0):.1f}%"
+                _('HISTORY_JOURNAL_SUMMARY').format(
+                    metrics.get('total_decisions', 0),
+                    metrics.get('accepted_buys', 0),
+                    metrics.get('ai_alignment_pct', 0),
+                )
             )
         edge = st.session_state.db.get_adaptive_edge_snapshot(limit=1000, min_trades=5)
         if edge.get("enabled") and edge.get("global"):
@@ -285,7 +285,7 @@ def render_history():
         ventas['pnl_usd'] = (ventas['Price'] * ventas['Amount']) * (ventas[pnl_col] / 100)
         ventas['pnl_acumulado'] = ventas['pnl_usd'].cumsum()
         
-        fig = px.line(ventas, x='Date', y='pnl_acumulado', title="P&L Acumulado (USD)", markers=True)
+        fig = px.line(ventas, x='Date', y='pnl_acumulado', title=_('HISTORY_PNL_CURVE'), markers=True)
         # Dar color verde si es positivo, rojo si es negativo
         color = "#00FFAA" if ventas['pnl_acumulado'].iloc[-1] >= 0 else "#FF4444"
         fig.update_traces(line_color=color, line_width=3, marker=dict(size=8))
@@ -301,7 +301,7 @@ def render_history():
     total_rows = len(sorted_df)
     total_pages = max(1, (total_rows + page_size - 1) // page_size)
     current_page = int(st.number_input(
-        "Página",
+        _('HISTORY_PAGE'),
         min_value=1,
         max_value=total_pages,
         value=min(int(st.session_state.get("hist_page", 1)), total_pages),
@@ -311,7 +311,7 @@ def render_history():
     start_idx = (current_page - 1) * page_size
     end_idx = start_idx + page_size
     page_df = sorted_df.iloc[start_idx:end_idx]
-    st.caption(f"Mostrando {start_idx + 1}-{min(end_idx, total_rows)} de {total_rows} operaciones filtradas.")
+    st.caption(_('HISTORY_SHOWING').format(start_idx + 1, min(end_idx, total_rows), total_rows))
 
     compact = page_df.copy()
     compact['Date'] = compact['Date'].dt.strftime('%Y-%m-%d %H:%M')
@@ -321,23 +321,27 @@ def render_history():
         _build_trade_context(row, open_context, journal)
         for row_idx, row in page_df.iterrows()
     ]
-    compact["Precio"] = compact["Price"].apply(_fmt_trade_price)
-    compact["Cantidad"] = compact["Amount"].apply(_fmt_trade_amount)
-    compact["Valor USDT"] = [
+    price_col = _('HISTORY_PRICE')
+    amount_col = _('HISTORY_AMOUNT')
+    value_col = _('HISTORY_VALUE_USDT')
+    reason_col = _('HISTORY_REASON')
+    compact[price_col] = compact["Price"].apply(_fmt_trade_price)
+    compact[amount_col] = compact["Amount"].apply(_fmt_trade_amount)
+    compact[value_col] = [
         _fmt_trade_value(row["Price"], row["Amount"])
         for row_idx, row in page_df.iterrows()
     ]
-    compact["Justificación"] = [
+    compact[reason_col] = [
         _display_reason(row, context)
         for (row_idx, row), context in zip(page_df.iterrows(), contexts)
     ]
     st.dataframe(
-        compact[['Date', 'Symbol', 'Side', 'Precio', 'Cantidad', 'Valor USDT', pnl_col, 'Justificación']],
+        compact[['Date', 'Symbol', 'Side', price_col, amount_col, value_col, pnl_col, reason_col]],
         width="stretch",
         hide_index=True,
     )
 
-    show_cards = st.toggle("Mostrar tarjetas detalladas de esta página", value=total_rows <= 50, key="hist_show_cards")
+    show_cards = st.toggle(_('HISTORY_SHOW_CARDS'), value=total_rows <= 50, key="hist_show_cards")
     if not show_cards:
         return
 
@@ -349,8 +353,8 @@ def render_history():
         price_text = _fmt_trade_price(row["Price"])
         
         with st.expander(f"{action_color} {action_text} | {row['Date'].strftime('%Y-%m-%d %H:%M')} | {row['Symbol']} a ${price_text}{pnl_text}"):
-            st.markdown(f"**Cantidad:** {_fmt_trade_amount(row['Amount'])}")
-            st.markdown(f"**Valor aproximado:** {_fmt_trade_value(row['Price'], row['Amount'])}")
+            st.markdown(f"**{_('HISTORY_AMOUNT')}:** {_fmt_trade_amount(row['Amount'])}")
+            st.markdown(f"**{_('HISTORY_APPROX_VALUE')}:** {_fmt_trade_value(row['Price'], row['Amount'])}")
             if context:
                 meta = []
                 if context.get("provider"):
@@ -370,6 +374,6 @@ def render_history():
                     except (TypeError, ValueError):
                         pass
                 if meta:
-                    st.caption(" · ".join(meta))
-            st.markdown(f"**Justificación de la Operación:**")
+                    st.caption(" - ".join(meta))
+            st.markdown(f"**{_('HISTORY_OPERATION_REASON')}:**")
             st.info(_display_reason(row, context))

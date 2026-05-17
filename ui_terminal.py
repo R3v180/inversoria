@@ -35,7 +35,7 @@ def render_terminal():
         st.session_state.terminal_refresh = terminal_refresh
 
     if 'exchange' not in st.session_state:
-        st.warning("El bot no está inicializado.")
+        st.warning(_('TERMINAL_NOT_INITIALIZED'))
         return
 
     # Cargar monedas del radar dinámico (v3.5)
@@ -101,7 +101,7 @@ def render_terminal():
             fig.add_trace(go.Candlestick(x=df.index,
                                         open=df['open'], high=df['high'],
                                         low=df['low'], close=df['close'],
-                                        name='Precio'), row=1, col=1)
+                                        name=_('PRICE')), row=1, col=1)
                                         
             # EMAs
             fig.add_trace(go.Scatter(x=df.index, y=df['EMA_50'], line=dict(color='orange', width=1.5), name='EMA 50'), row=1, col=1)
@@ -119,7 +119,7 @@ def render_terminal():
                               paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
                               xaxis_rangeslider_visible=False)
                               
-            fig.update_yaxes(title_text="Precio", row=1, col=1)
+            fig.update_yaxes(title_text=_('PRICE'), row=1, col=1)
             fig.update_yaxes(title_text="RSI", row=2, col=1)
             fig.update_yaxes(title_text="ATR", row=3, col=1)
             

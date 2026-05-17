@@ -4,10 +4,12 @@
 *.db
 *.db-journal
 *.log
-*.txt
 !README.md
 !.env.example
 !requirements.txt
+codigo_completo.txt
+exports/
+*.backup-*.json
 
 # Herramientas locales / internas
 export_code.py

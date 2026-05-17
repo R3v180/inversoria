@@ -189,7 +189,7 @@ def render_settings():
                     max_value=10.0,
                     value=get_setting('MIN_PROFIT_NET', 1.0, float),
                     step=0.1,
-                    help="El bot solo considerará rentable una operación si supera este % de beneficio"
+                    help=_('MIN_PROFIT_NET_HELP')
                 )
             
             st.markdown("---")
@@ -207,9 +207,9 @@ def render_settings():
             st.subheader(_('LINGUISTIC_BRAIN'))
             st.warning(_('PROMPT_WARNING'))
             
-            p_sent = st.text_area("Prompt Análisis Sentiment", value=get_setting('PROMPT_SENTIMENT', DEFAULT_SETTINGS['PROMPT_SENTIMENT']), height=100)
-            p_dec = st.text_area("Prompt Motor de Decisión (JSON)", value=get_setting('PROMPT_DECISION', DEFAULT_SETTINGS['PROMPT_DECISION']), height=100)
-            p_cur = st.text_area("Prompt Radar (Curación)", value=get_setting('PROMPT_CURATION', DEFAULT_SETTINGS['PROMPT_CURATION']), height=100)
+            p_sent = st.text_area(_('PROMPT_SENTIMENT_LABEL'), value=get_setting('PROMPT_SENTIMENT', DEFAULT_SETTINGS['PROMPT_SENTIMENT']), height=100)
+            p_dec = st.text_area(_('PROMPT_DECISION_LABEL'), value=get_setting('PROMPT_DECISION', DEFAULT_SETTINGS['PROMPT_DECISION']), height=100)
+            p_cur = st.text_area(_('PROMPT_CURATION_LABEL'), value=get_setting('PROMPT_CURATION', DEFAULT_SETTINGS['PROMPT_CURATION']), height=100)
 
         # Guardar todo
         submit = st.form_submit_button(_('SAVE_SETTINGS'), type="primary", width="stretch")

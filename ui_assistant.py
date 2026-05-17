@@ -1,7 +1,6 @@
 import streamlit as st
 import time
 import json
-import os
 import sqlite3
 import config
 from config_importer import (
@@ -556,10 +555,9 @@ def _compact_decisions_context(db, symbols):
     return "\n".join(lines) if lines else "Sin decisiones recientes por símbolo."
 
 
-def _compact_backtest_context():
+def _compact_backtest_context(db):
     try:
-        db_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "iversoria.db")
-        with sqlite3.connect(db_path, timeout=5) as conn:
+        with sqlite3.connect(db.db_path, timeout=5) as conn:
             conn.row_factory = sqlite3.Row
             runs = conn.execute(
                 'SELECT symbol, timeframe, win_rate, best_strategy FROM backtest_runs ORDER BY run_timestamp DESC LIMIT 5'
@@ -674,7 +672,7 @@ MACRO:
 {chr(10).join(macro_lines) if macro_lines else 'Sin macro_context disponible.'}
 
 BACKTEST:
-{_compact_backtest_context()}
+{_compact_backtest_context(db)}
 
 DAEMON:
 {_compact_daemon_context(db)}

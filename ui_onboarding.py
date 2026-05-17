@@ -24,10 +24,10 @@ def render_onboarding():
         st.markdown("<br>", unsafe_allow_html=True)
 
         # Usamos pestañas para simular los pasos del tutorial/onboarding
-        tab1, tab2, tab3 = st.tabs(["👤 Identity", "🛡️ Strategy", "📖 Tutorial"])
+        tab1, tab2, tab3 = st.tabs([_('ONBOARD_TAB_IDENTITY'), _('ONBOARD_TAB_STRATEGY'), _('ONBOARD_TAB_TUTORIAL')])
 
         with tab1:
-            st.markdown("### Paso 1: Identidad e Idioma")
+            st.markdown(f"### {_('ONBOARD_STEP_IDENTITY')}")
             name = st.text_input(_('USER_NAME_LABEL'), placeholder="Ex: Olivier")
             lang = st.selectbox(_('LANG_LABEL'), options=["es", "en"], format_func=lambda x: "🇪🇸 Español" if x == "es" else "🇺🇸 English")
             
@@ -37,8 +37,8 @@ def render_onboarding():
                 st.rerun()
 
         with tab2:
-            st.markdown("### Paso 2: Perfil de Riesgo")
-            st.info("Esto configurará tus parámetros iniciales de Stop Loss y Gestión de Capital.")
+            st.markdown(f"### {_('ONBOARD_STEP_RISK')}")
+            st.info(_('ONBOARD_RISK_INFO'))
             risk = st.radio(
                 _('RISK_PROFILE_LABEL'),
                 options=["conservative", "moderate", "aggressive"],
@@ -46,7 +46,7 @@ def render_onboarding():
             )
 
         with tab3:
-            st.markdown(f"### Paso 3: { _('NAV_HISTORY') }")
+            st.markdown(f"### {_('ONBOARD_STEP_TUTORIAL')}")
             
             c1, c2 = st.columns(2)
             with c1:
@@ -68,11 +68,11 @@ def render_onboarding():
                     # Actualizar sesión y relanzar
                     st.session_state.onboarding_completed = True
                     st.session_state.user_name = name
-                    st.success("¡Sistema inicializado con éxito!")
+                    st.success(_('ONBOARD_SUCCESS'))
                     time.sleep(1.5)
                     st.rerun()
                 else:
-                    st.error("Por favor, introduce tu nombre para continuar.")
+                    st.error(_('ONBOARD_NAME_REQUIRED'))
 
 def is_onboarding_done():
     """Verifica si el usuario ya completó el onboarding"""

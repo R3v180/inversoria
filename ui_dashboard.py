@@ -115,9 +115,9 @@ def _render_refresh_status(diag: dict):
             state_age = max(0, int(time.time() - float(diag.get("state_ts"))))
         except (TypeError, ValueError):
             state_age = None
-    age_txt = f"hace {state_age}s" if state_age is not None else "sin latido"
+    age_txt = _("DASH_AGO_SECONDS").format(state_age) if state_age is not None else _("DASH_NO_HEARTBEAT")
     scanned = diag.get("scanned", 0) if isinstance(diag, dict) else 0
-    st.caption(f"Última actualización UI: {now_txt} · Daemon: {state} · {age_txt} · scan {scanned}")
+    st.caption(f"{_('DASH_LAST_UI_UPDATE')}: {now_txt} · {_('DASH_DAEMON')}: {state} · {age_txt} · scan {scanned}")
 
 
 def render_dashboard():
@@ -133,7 +133,7 @@ def render_dashboard():
         </style>
     """, unsafe_allow_html=True)
 
-    st.title("🏛️ Terminal InversorIA")
+    st.title(f"🏛️ { _('DASHBOARD_TITLE') }")
     
     db = st.session_state.db
     exchange = st.session_state.exchange
@@ -160,7 +160,7 @@ def render_dashboard():
                 if amount > 0 and coin not in ['USDT', 'USD']:
                     portfolio[f"{coin}/USDT"] = amount
         except Exception as e:
-            st.warning(f"No se pudo obtener el balance real: {e}")
+            st.warning(_('DASH_REAL_BALANCE_ERROR').format(e))
 
     # Baseline para el cálculo de PnL (Presupuesto inicial de config o Saldo inicial real)
     baseline = PRESUPUESTO_INICIAL
@@ -216,7 +216,7 @@ def render_dashboard():
                         def update_chart_symbol(s=sym):
                             st.session_state.selected_chart_symbol = s
 
-                        st.button("📈", key=f"btn_chart_{safe_key}", help=f"Ver gráfico de {sym}", on_click=update_chart_symbol)
+                        st.button("📈", key=f"btn_chart_{safe_key}", help=_('DASH_VIEW_CHART').format(sym), on_click=update_chart_symbol)
                     with col_sell:
                         st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
                         if st.button(
@@ -279,7 +279,7 @@ def render_dashboard():
         if st.session_state.selected_chart_symbol not in current_symbols:
             current_symbols.insert(0, st.session_state.selected_chart_symbol)
             
-        with c2: selected_sym = st.selectbox("Activo", current_symbols, key="selected_chart_symbol", label_visibility="collapsed")
+        with c2: selected_sym = st.selectbox(_('SELECT_ASSET'), current_symbols, key="selected_chart_symbol", label_visibility="collapsed")
 
         
         ohlcv = exchange.get_historical_data(selected_sym, limit=150)
@@ -345,20 +345,18 @@ def render_dashboard():
                             d = macro_db['SPY']
                             c_m2.metric(_('SP500'), f"${d['price']:.2f}", f"{d['change_24h']:+.2f}%")
                     else:
-                        st.caption("Cargando indicadores Alpha Vantage...")
+                        st.caption(_('DASH_ALPHA_LOADING'))
                 else:
-                    st.info("Contexto macro pendiente (próxima actualización en el siguiente ciclo)")
+                    st.info(_('DASH_MACRO_PENDING'))
             except Exception:
-                st.info("Cargando contexto macro...")
+                st.info(_('DASH_MACRO_LOADING'))
 
     with col_backtest:
         with st.container(border=True):
             st.markdown(f"**📊 { _('BACKTEST_STATUS') }**")
             try:
                 import sqlite3
-                import os
-                base_dir = os.path.dirname(os.path.abspath(__file__))
-                db_path = os.path.join(base_dir, "iversoria.db")
+                db_path = st.session_state.db.db_path
                 with sqlite3.connect(db_path, timeout=5) as conn:
                     conn.row_factory = sqlite3.Row
                     runs = conn.execute(
@@ -375,7 +373,7 @@ def render_dashboard():
                     else:
                         st.info(_('NO_BACKTEST_DATA'))
             except Exception as e:
-                st.info(f"Backtest no disponible: {e}")
+                st.info(_('BACKTEST_NOT_AVAILABLE').format(str(e)))
 
             st.markdown("---")
             try:
@@ -413,14 +411,18 @@ def render_dashboard():
                     st.caption("Skipped: " + ", ".join(f"{k}: {v}" for k, v in diag["skipped"].items()))
                 if diag.get("risk_guards"):
                     rg = diag.get("risk_guards") or {}
-                    status = "OK" if rg.get("ok", True) else "BLOQUEANDO COMPRAS"
+                    status = "OK" if rg.get("ok", True) else _('DASH_RISK_BLOCKING')
                     st.caption(
-                        f"Riesgo: {status} · pérdida diaria {rg.get('daily_loss_pct', 0)}% · "
-                        f"exposición {rg.get('exposure_pct', 0)}% · "
-                        f"alts {rg.get('alt_exposure_pct', 0)}% · bucket {rg.get('bucket_exposure_pct', 0)}%"
+                        _('DASH_RISK_SUMMARY').format(
+                            status,
+                            rg.get('daily_loss_pct', 0),
+                            rg.get('exposure_pct', 0),
+                            rg.get('alt_exposure_pct', 0),
+                            rg.get('bucket_exposure_pct', 0),
+                        )
                     )
                 if diag.get("top_buy_candidates"):
-                    st.markdown("**Top candidatos BUY**")
+                    st.markdown(f"**{_('DASH_TOP_BUY_CANDIDATES')}**")
                     for c in diag["top_buy_candidates"]:
                         st.caption(
                             f"{c.get('symbol')} · score {c.get('score')} · "
@@ -433,22 +435,22 @@ def render_dashboard():
                         st.caption(f"{count}× {reason}")
                 try:
                     metrics = db.get_decision_metrics(limit=500)
-                    st.markdown("**Métricas del journal**")
+                    st.markdown(f"**{_('DASH_JOURNAL_METRICS')}**")
                     j1, j2, j3, j4 = st.columns(4)
-                    j1.metric("Decisiones", metrics.get("total_decisions", 0))
-                    j2.metric("BUY ejecutadas", metrics.get("accepted_buys", 0))
-                    j3.metric("Bloqueos/señales", metrics.get("blocked", 0))
-                    j4.metric("IA alineada", f"{metrics.get('ai_alignment_pct', 0):.1f}%")
+                    j1.metric(_('DASH_DECISIONS'), metrics.get("total_decisions", 0))
+                    j2.metric(_('DASH_ACCEPTED_BUYS'), metrics.get("accepted_buys", 0))
+                    j3.metric(_('DASH_BLOCKED_SIGNALS'), metrics.get("blocked", 0))
+                    j4.metric(_('DASH_AI_ALIGNED'), f"{metrics.get('ai_alignment_pct', 0):.1f}%")
                     provider_stats = metrics.get("provider_stats")
                     if provider_stats is not None and not provider_stats.empty:
                         with st.expander("Provider accuracy"):
                             st.dataframe(provider_stats, width="stretch", hide_index=True)
                     regime_stats = metrics.get("regime_stats")
                     if regime_stats is not None and not regime_stats.empty:
-                        with st.expander("Winrate por régimen"):
+                        with st.expander(_('DASH_WINRATE_BY_REGIME')):
                             st.dataframe(regime_stats, width="stretch", hide_index=True)
                 except Exception as e:
-                    st.caption(f"Decision journal pendiente: {e}")
+                    st.caption(_('DASH_JOURNAL_PENDING').format(e))
         except Exception as e:
             st.info(f"{_('DAEMON_DIAG_TITLE')}: {e}")
 
