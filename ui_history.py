@@ -319,17 +319,17 @@ def render_history():
     journal = _journal_context(st.session_state.db)
     contexts = [
         _build_trade_context(row, open_context, journal)
-        for _, row in page_df.iterrows()
+        for row_idx, row in page_df.iterrows()
     ]
     compact["Precio"] = compact["Price"].apply(_fmt_trade_price)
     compact["Cantidad"] = compact["Amount"].apply(_fmt_trade_amount)
     compact["Valor USDT"] = [
         _fmt_trade_value(row["Price"], row["Amount"])
-        for _, row in page_df.iterrows()
+        for row_idx, row in page_df.iterrows()
     ]
     compact["Justificación"] = [
         _display_reason(row, context)
-        for (_, row), context in zip(page_df.iterrows(), contexts)
+        for (row_idx, row), context in zip(page_df.iterrows(), contexts)
     ]
     st.dataframe(
         compact[['Date', 'Symbol', 'Side', 'Precio', 'Cantidad', 'Valor USDT', pnl_col, 'Justificación']],
@@ -342,7 +342,7 @@ def render_history():
         return
 
     # Tarjetas Expandibles (solo página actual)
-    for (_, row), context in zip(page_df.iterrows(), contexts):
+    for (row_idx, row), context in zip(page_df.iterrows(), contexts):
         action_color = "🟢" if row['Side'] == 'buy' else "🔴"
         action_text = _('BUY') if row['Side'] == 'buy' else _('SELL')
         pnl_text = f" | PNL: {row.get(pnl_col, 0):.2f}%" if row['Side'] == 'sell' else ""
