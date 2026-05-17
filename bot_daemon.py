@@ -309,6 +309,31 @@ class BotDaemon:
             "portfolio_bucket": self.portfolio_bucket(symbol),
         }
 
+    def cap_size_to_risk_capacity(self, symbol, amount_usdt, total_value, open_positions):
+        """Reduce el tamaño al máximo permitido por exposición en vez de bloquear toda la señal."""
+        amount_usdt = self._safe_float(amount_usdt, 0.0)
+        if amount_usdt <= 0 or total_value <= 0:
+            return 0.0, {}
+        exposures = self.portfolio_exposures(open_positions)
+        bucket = self.portfolio_bucket(symbol)
+        capacities = {
+            "portfolio": max(0.0, (total_value * config.MAX_PORTFOLIO_EXPOSURE_PCT) - exposures["total"]),
+            "symbol": max(0.0, (total_value * config.MAX_SYMBOL_EXPOSURE_PCT) - exposures["symbols"].get(symbol, 0.0)),
+            "bucket": max(0.0, (total_value * config.MAX_BUCKET_EXPOSURE_PCT) - exposures["buckets"].get(bucket, 0.0)),
+        }
+        if bucket not in {"BTC", "ETH"}:
+            capacities["alt"] = max(0.0, (total_value * config.MAX_ALT_EXPOSURE_PCT) - exposures["alt"])
+        capped = min(amount_usdt, *capacities.values())
+        # Tiny buffer avoids equality/rounding turning an exactly-at-limit size into a guard violation.
+        capped = max(0.0, capped * 0.999)
+        return capped, {
+            "bucket": bucket,
+            "capacities": {key: round(value, 8) for key, value in capacities.items()},
+            "original_amount_usdt": round(amount_usdt, 8),
+            "capped_amount_usdt": round(capped, 8),
+            "capped": capped + 1e-8 < amount_usdt,
+        }
+
     def resolve_executable_action(self, decision):
         action = str(decision.get('action', 'HOLD')).upper()
         score = self._safe_float(decision.get('decision_score'), self._safe_float(decision.get('confidence'), 0.0))
@@ -556,6 +581,17 @@ class BotDaemon:
 
             sizing = self.calculate_position_size(sym, price, indicators, decision, total_value, open_positions)
             amount_usdt = float(sizing.get("amount_usdt") or 0)
+            capped_amount, cap_info = self.cap_size_to_risk_capacity(sym, amount_usdt, total_value, open_positions)
+            if cap_info.get("capped"):
+                sizing["original_amount_usdt"] = cap_info.get("original_amount_usdt")
+                sizing["amount_usdt"] = round(capped_amount, 8)
+                sizing["risk_cap"] = cap_info
+                sizing["sizing_reason"] = f"{sizing.get('sizing_reason', 'unknown')}_risk_capped"
+                amount_usdt = capped_amount
+                self.log_message(
+                    f"[SIZE] {sym} capped {cap_info.get('original_amount_usdt'):.2f}->{amount_usdt:.2f} USDT | "
+                    f"bucket={cap_info.get('bucket')} | caps={cap_info.get('capacities')}"
+                )
 
             candidate_risk = self.evaluate_risk_guards(
                 total_value,

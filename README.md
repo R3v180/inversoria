@@ -252,7 +252,7 @@ Decision layers:
   - The AI may suggest an action, but the daemon records the executable action after score, sizing and risk guards.
   - ATR sizing estimates stop distance and risk amount before placing an order.
   - Adaptive edge can slightly reduce or increase sizing, capped conservatively.
-  - Portfolio guards can block overexposure by symbol, alt basket or narrative bucket.
+  - Portfolio guards can cap the order size to remaining symbol, alt, bucket and portfolio capacity before blocking.
 
 Execution is controlled separately from decision-making:
 
@@ -1164,6 +1164,8 @@ El modo de decisión puede ser:
 - `rules`: decide con reglas/score sin pedir a la IA la acción final.
 
 La IA puede sugerir acción en modo híbrido, pero el daemon registra la acción ejecutable después de score, sizing y riesgo.
+
+Antes de bloquear por exposición, el daemon intenta recortar el importe al hueco disponible por símbolo, alt, bucket y cartera. Solo bloquea si aun recortando no queda tamaño válido.
 
 La capa adaptativa solo actúa cuando hay muestra cerrada suficiente. Si no hay datos, se queda neutral. Cuando hay evidencia, puede ajustar ligeramente el score y el tamaño por símbolo, régimen, estrategia o provider, siempre capado por `ADAPTIVE_MAX_SCORE_ADJUSTMENT`.
 
