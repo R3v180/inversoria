@@ -126,7 +126,8 @@ def render_dashboard():
         <style>
         .main { background-color: #0E1117; }
         .stMetric { background-color: #161B22; padding: 15px; border-radius: 10px; border: 1px solid #30363D; }
-        .position-card { background-color: #161B22; padding: 20px; border-radius: 12px; border: 1px solid #30363D; margin-bottom: 10px; }
+        .position-card { background-color: #161B22; padding: 20px; border-radius: 12px; border: 1px solid #30363D; margin-bottom: 10px; color: #F9FAFB; }
+        .position-card .muted { color: #B8C0CC; font-size: 0.8em; }
         .ai-card { background-color: #0D1117; border-left: 5px solid #00FFAA; padding: 20px; border-radius: 0 12px 12px 0; border: 1px solid #30363D; }
         .log-box { height: 180px; overflow-y: auto; background-color: #0D1117; padding: 10px; border-radius: 8px; border: 1px solid #30363D; font-family: monospace; font-size: 0.8em; }
         .radar-item { display: flex; justify-content: space-between; padding: 8px; border-bottom: 1px solid #30363D; font-size: 0.9em; }
@@ -209,7 +210,7 @@ def render_dashboard():
                     safe_key = sym.replace("/", "_").replace(" ", "_")
                     col_info, col_chart, col_sell = st.columns([4.2, 0.9, 0.9])
                     with col_info:
-                        st.markdown(f'<div class="position-card" style="margin-bottom: 5px; padding: 15px;"><div style="display:flex; justify-content:space-between;"><div><b>{sym}</b><br/><span style="color:gray; font-size:0.8em;">{ _("INVESTMENT") }: ${current_value:.2f}</span></div><div style="text-align:right;"><span style="font-size:1.2em; font-weight:bold; color:{color};">{u_pnl:.2f}%</span><br/><span style="font-size:0.8em;">${current_price:.4f}</span></div></div></div>', unsafe_allow_html=True)
+                        st.markdown(f'<div class="position-card" style="margin-bottom: 5px; padding: 15px;"><div style="display:flex; justify-content:space-between;"><div><b>{sym}</b><br/><span class="muted">{ _("INVESTMENT") }: ${current_value:.2f}</span></div><div style="text-align:right;"><span style="font-size:1.2em; font-weight:bold; color:{color};">{u_pnl:.2f}%</span><br/><span class="muted">${current_price:.4f}</span></div></div></div>', unsafe_allow_html=True)
                     with col_chart:
                         st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
 

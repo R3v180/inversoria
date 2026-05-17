@@ -10,7 +10,24 @@ InversorIA is an open-source local trading research project licensed under Apach
 - Pull requests are welcome, but they must be reviewed and approved by the maintainer before merge.
 - No one should assume that a contribution will be merged automatically.
 - The `main` branch is maintained by Olivier Hottelet, trading as OHCodex.
+- The `main` branch is protected. Do not push directly to `main`; create a feature branch, push it, open a pull request and merge only after the required review passes.
 - By submitting a contribution, you agree that it is provided under the Apache-2.0 license unless a separate written agreement says otherwise.
+
+## Maintainer Git Workflow
+
+Use this flow for every code or documentation change, including agent-assisted work:
+
+```bash
+git switch main
+git pull --ff-only
+git switch -c <type>/<short-description>
+# make changes
+git add <files>
+git commit -m "type: concise summary"
+git push -u origin HEAD
+```
+
+Then open a pull request against `main`. The official repository should be updated by merging the pull request, not by direct pushes to `main`.
 
 ## What Helps Most
 
@@ -49,7 +66,24 @@ InversorIA es un proyecto open source local de investigación y trading con lice
 - Los pull requests son bienvenidos, pero deben ser revisados y aprobados por el mantenedor antes de hacer merge.
 - Nadie debe asumir que una contribución se aceptará automáticamente.
 - La rama `main` la mantiene Olivier Hottelet, bajo el nombre comercial OHCodex.
+- La rama `main` está protegida. No empujes cambios directamente a `main`; crea una rama de trabajo, súbela, abre un pull request y fusiona solo después de la revisión requerida.
 - Al enviar una contribución, aceptas que se entrega bajo licencia Apache-2.0 salvo acuerdo escrito separado.
+
+## Flujo Git Del Mantenedor
+
+Usa este flujo para cualquier cambio de código o documentación, incluido trabajo asistido por agentes:
+
+```bash
+git switch main
+git pull --ff-only
+git switch -c <tipo>/<descripcion-corta>
+# hacer cambios
+git add <archivos>
+git commit -m "tipo: resumen breve"
+git push -u origin HEAD
+```
+
+Después abre un pull request contra `main`. El repositorio oficial debe actualizarse fusionando el pull request, no con pushes directos a `main`.
 
 ## Qué Ayuda Más
 

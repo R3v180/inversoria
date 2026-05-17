@@ -53,6 +53,61 @@ st.markdown("""
         border-radius: 5px;
         border-left: 4px solid #00FFAA;
     }
+    [data-testid="stAppViewContainer"] h1,
+    [data-testid="stAppViewContainer"] h2,
+    [data-testid="stAppViewContainer"] h3,
+    [data-testid="stAppViewContainer"] h4,
+    [data-testid="stAppViewContainer"] h5,
+    [data-testid="stAppViewContainer"] h6 {
+        color: #F9FAFB;
+    }
+    [data-testid="stAppViewContainer"] p,
+    [data-testid="stAppViewContainer"] label,
+    [data-testid="stAppViewContainer"] [data-testid="stMarkdownContainer"],
+    [data-testid="stAppViewContainer"] [data-testid="stCaptionContainer"] {
+        color: #E5E7EB;
+    }
+    [data-testid="stMetricLabel"] p {
+        color: #D1D5DB !important;
+        font-weight: 700;
+    }
+    [data-testid="stMetricValue"] {
+        color: #F9FAFB !important;
+    }
+    [data-testid="stMetricDelta"] {
+        font-weight: 700;
+    }
+    [data-testid="stDataFrame"],
+    [data-testid="stTable"] {
+        color: #E5E7EB;
+    }
+    [data-testid="stAppViewContainer"] [data-testid="stButton"] button,
+    [data-testid="stAppViewContainer"] button[kind="secondary"],
+    [data-testid="stAppViewContainer"] button[data-testid="baseButton-secondary"] {
+        background-color: #1F2937;
+        color: #F9FAFB !important;
+        border: 1px solid #4B5563;
+        border-radius: 0.5rem;
+    }
+    [data-testid="stAppViewContainer"] [data-testid="stButton"] button *,
+    [data-testid="stAppViewContainer"] button[kind="secondary"] *,
+    [data-testid="stAppViewContainer"] button[data-testid="baseButton-secondary"] * {
+        color: #F9FAFB !important;
+    }
+    [data-testid="stAppViewContainer"] [data-testid="stButton"] button:hover,
+    [data-testid="stAppViewContainer"] button[kind="secondary"]:hover,
+    [data-testid="stAppViewContainer"] button[data-testid="baseButton-secondary"]:hover {
+        background-color: #374151;
+        border-color: #00FFAA;
+        color: #FFFFFF !important;
+    }
+    [data-testid="stAppViewContainer"] [data-testid="stButton"] button:disabled,
+    [data-testid="stAppViewContainer"] button:disabled {
+        background-color: #111827;
+        color: #9CA3AF !important;
+        border-color: #30363D;
+        opacity: 0.75;
+    }
     section[data-testid="stSidebar"],
     section[data-testid="stSidebar"] > div,
     div[data-testid="stSidebar"] {

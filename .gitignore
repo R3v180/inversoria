@@ -14,6 +14,7 @@ exports/
 # Herramientas locales / internas
 export_code.py
 export_code.bat
+instruccionesia.md
 
 # Builds / runtime del launcher
 build/
