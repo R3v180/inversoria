@@ -68,12 +68,12 @@ InversorIA.exe
 
 ### Screenshots
 
-![InversorIA demo](docs/screenshots/inversoria-demo.gif)
+![InversorIA demo](docs/screenshots/inversoria-demo-en.gif)
 
-- [Dashboard](docs/screenshots/inversoria-dashboard.png)
-- [History & Analytics](docs/screenshots/inversoria-history.png)
-- [Exchange wallet](docs/screenshots/inversoria-wallet.png)
-- [AI Assistant](docs/screenshots/inversoria-assistant.png)
+- [Dashboard](docs/screenshots/inversoria-dashboard-en.png)
+- [History & Analytics](docs/screenshots/inversoria-history-en.png)
+- [Exchange wallet](docs/screenshots/inversoria-wallet-en.png)
+- [Trading Terminal](docs/screenshots/inversoria-terminal-en.png)
 
 ---
 
