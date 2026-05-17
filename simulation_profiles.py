@@ -1,10 +1,20 @@
 import json
 import re
+import sys
 import time
 from pathlib import Path
 
 
-ROOT = Path(__file__).resolve().parent
+def project_root() -> Path:
+    if getattr(sys, "frozen", False):
+        exe_dir = Path(sys.executable).resolve().parent
+        if exe_dir.name.lower() == "dist":
+            return exe_dir.parent
+        return exe_dir
+    return Path(__file__).resolve().parent
+
+
+ROOT = project_root()
 USER_SETTINGS_PATH = ROOT / "user_settings.json"
 STORE_PATH = ROOT / "simulation_profiles.json"
 SIMULATIONS_DIR = ROOT / "simulations"
