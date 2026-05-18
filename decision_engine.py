@@ -470,8 +470,8 @@ class DecisionEngine:
         
     def quick_technical_filter(self, indicators, current_price):
         if not indicators: return False, _('FILTER_SIN_DATOS', lang=self.current_lang)
-        rsi = indicators.get('rsi')
-        adx = indicators.get('adx', 0)
+        rsi = _safe_float(indicators.get('rsi'), 50.0)
+        adx = _safe_float(indicators.get('adx'), 0.0)
         aggressive = bool(getattr(config, 'AGGRESSIVE_TRADING_PROFILE', False))
         if aggressive:
             if 48 < rsi < 52 and adx < 10:

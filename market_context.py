@@ -247,14 +247,17 @@ class MarketContext:
         # BTC dominancia baja + cap subiendo = altseason / risk-on
         risk_off_dom = float(getattr(config, 'MACRO_RISK_OFF_BTC_DOM', 58.0))
         risk_off_cap = float(getattr(config, 'MACRO_RISK_OFF_CAP_CHANGE_PCT', -2.0))
+        altseason_dom = float(getattr(config, 'MACRO_ALTSEASON_BTC_DOM', 48.0))
+        risk_on_max_dom = float(getattr(config, 'MACRO_RISK_ON_MAX_BTC_DOM', 55.0))
+        caution_risk_off_dom = float(getattr(config, 'MACRO_CAUTION_RISK_OFF_BTC_DOM', 55.0))
         if btc_dom > risk_off_dom and market_cap_change < risk_off_cap:
             macro_regime = 'RISK_OFF'       # Mal momento para altcoins
-        elif btc_dom < 48 and market_cap_change > 2:
+        elif btc_dom < altseason_dom and market_cap_change > 2:
             macro_regime = 'ALTSEASON'      # Momento ideal para altcoins
         elif market_cap_change > 1:
-            macro_regime = 'RISK_ON'        # Mercado en positivo
+            macro_regime = 'CAUTION' if btc_dom > risk_on_max_dom else 'RISK_ON'
         elif market_cap_change < -1:
-            macro_regime = 'CAUTION'        # Mercado en negativo leve
+            macro_regime = 'RISK_OFF' if btc_dom > caution_risk_off_dom else 'CAUTION'
         else:
             macro_regime = 'NEUTRAL'        # Sin tendencia clara
 

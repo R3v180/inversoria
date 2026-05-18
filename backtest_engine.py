@@ -548,17 +548,18 @@ class BacktestEngine:
                 profit_factor = row['profit_factor']
                 total_trades = row['total_trades']
 
-                # Aplicar veto duro si win rate es muy bajo con muestra suficiente
+                # Aplicar veto duro solo con muestra suficiente.
                 veto_floor = float(getattr(config, 'BACKTEST_HARD_VETO_WIN_RATE', 0.35))
+                veto_min_trades = int(getattr(config, 'BACKTEST_HARD_VETO_MIN_TRADES', 20) or 20)
                 if bool(getattr(config, 'AGGRESSIVE_TRADING_PROFILE', False)):
-                    veto_floor = min(veto_floor, 0.28)
-                hard_veto = win_rate < veto_floor and total_trades >= 5
+                    veto_floor = min(veto_floor, 0.45)
+                hard_veto = win_rate < veto_floor and total_trades >= veto_min_trades
                 veto_reason = ''
                 if hard_veto:
                     veto_reason = (
                         f"VETO HISTÓRICO: en régimen {current_regime} con estrategia "
                         f"{proposed_strategy}, win rate histórico = {win_rate:.0%} "
-                        f"({total_trades} trades). Umbral mínimo: 35%."
+                        f"({total_trades} trades). Umbral mínimo: {veto_floor:.0%}."
                     )
 
                 # Construir texto para el prompt de la IA
