@@ -201,6 +201,35 @@ class DatabaseManager:
                 cursor.execute(
                     f'CREATE INDEX IF NOT EXISTS {idx_name} ON decision_journal ({idx_cols})'
                 )
+
+            # Exchange Balance Watch: inventario real/simulado observado por el daemon.
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS exchange_balance_watch (
+                    symbol TEXT PRIMARY KEY,
+                    coin TEXT,
+                    free REAL,
+                    total REAL,
+                    usd_free REAL,
+                    usd_total REAL,
+                    status TEXT,
+                    min_amount REAL,
+                    min_cost REAL,
+                    missing_qty REAL,
+                    target_price REAL,
+                    in_open_position INTEGER,
+                    first_seen REAL,
+                    last_seen REAL,
+                    last_transition REAL,
+                    details TEXT
+                )
+            ''')
+            for idx_name, idx_cols in {
+                'idx_exchange_balance_watch_status': 'status',
+                'idx_exchange_balance_watch_seen': 'last_seen',
+            }.items():
+                cursor.execute(
+                    f'CREATE INDEX IF NOT EXISTS {idx_name} ON exchange_balance_watch ({idx_cols})'
+                )
             
             conn.commit()
 
@@ -267,6 +296,89 @@ class DatabaseManager:
         with self._get_connection() as conn:
             cursor = conn.execute('SELECT * FROM open_positions')
             return {row['symbol']: dict(row) for row in cursor.fetchall()}
+
+    def upsert_exchange_balance_watch(self, payload):
+        now = time.time()
+        symbol = str(payload.get('symbol') or '').strip().upper()
+        if not symbol:
+            coin = str(payload.get('coin') or '').strip().upper() or 'UNKNOWN'
+            symbol = f"UNROUTABLE:{coin}"
+        status = str(payload.get('status') or 'UNKNOWN')
+        with self._get_connection() as conn:
+            row = conn.execute(
+                'SELECT status, first_seen, last_transition FROM exchange_balance_watch WHERE symbol = ?',
+                (symbol,),
+            ).fetchone()
+            first_seen = float(row['first_seen']) if row and row['first_seen'] else now
+            previous_status = row['status'] if row else None
+            last_transition = float(row['last_transition']) if row and row['last_transition'] else now
+            transitioned = bool(previous_status and previous_status != status)
+            if transitioned:
+                last_transition = now
+            conn.execute(
+                '''
+                INSERT OR REPLACE INTO exchange_balance_watch
+                    (symbol, coin, free, total, usd_free, usd_total, status,
+                     min_amount, min_cost, missing_qty, target_price, in_open_position,
+                     first_seen, last_seen, last_transition, details)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ''',
+                (
+                    symbol,
+                    str(payload.get('coin') or ''),
+                    float(payload.get('free') or 0),
+                    float(payload.get('total') or 0),
+                    float(payload.get('usd_free') or 0),
+                    float(payload.get('usd_total') or 0),
+                    status,
+                    float(payload.get('min_amount') or 0),
+                    float(payload.get('min_cost') or 0),
+                    float(payload.get('missing_qty') or 0),
+                    float(payload.get('target_price') or 0),
+                    1 if payload.get('in_open_position') else 0,
+                    first_seen,
+                    now,
+                    last_transition,
+                    self._json_or_none(payload.get('details') or {}),
+                ),
+            )
+            conn.commit()
+        return {
+            'symbol': symbol,
+            'previous_status': previous_status,
+            'status': status,
+            'transitioned': transitioned,
+        }
+
+    def get_exchange_balance_watch(self, limit=500):
+        limit = max(1, min(int(limit), 5000))
+        with self._get_connection() as conn:
+            cursor = conn.execute(
+                '''
+                SELECT * FROM exchange_balance_watch
+                ORDER BY usd_total DESC, last_seen DESC
+                LIMIT ?
+                ''',
+                (limit,),
+            )
+            return [dict(row) for row in cursor.fetchall()]
+
+    def get_exchange_balance_watch_summary(self):
+        with self._get_connection() as conn:
+            rows = conn.execute(
+                '''
+                SELECT status, COUNT(*) AS count, SUM(usd_total) AS usd_total
+                FROM exchange_balance_watch
+                GROUP BY status
+                '''
+            ).fetchall()
+        return {
+            row['status']: {
+                'count': int(row['count'] or 0),
+                'usd_total': float(row['usd_total'] or 0),
+            }
+            for row in rows
+        }
 
     def add_open_position(self, symbol, entry_price, highest_price, amount, entry_time=None, extra_data=None):
         if entry_time is None:

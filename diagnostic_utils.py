@@ -192,6 +192,7 @@ def _daemon_diagnostics(db) -> str:
         "open_positions": diag.get("open_positions"),
         "dynamic_max": diag.get("dynamic_max"),
         "risk_guards": diag.get("risk_guards"),
+        "dust_watch": diag.get("dust_watch"),
         "top_buy_candidates": (diag.get("top_buy_candidates") or [])[:5],
     }
     if diag.get("cycle_ts"):
