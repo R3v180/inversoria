@@ -7,6 +7,7 @@ from google import genai
 from groq import Groq
 import config # Importar módulo completo
 from database_manager import DatabaseManager
+from news_service import relevant_news_lines
 
 try:
     from zoneinfo import ZoneInfo
@@ -139,6 +140,9 @@ class SentimentEngine:
         return self.fng_cache['value'], self.fng_cache['classification']
 
     def get_news(self, symbol, limit=15):
+        cached = relevant_news_lines([symbol], limit=limit, db=self.db)
+        if cached:
+            return cached
         if not config.COINDESK_API_KEY: return []
         currency = symbol.split('/')[0]
         try:
