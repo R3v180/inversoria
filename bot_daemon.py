@@ -999,6 +999,7 @@ class BotDaemon:
             if symbol not in scan_symbols:
                 scan_symbols.append(symbol)
 
+        scan_items = []
         for symbol in scan_symbols:
             current_price = self.exchange.get_ticker(symbol)
             if not current_price:
@@ -1012,7 +1013,26 @@ class BotDaemon:
             if not indicators:
                 skipped["NO_INDICATORS"] = skipped.get("NO_INDICATORS", 0) + 1
                 continue
-            
+
+            scan_items.append({
+                'symbol': symbol,
+                'price': current_price,
+                'ohlcv': ohlcv,
+                'indicators': indicators,
+                'is_open': symbol in open_positions,
+            })
+
+        if getattr(config, 'AI_BATCH_DECISIONS_ENABLED', True):
+            try:
+                self.decision_engine.analyze_batch_with_ai(scan_items)
+            except Exception as e:
+                self.log_message(f"[WARN] Batch AI skipped | reason={self._short_reason(e, 120)}")
+
+        for scan_item in scan_items:
+            symbol = scan_item['symbol']
+            current_price = scan_item['price']
+            ohlcv = scan_item['ohlcv']
+            indicators = scan_item['indicators']
             is_open = symbol in open_positions
             decision = self.decision_engine.get_decision(symbol, current_price, indicators, ohlcv, len(open_positions), is_open)
             if not decision:
@@ -1064,6 +1084,7 @@ class BotDaemon:
                 'execution_mode': getattr(config, 'TRADING_EXECUTION_MODE', 'auto'),
                 'provider': provider,
                 'cache_hit': decision.get('cache_hit', ''),
+                'batch_ai': bool(decision.get('batch_ai', False)),
             })
             self.db.set_system_status('last_ia_decision', decision_json)
             self.db.set_system_status(f'decision_{symbol}', decision_json)

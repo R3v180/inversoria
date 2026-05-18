@@ -81,6 +81,7 @@ DEFAULT_SETTINGS = {
     'SMALL_ACCOUNT_MAX_STOP_DISTANCE_PCT': 8.0,
     'DAEMON_CYCLE_SECONDS': 60,
     'WATCHLIST_UPDATE_SECONDS': 14400,
+    'AI_BATCH_DECISIONS_ENABLED': True,
 }
 
 def get_setting(key, default, cast_type=str):
@@ -210,6 +211,7 @@ SMALL_ACCOUNT_FORCE_MIN_ORDER = get_setting('SMALL_ACCOUNT_FORCE_MIN_ORDER', Tru
 SMALL_ACCOUNT_MAX_STOP_DISTANCE_PCT = get_setting('SMALL_ACCOUNT_MAX_STOP_DISTANCE_PCT', 8.0, float)
 DAEMON_CYCLE_SECONDS = get_setting('DAEMON_CYCLE_SECONDS', 60, int)
 WATCHLIST_UPDATE_SECONDS = get_setting('WATCHLIST_UPDATE_SECONDS', 14400, int)
+AI_BATCH_DECISIONS_ENABLED = get_setting('AI_BATCH_DECISIONS_ENABLED', True, bool)
 
 def get_dynamic_max_positions(balance_usdt: float) -> int:
     """Escala dinámica de posiciones basada en el balance total (v6.1)"""

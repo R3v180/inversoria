@@ -480,7 +480,7 @@ class DecisionEngine:
             return False, f"{ _('FILTER_SIDEWAYS', lang=self.current_lang) } (RSI: {rsi:.1f}, ADX: {adx:.1f})"
         return True, "Filtro OK"
 
-    def analyze_with_ai_hybrid(self, symbol, current_price, indicators, ohlcv):
+    def analyze_with_ai_hybrid(self, symbol, current_price, indicators, ohlcv, return_context_only=False):
         """
         Análisis IA enriquecido con tres capas de contexto:
         1. Contexto macro del mercado (BTC dominance, sectores, on-chain)
@@ -715,6 +715,19 @@ Considera que el umbral mínimo de confianza para BUY es 0.52 (más agresivo que
 Si la confluencia MTF es fuerte ({confluence_score:.0%}), puedes aumentar position_size_multiplier hasta 1.5.
 """
 
+        if return_context_only:
+            return {
+                "_batch_context": True,
+                "symbol": symbol,
+                "prompt": prompt,
+                "system_instruction": system_instruction,
+                "confluence_score": confluence_score,
+                "macro_regime": macro_regime,
+                "decision_score": decision_score,
+                "score_components": score_components,
+                "decision_mode": decision_mode,
+            }
+
         raw_content, provider = self.sentiment.call_ai_hybrid(prompt, system_instruction)
 
         if raw_content:
@@ -788,6 +801,111 @@ Si la confluencia MTF es fuerte ({confluence_score:.0%}), puedes aumentar positi
                 print(f"[DecisionEngine] Error parseando respuesta IA para {symbol}: {e}")
 
         return self.decision_cache.get(symbol)
+
+    def analyze_batch_with_ai(self, items):
+        """
+        Precalienta decision_cache para varios símbolos con una sola llamada IA.
+        Si algo falla, el flujo individual existente sigue siendo el fallback.
+        """
+        now = time.time()
+        contexts = []
+        by_symbol = {}
+        for item in items or []:
+            symbol = item.get('symbol')
+            if not symbol:
+                continue
+            if symbol in self.last_analysis and now - self.last_analysis[symbol] < config.AI_ANALYSIS_INTERVAL:
+                continue
+            persisted = self._load_persistent_decision(symbol, now)
+            if persisted:
+                self._remember_decision(symbol, persisted, now, persist=False)
+                continue
+            if not item.get('is_open'):
+                passes, reason = self.quick_technical_filter(item.get('indicators') or {}, item.get('price'))
+                if not passes:
+                    continue
+            prepared = self.analyze_with_ai_hybrid(
+                symbol,
+                item.get('price'),
+                item.get('indicators') or {},
+                item.get('ohlcv') or [],
+                return_context_only=True,
+            )
+            if isinstance(prepared, dict) and prepared.get('_batch_context'):
+                contexts.append(prepared)
+                by_symbol[symbol] = prepared
+
+        if not contexts:
+            return {}
+
+        shared_instruction = (
+            f"{config.PROMPT_DECISION}\n"
+            "DEBES responder SOLO JSON válido con esta forma exacta: "
+            "{\"decisions\":[{\"symbol\":\"BTC/USDT\",\"regime\":\"...\",\"best_strategy\":\"...\","
+            "\"action\":\"BUY|SELL|HOLD\",\"confidence\":0.0,\"position_size_multiplier\":1.0,"
+            "\"stop_loss_atr\":2.0,\"take_profit_ratio\":2.0,\"reasoning\":\"máximo 1 frase\"}]}."
+            " No incluyas markdown ni texto fuera del JSON."
+        )
+        prompt_parts = [
+            "Analiza estos activos como un lote. Mantén cada decisión independiente y devuelve una entrada por símbolo.",
+        ]
+        for ctx in contexts:
+            prompt_parts.append(f"\n--- SYMBOL_CONTEXT {ctx['symbol']} ---\n{ctx['prompt']}")
+        raw_content, provider = self.sentiment.call_ai_hybrid("\n".join(prompt_parts), shared_instruction)
+        if not raw_content:
+            return {}
+
+        try:
+            raw_object = _extract_first_json_object(raw_content)
+            parsed = json.loads(_repair_common_json_issues(raw_object or raw_content))
+            decisions = parsed.get('decisions') if isinstance(parsed, dict) else None
+            if not isinstance(decisions, list):
+                return {}
+        except Exception as exc:
+            print(f"[DecisionEngine] Error parseando batch IA: {exc}")
+            return {}
+
+        out = {}
+        for raw_decision in decisions:
+            if not isinstance(raw_decision, dict):
+                continue
+            symbol = str(raw_decision.get('symbol') or '').upper()
+            ctx = by_symbol.get(symbol)
+            if not ctx:
+                continue
+            raw_decision = dict(raw_decision)
+            raw_decision.pop('symbol', None)
+            try:
+                result = self._validate_ai_decision(raw_decision)
+            except Exception as exc:
+                print(f"[DecisionEngine] Decisión batch inválida para {symbol}: {exc}")
+                continue
+            result['provider'] = provider or 'BatchAI'
+            result['confluence_score'] = ctx.get('confluence_score', 0.5)
+            result['macro_regime'] = ctx.get('macro_regime', 'NEUTRAL')
+            result['decision_score'] = ctx.get('decision_score', 0.0)
+            result['score_components'] = ctx.get('score_components', {})
+            result['decision_mode'] = ctx.get('decision_mode', getattr(config, 'DECISION_MODE', 'hybrid'))
+            result['ai_action'] = result.get('action', 'HOLD')
+            result['adaptive_adjustment'] = result.get('score_components', {}).get('adaptive_adjustment', 0.0)
+            result['adaptive_evidence'] = result.get('score_components', {}).get('adaptive_evidence', {})
+            result['batch_ai'] = True
+
+            if result['decision_mode'] == 'hybrid':
+                effective_score = _safe_float(result.get('decision_score'), 0.0)
+                if result.get('action') == 'BUY' and effective_score < config.MIN_AUTO_DECISION_SCORE:
+                    result['action'] = 'HOLD'
+                    result['reasoning'] = (
+                        f"[LOW RULE SCORE] {result.get('reasoning', '')} "
+                        f"(score {effective_score:.0%} < {config.MIN_AUTO_DECISION_SCORE:.0%})"
+                    )
+                else:
+                    ai_conf = _safe_float(result.get('confidence'), 0.0)
+                    result['confidence'] = round(_clamp((ai_conf * 0.70) + (effective_score * 0.30)), 3)
+
+            self._remember_decision(symbol, result, now, persist=True)
+            out[symbol] = result
+        return out
 
     def evaluate_rotation_potential(self, new_signal, open_positions_details):
         if not new_signal or new_signal.get('action') != 'BUY': return None

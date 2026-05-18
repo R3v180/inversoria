@@ -68,6 +68,7 @@ CONFIG_SCHEMA = {
     "SMALL_ACCOUNT_MAX_STOP_DISTANCE_PCT": {"type": float, "min": 1.0, "max": 25.0},
     "DAEMON_CYCLE_SECONDS": {"type": int, "min": 15, "max": 600},
     "WATCHLIST_UPDATE_SECONDS": {"type": int, "min": 900, "max": 86_400},
+    "AI_BATCH_DECISIONS_ENABLED": {"type": bool},
     "PROMPT_SENTIMENT": {"type": str, "max_len": 2_000, "allow_empty": True},
     "PROMPT_DECISION": {"type": str, "max_len": 4_000, "allow_empty": True},
     "PROMPT_CURATION": {"type": str, "max_len": 3_000, "allow_empty": True},
