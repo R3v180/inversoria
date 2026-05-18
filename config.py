@@ -18,7 +18,7 @@ DEFAULT_SETTINGS = {
     'SIMULATION_PROFILE_ID': 'default',
     'PRESUPUESTO_INICIAL': 60.0,
     'MONEDAS': 'BTC/USDT,ETH/USDT,SOL/USDT,ADA/USDT,DOT/USDT',
-    'RISK_PER_TRADE': 0.10,
+    'RISK_PER_TRADE': 0.02,
     'MAX_OPEN_POSITIONS': 5,
     # Control operativo: "auto" ejecuta ordenes; "consultive" solo analiza y registra.
     'TRADING_EXECUTION_MODE': 'auto',
@@ -27,9 +27,11 @@ DEFAULT_SETTINGS = {
     'MIN_AUTO_DECISION_SCORE': 0.62,
     # False = límite por escala de capital (<100→3, etc.). True = usa solo "Máximo Posiciones".
     'MANUAL_MAX_POSITIONS_PRIORITY': False,
-    'MIN_PROFIT_NET': 1.0,
-    'STOP_LOSS_PERCENT': 3.0,
+    'MIN_PROFIT_NET': 3.0,
+    'STOP_LOSS_PERCENT': 2.0,
     'MAX_DAILY_LOSS_PCT': 5.0,
+    'MAX_PORTFOLIO_DRAWDOWN_PCT': 15.0,
+    'DRAWDOWN_COOLDOWN_HOURS': 24,
     'MAX_PORTFOLIO_EXPOSURE_PCT': 85.0,
     'VOLATILITY_SIZING_ENABLED': True,
     'MAX_POSITION_RISK_PCT': 1.0,
@@ -71,11 +73,15 @@ DEFAULT_SETTINGS = {
     'MACRO_RISK_OFF_BTC_DOM': 58.0,
     'MACRO_RISK_OFF_CAP_CHANGE_PCT': -2.0,
     'MACRO_CAUTION_BTC_DOM': 60.0,
+    'MACRO_ALTSEASON_BTC_DOM': 48.0,
+    'MACRO_RISK_ON_MAX_BTC_DOM': 55.0,
+    'MACRO_CAUTION_RISK_OFF_BTC_DOM': 55.0,
     'MACRO_DXY_VETO_PCT': 1.5,
     'MACRO_SPY_VETO_PCT': -2.0,
     'MIN_CONFIDENCE_ENTRY': 0.52,
     'MTF_ALLOW_COUNTER_TREND': False,
-    'BACKTEST_HARD_VETO_WIN_RATE': 0.35,
+    'BACKTEST_HARD_VETO_WIN_RATE': 0.50,
+    'BACKTEST_HARD_VETO_MIN_TRADES': 20,
     'SMALL_ACCOUNT_USDT_THRESHOLD': 150.0,
     'SMALL_ACCOUNT_FORCE_MIN_ORDER': True,
     'SMALL_ACCOUNT_MAX_STOP_DISTANCE_PCT': 8.0,
@@ -106,6 +112,7 @@ DEFAULT_SETTINGS = {
     'AI_MAX_EST_TOKENS_PER_DAY': 120000,
     'AI_RULES_ONLY_ON_BUDGET_EXHAUSTED': True,
     'AI_MAX_OUTPUT_TOKENS': 700,
+    'AI_PROVIDER_TIMEOUT_SECONDS': 15,
     # Gestion avanzada de posiciones (apagada hasta implementar la logica completa).
     'ADD_TO_WINNER_ENABLED': False,
     'ADD_MIN_PROFIT_PCT': 1.0,
@@ -113,8 +120,8 @@ DEFAULT_SETTINGS = {
     'ADD_MIN_CONFIDENCE': 0.65,
     'ADD_MAX_PER_SYMBOL': 1,
     'ADD_SIZE_MULTIPLIER': 0.5,
-    'BREAK_EVEN_ENABLED': False,
-    'PARTIAL_TAKE_PROFIT_ENABLED': False,
+    'BREAK_EVEN_ENABLED': True,
+    'PARTIAL_TAKE_PROFIT_ENABLED': True,
     'PARTIAL_TAKE_PROFIT_PCT': 50.0,
     # Observabilidad/alertas.
     'ALERTS_ENABLED': False,
@@ -122,6 +129,16 @@ DEFAULT_SETTINGS = {
     'HEALTH_EXPORT_ENABLED': True,
     'STRUCTURED_LOGS_ENABLED': True,
     'AUDIT_EVENTS_ENABLED': True,
+}
+
+SENSITIVE_SETTING_KEYS = {
+    'CRYPTO_API_KEY',
+    'CRYPTO_API_SECRET',
+    'GROQ_API_KEY',
+    'GOOGLE_API_KEY',
+    'SAMBANOVA_API_KEY',
+    'COINDESK_API_KEY',
+    'ALPHA_VANTAGE_API_KEY',
 }
 
 def get_setting(key, default, cast_type=str):
@@ -139,7 +156,10 @@ def get_setting(key, default, cast_type=str):
     except Exception:
         profile_settings = {}
 
-    val = profile_settings.get(key, settings.get(key, os.getenv(key, default)))
+    if str(key).strip().upper() in SENSITIVE_SETTING_KEYS:
+        val = os.getenv(key, default)
+    else:
+        val = profile_settings.get(key, settings.get(key, os.getenv(key, default)))
         
     try:
         if cast_type == bool:
@@ -168,10 +188,14 @@ def save_settings(new_settings):
         next_sim_mode = next_sim_mode.strip().lower() in {'true', '1', 'yes', 'si', 'sí', 'on'}
     for key, value in new_settings.items():
         normalized = str(key).strip().upper()
+        if normalized in SENSITIVE_SETTING_KEYS:
+            continue
         if normalized in GLOBAL_SETTING_KEYS or not bool(next_sim_mode):
             global_updates[key] = value
         else:
             profile_updates[key] = value
+    for sensitive_key in SENSITIVE_SETTING_KEYS:
+        settings.pop(sensitive_key, None)
     settings.update(global_updates)
     with open(USER_SETTINGS_FILE, 'w', encoding='utf-8') as f:
         json.dump(settings, f, indent=4)
@@ -179,9 +203,13 @@ def save_settings(new_settings):
         save_active_profile_settings(profile_updates)
 
 def reset_to_defaults():
+    defaults = {
+        key: value for key, value in DEFAULT_SETTINGS.items()
+        if str(key).strip().upper() not in SENSITIVE_SETTING_KEYS
+    }
     with open(USER_SETTINGS_FILE, 'w', encoding='utf-8') as f:
-        json.dump(DEFAULT_SETTINGS, f, indent=4)
-    return DEFAULT_SETTINGS
+        json.dump(defaults, f, indent=4)
+    return defaults
 
 # --- Carga de Variables Activas ---
 MODO_SIMULACION = get_setting('MODO_SIMULACION', True, bool)
@@ -197,14 +225,16 @@ COINDESK_API_KEY = get_setting('COINDESK_API_KEY', '')
 monedas_raw = get_setting('MONEDAS', 'BTC/USDT,ETH/USDT,SOL/USDT,ADA/USDT,DOT/USDT')
 SYMBOLS = [s.strip() for s in (monedas_raw if isinstance(monedas_raw, list) else monedas_raw.split(',')) if s.strip()]
 
-RISK_PER_TRADE = get_setting('RISK_PER_TRADE', 0.10, float)
+RISK_PER_TRADE = get_setting('RISK_PER_TRADE', DEFAULT_SETTINGS['RISK_PER_TRADE'], float)
 MAX_OPEN_POSITIONS = get_setting('MAX_OPEN_POSITIONS', 5, int)
 TRADING_EXECUTION_MODE = get_setting('TRADING_EXECUTION_MODE', 'auto').lower()
 DECISION_MODE = get_setting('DECISION_MODE', 'hybrid').lower()
 MIN_AUTO_DECISION_SCORE = get_setting('MIN_AUTO_DECISION_SCORE', 0.62, float)
-PROFIT_OBJETIVO = get_setting('MIN_PROFIT_NET', 1.0, float) / 100.0
-STOP_LOSS_PCT = get_setting('STOP_LOSS_PERCENT', 3.0, float) / 100.0
+PROFIT_OBJETIVO = get_setting('MIN_PROFIT_NET', DEFAULT_SETTINGS['MIN_PROFIT_NET'], float) / 100.0
+STOP_LOSS_PCT = get_setting('STOP_LOSS_PERCENT', DEFAULT_SETTINGS['STOP_LOSS_PERCENT'], float) / 100.0
 MAX_DAILY_LOSS_PCT = get_setting('MAX_DAILY_LOSS_PCT', 5.0, float) / 100.0
+MAX_PORTFOLIO_DRAWDOWN_PCT = get_setting('MAX_PORTFOLIO_DRAWDOWN_PCT', 15.0, float) / 100.0
+DRAWDOWN_COOLDOWN_HOURS = get_setting('DRAWDOWN_COOLDOWN_HOURS', 24, int)
 MAX_PORTFOLIO_EXPOSURE_PCT = get_setting('MAX_PORTFOLIO_EXPOSURE_PCT', 85.0, float) / 100.0
 VOLATILITY_SIZING_ENABLED = get_setting('VOLATILITY_SIZING_ENABLED', True, bool)
 MAX_POSITION_RISK_PCT = get_setting('MAX_POSITION_RISK_PCT', 1.0, float) / 100.0
@@ -247,11 +277,15 @@ MACRO_VETO_ALTS_IN_RISK_OFF = get_setting('MACRO_VETO_ALTS_IN_RISK_OFF', True, b
 MACRO_RISK_OFF_BTC_DOM = get_setting('MACRO_RISK_OFF_BTC_DOM', 58.0, float)
 MACRO_RISK_OFF_CAP_CHANGE_PCT = get_setting('MACRO_RISK_OFF_CAP_CHANGE_PCT', -2.0, float)
 MACRO_CAUTION_BTC_DOM = get_setting('MACRO_CAUTION_BTC_DOM', 60.0, float)
+MACRO_ALTSEASON_BTC_DOM = get_setting('MACRO_ALTSEASON_BTC_DOM', 48.0, float)
+MACRO_RISK_ON_MAX_BTC_DOM = get_setting('MACRO_RISK_ON_MAX_BTC_DOM', 55.0, float)
+MACRO_CAUTION_RISK_OFF_BTC_DOM = get_setting('MACRO_CAUTION_RISK_OFF_BTC_DOM', 55.0, float)
 MACRO_DXY_VETO_PCT = get_setting('MACRO_DXY_VETO_PCT', 1.5, float)
 MACRO_SPY_VETO_PCT = get_setting('MACRO_SPY_VETO_PCT', -2.0, float)
 MIN_CONFIDENCE_ENTRY = get_setting('MIN_CONFIDENCE_ENTRY', 0.52, float)
 MTF_ALLOW_COUNTER_TREND = get_setting('MTF_ALLOW_COUNTER_TREND', False, bool)
-BACKTEST_HARD_VETO_WIN_RATE = get_setting('BACKTEST_HARD_VETO_WIN_RATE', 0.35, float)
+BACKTEST_HARD_VETO_WIN_RATE = get_setting('BACKTEST_HARD_VETO_WIN_RATE', DEFAULT_SETTINGS['BACKTEST_HARD_VETO_WIN_RATE'], float)
+BACKTEST_HARD_VETO_MIN_TRADES = get_setting('BACKTEST_HARD_VETO_MIN_TRADES', 20, int)
 SMALL_ACCOUNT_USDT_THRESHOLD = get_setting('SMALL_ACCOUNT_USDT_THRESHOLD', 150.0, float)
 SMALL_ACCOUNT_FORCE_MIN_ORDER = get_setting('SMALL_ACCOUNT_FORCE_MIN_ORDER', True, bool)
 SMALL_ACCOUNT_MAX_STOP_DISTANCE_PCT = get_setting('SMALL_ACCOUNT_MAX_STOP_DISTANCE_PCT', 8.0, float)
@@ -278,14 +312,15 @@ AI_MAX_REQUESTS_PER_DAY = get_setting('AI_MAX_REQUESTS_PER_DAY', 80, int)
 AI_MAX_EST_TOKENS_PER_DAY = get_setting('AI_MAX_EST_TOKENS_PER_DAY', 120000, int)
 AI_RULES_ONLY_ON_BUDGET_EXHAUSTED = get_setting('AI_RULES_ONLY_ON_BUDGET_EXHAUSTED', True, bool)
 AI_MAX_OUTPUT_TOKENS = get_setting('AI_MAX_OUTPUT_TOKENS', 700, int)
+AI_PROVIDER_TIMEOUT_SECONDS = get_setting('AI_PROVIDER_TIMEOUT_SECONDS', 15, int)
 ADD_TO_WINNER_ENABLED = get_setting('ADD_TO_WINNER_ENABLED', False, bool)
 ADD_MIN_PROFIT_PCT = get_setting('ADD_MIN_PROFIT_PCT', 1.0, float)
 ADD_MIN_SCORE = get_setting('ADD_MIN_SCORE', 0.62, float)
 ADD_MIN_CONFIDENCE = get_setting('ADD_MIN_CONFIDENCE', 0.65, float)
 ADD_MAX_PER_SYMBOL = get_setting('ADD_MAX_PER_SYMBOL', 1, int)
 ADD_SIZE_MULTIPLIER = get_setting('ADD_SIZE_MULTIPLIER', 0.5, float)
-BREAK_EVEN_ENABLED = get_setting('BREAK_EVEN_ENABLED', False, bool)
-PARTIAL_TAKE_PROFIT_ENABLED = get_setting('PARTIAL_TAKE_PROFIT_ENABLED', False, bool)
+BREAK_EVEN_ENABLED = get_setting('BREAK_EVEN_ENABLED', DEFAULT_SETTINGS['BREAK_EVEN_ENABLED'], bool)
+PARTIAL_TAKE_PROFIT_ENABLED = get_setting('PARTIAL_TAKE_PROFIT_ENABLED', DEFAULT_SETTINGS['PARTIAL_TAKE_PROFIT_ENABLED'], bool)
 PARTIAL_TAKE_PROFIT_PCT = get_setting('PARTIAL_TAKE_PROFIT_PCT', 50.0, float)
 ALERTS_ENABLED = get_setting('ALERTS_ENABLED', False, bool)
 ALERT_WEBHOOK_URL = get_text_setting('ALERT_WEBHOOK_URL', '')

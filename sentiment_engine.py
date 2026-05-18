@@ -3,6 +3,7 @@ import json
 import re
 import time
 import hashlib
+import concurrent.futures
 from datetime import datetime, timedelta, timezone
 from google import genai
 from groq import Groq
@@ -125,7 +126,8 @@ class SentimentEngine:
         self._load_ai_cooldowns()
 
     def set_user_context(self, user_name, language):
-        self.user_name = user_name
+        safe_name = re.sub(r"(?i)(ignore|override|system|developer|prompt|instruction|always|never)", "", str(user_name or "User"))
+        self.user_name = " ".join(safe_name.split())[:80] or "User"
         self.language = language
 
     def get_fear_and_greed(self):
@@ -192,6 +194,29 @@ class SentimentEngine:
     def _prompt_hash(self, prompt, system_instruction):
         raw = f"{system_instruction or ''}\n{prompt or ''}"
         return hashlib.sha256(raw.encode("utf-8", errors="ignore")).hexdigest()[:16]
+
+    def _call_with_timeout(self, fn, timeout_seconds=None):
+        timeout_seconds = int(timeout_seconds or getattr(config, 'AI_PROVIDER_TIMEOUT_SECONDS', 15) or 15)
+        executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+        future = executor.submit(fn)
+        try:
+            return future.result(timeout=timeout_seconds)
+        except concurrent.futures.TimeoutError:
+            future.cancel()
+            raise TimeoutError(f"AI provider timeout after {timeout_seconds}s")
+        finally:
+            executor.shutdown(wait=False, cancel_futures=True)
+
+    def _parse_sentiment_label(self, text):
+        for line in str(text or "").splitlines():
+            cleaned = line.strip().upper()
+            if not cleaned:
+                continue
+            match = re.match(r"^(BULLISH|BEARISH|NEUTRAL)\b", cleaned)
+            if match:
+                return match.group(1)
+            break
+        return "NEUTRAL"
 
     def _ai_budget_check(self, prompt, system_instruction, feature):
         input_tokens = self._estimate_tokens(f"{system_instruction or ''}\n{prompt or ''}")
@@ -291,9 +316,11 @@ class SentimentEngine:
             else:
                 for model_label, model_name, provider_name in GEMINI_MODELS:
                     try:
-                        response = self.gemini_client.models.generate_content(
-                            model=model_name,
-                            contents=f"{system_instruction}\n\n{prompt}"
+                        response = self._call_with_timeout(
+                            lambda: self.gemini_client.models.generate_content(
+                                model=model_name,
+                                contents=f"{system_instruction}\n\n{prompt}"
+                            )
                         )
                         if response and response.text:
                             self.db.record_ai_usage(
@@ -312,11 +339,13 @@ class SentimentEngine:
         # 3. GROQ (8B)
         if self.groq_client and not self._provider_in_cooldown('Groq'):
             try:
-                completion = self.groq_client.chat.completions.create(
-                    model="llama-3.1-8b-instant",
-                    messages=[{"role": "user", "content": f"{system_instruction}\n{prompt}"}],
-                    temperature=0.1,
-                    max_tokens=int(getattr(config, 'AI_MAX_OUTPUT_TOKENS', 700) or 700),
+                completion = self._call_with_timeout(
+                    lambda: self.groq_client.chat.completions.create(
+                        model="llama-3.1-8b-instant",
+                        messages=[{"role": "user", "content": f"{system_instruction}\n{prompt}"}],
+                        temperature=0.1,
+                        max_tokens=int(getattr(config, 'AI_MAX_OUTPUT_TOKENS', 700) or 700),
+                    )
                 )
                 text = completion.choices[0].message.content.strip()
                 self.db.record_ai_usage(
@@ -349,9 +378,7 @@ class SentimentEngine:
         prompt = f"Activo: {symbol}\nF&G Index: {fng_val}\n{stats_str}\nNoticias:\n" + "\n".join(titles)
         res, provider = self.call_ai_hybrid(prompt, system_instruction, feature="sentiment")
         if res:
-            sentiment = "NEUTRAL"
-            if "BULLISH" in res.upper(): sentiment = "BULLISH"
-            elif "BEARISH" in res.upper(): sentiment = "BEARISH"
+            sentiment = self._parse_sentiment_label(res)
             final_text = f"[{provider}] {res}"
             self.cache[symbol] = {'sentiment': sentiment, 'text': final_text, 'timestamp': time.time()}
             return sentiment, final_text

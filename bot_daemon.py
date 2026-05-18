@@ -298,6 +298,21 @@ class BotDaemon:
         if total_value <= 0:
             reasons.append("NO_EQUITY")
 
+        peak_key = "sim_equity_peak" if self.exchange.modo_simulacion else "real_equity_peak"
+        peak = self._status_float(peak_key, 0.0)
+        if total_value > 0:
+            if peak <= 0 or total_value > peak:
+                peak = total_value
+                self.db.set_system_status(peak_key, peak)
+            max_drawdown = float(getattr(config, "MAX_PORTFOLIO_DRAWDOWN_PCT", 0.15) or 0.15)
+            drawdown_pct = ((peak - total_value) / peak) if peak > 0 else 0.0
+            details["portfolio_drawdown_pct"] = round(drawdown_pct * 100, 3)
+            details["portfolio_equity_peak"] = round(peak, 8)
+            if max_drawdown > 0 and drawdown_pct >= max_drawdown:
+                reasons.append("PORTFOLIO_DRAWDOWN")
+                cooldown_until = time.time() + (int(getattr(config, "DRAWDOWN_COOLDOWN_HOURS", 24) or 24) * 3600)
+                self.db.set_system_status("drawdown_cooldown_until", cooldown_until)
+
         if getattr(config, "AUTO_PAUSE_ON_DB_EXCHANGE_MISMATCH", True):
             mismatches = self._position_balance_mismatches(open_positions)
             if mismatches:
