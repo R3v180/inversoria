@@ -204,6 +204,12 @@ class BotDaemon:
             price = self._safe_float(fallback_price, 0.0)
         return filled, price
 
+    def _is_filled_order_status(self, order_result):
+        status = str((order_result or {}).get("status") or "").lower()
+        if status in {"closed", "simulated", "partial"}:
+            return True
+        return status == "open" and self._safe_float((order_result or {}).get("filled"), 0.0) > 0
+
     def _record_order_event(
         self,
         local_order_id,
@@ -239,7 +245,7 @@ class BotDaemon:
                     "order_event",
                     f"{symbol} {side} {((order_result or {}).get('status') or 'unknown')}",
                     symbol=symbol,
-                    severity="info" if (order_result or {}).get("status") in ("closed", "simulated") else "warning",
+                    severity="info" if (order_result or {}).get("status") in ("closed", "simulated", "partial") else "warning",
                     payload={
                         "local_order_id": local_order_id,
                         "side": side,
@@ -318,6 +324,25 @@ class BotDaemon:
             if mismatches:
                 reasons.append("DB_EXCHANGE_MISMATCH")
                 details["mismatches"] = mismatches[:8]
+
+        try:
+            max_unreconciled = int(getattr(config, "MAX_UNRECONCILED_ORDERS", 0) or 0)
+            if max_unreconciled >= 0:
+                stale_seconds = int(getattr(config, "ORDER_MAX_PENDING_SECONDS", 120) or 120)
+                pending_orders = self.db.get_unreconciled_order_events(max_age_seconds=stale_seconds, limit=25)
+                if len(pending_orders) > max_unreconciled:
+                    reasons.append("UNRECONCILED_ORDERS")
+                    details["unreconciled_orders"] = [
+                        {
+                            "local_order_id": item.get("local_order_id"),
+                            "symbol": item.get("symbol"),
+                            "side": item.get("side"),
+                            "status": item.get("status"),
+                        }
+                        for item in pending_orders[:8]
+                    ]
+        except Exception:
+            pass
 
         try:
             ai_day = self.db.get_ai_usage_summary(time.time() - 86400)
@@ -1278,7 +1303,7 @@ class BotDaemon:
             local_order_id = self._new_local_order_id(sym, "buy")
             res = self.exchange.execute_order(sym, 'buy', amount_coin, price)
             self._record_order_event(local_order_id, sym, "buy", amount_coin, price, res, decision_journal_id)
-            if res.get('status') in ['closed', 'simulated']:
+            if self._is_filled_order_status(res):
                 executed_amount, executed_price = self._order_execution_details(res, amount_coin, price)
                 if executed_amount <= 0:
                     executed_amount = amount_coin
@@ -1332,6 +1357,18 @@ class BotDaemon:
                 )
                 return True
 
+            if str(res.get('status') or '').lower() == "open":
+                pending_reason = f"ORDER_PENDING_NO_FILL order_id={local_order_id}"
+                self.log_message(f"[PENDING] {sym} BUY order open without fill | order={local_order_id}")
+                if decision_journal_id:
+                    self.db.update_decision_journal(
+                        decision_journal_id,
+                        execution_status="pending_order",
+                        block_reason=pending_reason,
+                        sizing=sizing,
+                        risk=candidate_risk,
+                    )
+                return False
             fail_reason = str(res.get('reason', res))
             tag = "[BLOCK]" if self._is_expected_order_block(fail_reason) else "[ERROR]"
             self.log_message(
@@ -1425,7 +1462,18 @@ class BotDaemon:
             local_order_id = self._new_local_order_id(symbol, "add")
             res = self.exchange.execute_order(symbol, "buy", add_amount_coin, current_price)
             self._record_order_event(local_order_id, symbol, "buy_add", add_amount_coin, current_price, res, decision_journal_id)
-            if res.get("status") not in ["closed", "simulated"]:
+            if not self._is_filled_order_status(res):
+                if str(res.get("status") or "").lower() == "open":
+                    if decision_journal_id:
+                        self.db.update_decision_journal(
+                            decision_journal_id,
+                            execution_status="pending_add_order",
+                            block_reason=f"ORDER_PENDING_NO_FILL order_id={local_order_id}",
+                            sizing=sizing,
+                            risk=candidate_risk,
+                        )
+                    self.log_message(f"[PENDING] {symbol} ADD order open without fill | order={local_order_id}")
+                    return False
                 if decision_journal_id:
                     self.db.update_decision_journal(
                         decision_journal_id,
@@ -1656,7 +1704,7 @@ class BotDaemon:
                         order_result,
                         decision_journal_id,
                     )
-                    if order_result.get('status') in ['closed', 'simulated']:
+                    if self._is_filled_order_status(order_result):
                         sold, executed_price = self._order_execution_details(
                             order_result,
                             requested_sell,
@@ -1709,6 +1757,15 @@ class BotDaemon:
                         else:
                             self.log_message(f"[WARN] {symbol} SELL executed but DB position was not found")
                     else:
+                        if str(order_result.get("status") or "").lower() == "open":
+                            self.log_message(f"[PENDING] {symbol} SELL order open without fill | order={local_order_id}")
+                            self.db.update_decision_journal(
+                                decision_journal_id,
+                                execution_status="pending_sell_order",
+                                execution_side="sell",
+                                block_reason=f"ORDER_PENDING_NO_FILL order_id={local_order_id}",
+                            )
+                            continue
                         self.log_message(f"[ERROR] {symbol} SELL failed | reason={order_result.get('reason', 'Error desconocido')}")
                         self.db.update_decision_journal(
                             decision_journal_id,
@@ -1921,23 +1978,28 @@ class BotDaemon:
                     self.log_message(f"[WARN] {sym_sac} rotation cancelled | reason=NO_PRICE")
                     break
 
-                rot_res = self.exchange.execute_order(sym_sac, 'sell', sac_pos['amount'], sac_price)
-                if rot_res.get('status') not in ['closed', 'simulated']:
+                rot_order_id = self._new_local_order_id(sym_sac, "rotation_sell")
+                rot_amount = self._safe_float(sac_pos.get('amount'), 0.0)
+                rot_res = self.exchange.execute_order(sym_sac, 'sell', rot_amount, sac_price)
+                self._record_order_event(rot_order_id, sym_sac, "rotation_sell", rot_amount, sac_price, rot_res)
+                if not self._is_filled_order_status(rot_res):
+                    if str(rot_res.get("status") or "").lower() == "open":
+                        self.log_message(f"[PENDING] {sym_sac} rotation sell open without fill | order={rot_order_id}")
+                        break
                     self.log_message(f"[ERROR] {sym_sac} rotation sell failed | reason={rot_res.get('reason', rot_res)}")
                     break
 
-                try:
-                    sold = float(rot_res.get('filled') or 0)
-                except (TypeError, ValueError):
-                    sold = 0.0
+                sold, rot_exec_price = self._order_execution_details(rot_res, rot_amount, sac_price)
                 if sold <= 0:
                     sold = float(sac_pos['amount'])
                 sold = min(sold, float(sac_pos['amount']))
+                if rot_exec_price <= 0:
+                    rot_exec_price = sac_price
                 sac_extra = self._position_extra(sac_pos)
                 sac_entry_decision_id = sac_extra.get('entry_decision_id')
-                sac_entry_price = float(sac_pos.get('entry_price') or sac_price)
-                sac_pnl = ((float(sac_price) - sac_entry_price) / sac_entry_price) * 100 if sac_entry_price else 0.0
-                self.db.close_position(sym_sac, sac_price, "ROTACIÓN IA", sold_amount=sold)
+                sac_entry_price = float(sac_pos.get('entry_price') or rot_exec_price)
+                sac_pnl = ((float(rot_exec_price) - sac_entry_price) / sac_entry_price) * 100 if sac_entry_price else 0.0
+                self.db.close_position(sym_sac, rot_exec_price, "ROTACIÓN IA", sold_amount=sold)
                 if sac_entry_decision_id:
                     self.db.update_decision_journal(
                         sac_entry_decision_id,
@@ -1950,7 +2012,7 @@ class BotDaemon:
                 else:
                     del open_positions[sym_sac]
                 self.log_message(
-                    f"[ROTATION] executed sell={sym_sac} px={sac_price:.6g} pnl={sac_pnl:+.2f}% "
+                    f"[ROTATION] executed sell={sym_sac} px={rot_exec_price:.6g} pnl={sac_pnl:+.2f}% "
                     f"buy_candidate={candidate['symbol']}"
                 )
                 execute_buy_candidate(candidate)
