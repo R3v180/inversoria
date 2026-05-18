@@ -6,6 +6,7 @@ from datetime import datetime, timedelta, timezone
 from google import genai
 from groq import Groq
 import config # Importar módulo completo
+from database_manager import DatabaseManager
 
 try:
     from zoneinfo import ZoneInfo
@@ -95,6 +96,7 @@ def _looks_like_gemini_quota_error(message):
 
 class SentimentEngine:
     def __init__(self):
+        self.db = DatabaseManager()
         # 1. Gemini
         self.gemini_client = None
         if config.GOOGLE_API_KEY:
@@ -118,6 +120,7 @@ class SentimentEngine:
         self.gemini_cooldown_reason = ""
         self.gemini_cooldown_last_log = 0
         self.gemini_cooldown_log_interval = 300
+        self._load_ai_cooldowns()
 
     def set_user_context(self, user_name, language):
         self.user_name = user_name
@@ -149,6 +152,33 @@ class SentimentEngine:
             if secret and len(secret) >= 6:
                 message = message.replace(secret, "[REDACTED]")
         return message
+
+    def _load_ai_cooldowns(self):
+        try:
+            state = self.db.get_provider_cooldown('Gemini', 'ai')
+            self.gemini_cooldown_until = float(state.get('cooldown_until') or 0)
+            self.gemini_cooldown_reason = state.get('reason') or ''
+        except Exception:
+            self.gemini_cooldown_until = 0
+            self.gemini_cooldown_reason = ""
+
+    def _set_ai_cooldown(self, provider, until, reason):
+        try:
+            self.db.set_provider_cooldown(
+                provider,
+                cooldown_until=until,
+                reason=self._safe_error_message(reason),
+                scope='ai',
+            )
+        except Exception:
+            pass
+
+    def _provider_in_cooldown(self, provider, now=None):
+        try:
+            state = self.db.get_provider_cooldown(provider, 'ai')
+            return (now or time.time()) < float(state.get('cooldown_until') or 0)
+        except Exception:
+            return False
 
     def _format_cooldown_until(self):
         until = datetime.fromtimestamp(self.gemini_cooldown_until, timezone.utc).astimezone()
@@ -182,6 +212,7 @@ class SentimentEngine:
             self.gemini_cooldown_until = max(self.gemini_cooldown_until, now + cooldown_seconds)
             self.gemini_cooldown_reason = "rate limit temporal"
 
+        self._set_ai_cooldown('Gemini', self.gemini_cooldown_until, self.gemini_cooldown_reason)
         self._log_gemini_cooldown(now=now, force=True)
         return True
 
@@ -205,7 +236,7 @@ class SentimentEngine:
                             break
 
         # 3. GROQ (8B)
-        if self.groq_client:
+        if self.groq_client and not self._provider_in_cooldown('Groq'):
             try:
                 completion = self.groq_client.chat.completions.create(
                     model="llama-3.1-8b-instant",
@@ -214,7 +245,9 @@ class SentimentEngine:
                 )
                 return completion.choices[0].message.content.strip(), "Groq-8B"
             except Exception as e:
-                print(f"[HYBRID] Groq falló: {self._safe_error_message(e)}")
+                safe = self._safe_error_message(e)
+                self._set_ai_cooldown('Groq', time.time() + 300, safe)
+                print(f"[HYBRID] Groq falló: {safe}")
 
         return None, None
 

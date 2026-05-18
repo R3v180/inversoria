@@ -53,10 +53,10 @@ class BotDaemon:
         self.market_context = MarketContext(lang=self.u_lang)
         
         self.active_symbols = config.SYMBOLS
-        self.last_watchlist_update = 0
+        self.last_watchlist_update = self._status_float('last_watchlist_update', 0.0)
 
         # Control del backtest automático semanal
-        self.last_backtest_run = 0
+        self.last_backtest_run = self._status_float('last_backtest_run', 0.0)
         self.BACKTEST_INTERVAL = 604800  # 7 días en segundos
 
         # Control macro v6.0
@@ -122,6 +122,23 @@ class BotDaemon:
             "lang": getattr(self, "u_lang", "es"),
             "watchlist_size": len(getattr(self, "active_symbols", []) or []),
         })
+        now = time.time()
+        watchlist_ttl = int(getattr(config, 'WATCHLIST_UPDATE_SECONDS', 14400))
+        payload.update({
+            "last_watchlist_update": self.last_watchlist_update,
+            "watchlist_next_refresh_in": max(0, int((self.last_watchlist_update + watchlist_ttl) - now)),
+            "last_backtest_run": self.last_backtest_run,
+            "backtest_next_run_in": max(0, int((self.last_backtest_run + self.BACKTEST_INTERVAL) - now)),
+        })
+        ai_cooldowns = {}
+        for provider in ("Gemini", "Groq"):
+            state_info = self.db.get_provider_cooldown(provider, "ai")
+            cooldown_until = float((state_info or {}).get("cooldown_until") or 0)
+            ai_cooldowns[provider] = {
+                "cooldown_in": max(0, int(cooldown_until - now)),
+                "reason": (state_info or {}).get("reason", ""),
+            }
+        payload["ai_provider_cooldowns"] = ai_cooldowns
         if state == "cycle_done":
             payload["cycle_ts"] = payload["state_ts"]
         payload.update(extra)
@@ -138,6 +155,9 @@ class BotDaemon:
             return f
         except (TypeError, ValueError):
             return default
+
+    def _status_float(self, key, default=0.0):
+        return self._safe_float(self.db.get_system_status(key, default), default)
 
     def _clamp(self, value, low, high):
         return max(low, min(high, value))
@@ -673,6 +693,7 @@ class BotDaemon:
                 self.log_message(f"❌ Error en backtest de {symbol}: {e}")
 
         self.last_backtest_run = time.time()
+        self.db.set_system_status('last_backtest_run', self.last_backtest_run)
         self.log_message(_('LOG_BACKTEST_DONE', lang=self.u_lang))
 
     def run(self):
@@ -730,6 +751,7 @@ class BotDaemon:
                 if now - self.last_watchlist_update > watchlist_ttl:
                     self.update_dynamic_watchlist()
                     self.last_watchlist_update = now
+                    self.db.set_system_status('last_watchlist_update', self.last_watchlist_update)
 
                 # Backtest semanal automático
                 if now - self.last_backtest_run > self.BACKTEST_INTERVAL:
