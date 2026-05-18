@@ -144,11 +144,18 @@ class ExchangeHelper:
         raise last_error
 
     def _save_simulated_state(self):
-        with open(self.simulated_account_path, 'w') as f:
+        path = self.simulated_account_path
+        directory = os.path.dirname(os.path.abspath(path))
+        os.makedirs(directory, exist_ok=True)
+        tmp_path = f"{path}.tmp"
+        with open(tmp_path, 'w') as f:
             json.dump({
                 'virtual_balance': self.virtual_balance,
                 'virtual_portfolio': self.virtual_portfolio
             }, f)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp_path, path)
 
     def _load_simulated_state(self):
         if os.path.exists(self.simulated_account_path):
@@ -359,6 +366,14 @@ class ExchangeHelper:
 
                     # Ejecutar orden real
                     order = exchange.create_market_order(symbol, side, formatted_amount)
+                    if order.get('id') and order.get('status') == 'open':
+                        try:
+                            time.sleep(0.5)
+                            refreshed = exchange.fetch_order(order.get('id'), symbol)
+                            if refreshed:
+                                order.update(refreshed)
+                        except Exception as e:
+                            self._log_exchange_warning("Aviso: no se pudo reconciliar orden recién creada", e)
                     
                     # Validar estado
                     if order.get('status') in ['closed', 'open'] or order.get('id'):
