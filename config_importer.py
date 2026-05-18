@@ -15,6 +15,7 @@ SENSITIVE_CONFIG_KEYS = {
     "GOOGLE_API_KEY",
     "SAMBANOVA_API_KEY",
     "COINDESK_API_KEY",
+    "ALERT_WEBHOOK_URL",
 }
 
 
@@ -69,6 +70,40 @@ CONFIG_SCHEMA = {
     "DAEMON_CYCLE_SECONDS": {"type": int, "min": 15, "max": 600},
     "WATCHLIST_UPDATE_SECONDS": {"type": int, "min": 900, "max": 86_400},
     "AI_BATCH_DECISIONS_ENABLED": {"type": bool},
+    "DUST_WATCH_ENABLED": {"type": bool},
+    "DUST_AUTO_SELL_ENABLED": {"type": bool},
+    "DUST_SELL_MIN_USDT": {"type": float, "min": 0.1, "max": 10_000.0},
+    "DUST_ALERT_ON_RECOVERABLE": {"type": bool},
+    "DUST_LOG_COMPACT_ENABLED": {"type": bool},
+    "ORDER_RECONCILE_ENABLED": {"type": bool},
+    "ORDER_RECONCILE_TIMEOUT_SECONDS": {"type": int, "min": 5, "max": 600},
+    "ORDER_MAX_PENDING_SECONDS": {"type": int, "min": 10, "max": 3600},
+    "BUY_FEE_BUFFER_PCT": {"type": float, "min": 0.0, "max": 5.0},
+    "ORDERBOOK_DEPTH_LEVELS": {"type": int, "min": 1, "max": 50},
+    "KILL_SWITCH_ENABLED": {"type": bool},
+    "MAX_EXCHANGE_ERRORS_PER_CYCLE": {"type": int, "min": 1, "max": 100},
+    "MAX_UNRECONCILED_ORDERS": {"type": int, "min": 0, "max": 100},
+    "AUTO_PAUSE_ON_DB_EXCHANGE_MISMATCH": {"type": bool},
+    "AUTO_PAUSE_ON_STALE_HEARTBEAT": {"type": bool},
+    "AI_MAX_REQUESTS_PER_CYCLE": {"type": int, "min": 0, "max": 100},
+    "AI_MAX_REQUESTS_PER_DAY": {"type": int, "min": 0, "max": 10_000},
+    "AI_MAX_EST_TOKENS_PER_DAY": {"type": int, "min": 0, "max": 10_000_000},
+    "AI_RULES_ONLY_ON_BUDGET_EXHAUSTED": {"type": bool},
+    "AI_MAX_OUTPUT_TOKENS": {"type": int, "min": 64, "max": 4096},
+    "ADD_TO_WINNER_ENABLED": {"type": bool},
+    "ADD_MIN_PROFIT_PCT": {"type": float, "min": 0.0, "max": 50.0},
+    "ADD_MIN_SCORE": {"type": float, "min": 0.0, "max": 1.0},
+    "ADD_MIN_CONFIDENCE": {"type": float, "min": 0.0, "max": 1.0},
+    "ADD_MAX_PER_SYMBOL": {"type": int, "min": 0, "max": 10},
+    "ADD_SIZE_MULTIPLIER": {"type": float, "min": 0.05, "max": 2.0},
+    "BREAK_EVEN_ENABLED": {"type": bool},
+    "PARTIAL_TAKE_PROFIT_ENABLED": {"type": bool},
+    "PARTIAL_TAKE_PROFIT_PCT": {"type": float, "min": 1.0, "max": 100.0},
+    "ALERTS_ENABLED": {"type": bool},
+    "ALERT_WEBHOOK_URL": {"type": str, "max_len": 2_000, "allow_empty": True},
+    "HEALTH_EXPORT_ENABLED": {"type": bool},
+    "STRUCTURED_LOGS_ENABLED": {"type": bool},
+    "AUDIT_EVENTS_ENABLED": {"type": bool},
     "PROMPT_SENTIMENT": {"type": str, "max_len": 2_000, "allow_empty": True},
     "PROMPT_DECISION": {"type": str, "max_len": 4_000, "allow_empty": True},
     "PROMPT_CURATION": {"type": str, "max_len": 3_000, "allow_empty": True},
@@ -113,8 +148,42 @@ EXAMPLE_SAFE_CONFIG = {
     "ROTATION_CONFIDENCE_GAP": 0.25,
     "ROTATION_MIN_NEW_CONFIDENCE": 0.85,
     "AI_ANALYSIS_INTERVAL": 1200,
+    "AI_BATCH_DECISIONS_ENABLED": True,
     "BUY_SLIPPAGE_LIMIT": 0.005,
     "SELL_SLIPPAGE_LIMIT": 0.010,
+    "DUST_WATCH_ENABLED": True,
+    "DUST_AUTO_SELL_ENABLED": False,
+    "DUST_SELL_MIN_USDT": 5.0,
+    "DUST_ALERT_ON_RECOVERABLE": True,
+    "DUST_LOG_COMPACT_ENABLED": True,
+    "ORDER_RECONCILE_ENABLED": True,
+    "ORDER_RECONCILE_TIMEOUT_SECONDS": 30,
+    "ORDER_MAX_PENDING_SECONDS": 120,
+    "BUY_FEE_BUFFER_PCT": 0.5,
+    "ORDERBOOK_DEPTH_LEVELS": 5,
+    "KILL_SWITCH_ENABLED": True,
+    "MAX_EXCHANGE_ERRORS_PER_CYCLE": 3,
+    "MAX_UNRECONCILED_ORDERS": 0,
+    "AUTO_PAUSE_ON_DB_EXCHANGE_MISMATCH": True,
+    "AUTO_PAUSE_ON_STALE_HEARTBEAT": True,
+    "AI_MAX_REQUESTS_PER_CYCLE": 2,
+    "AI_MAX_REQUESTS_PER_DAY": 80,
+    "AI_MAX_EST_TOKENS_PER_DAY": 120000,
+    "AI_RULES_ONLY_ON_BUDGET_EXHAUSTED": True,
+    "AI_MAX_OUTPUT_TOKENS": 700,
+    "ADD_TO_WINNER_ENABLED": False,
+    "ADD_MIN_PROFIT_PCT": 1.0,
+    "ADD_MIN_SCORE": 0.62,
+    "ADD_MIN_CONFIDENCE": 0.65,
+    "ADD_MAX_PER_SYMBOL": 1,
+    "ADD_SIZE_MULTIPLIER": 0.5,
+    "BREAK_EVEN_ENABLED": False,
+    "PARTIAL_TAKE_PROFIT_ENABLED": False,
+    "PARTIAL_TAKE_PROFIT_PCT": 50.0,
+    "ALERTS_ENABLED": False,
+    "HEALTH_EXPORT_ENABLED": True,
+    "STRUCTURED_LOGS_ENABLED": True,
+    "AUDIT_EVENTS_ENABLED": True,
 }
 
 
@@ -125,6 +194,8 @@ def config_example_json() -> str:
 def current_safe_config_json() -> str:
     data = {}
     for key in CONFIG_SCHEMA:
+        if key in SENSITIVE_CONFIG_KEYS:
+            continue
         default = EXAMPLE_SAFE_CONFIG.get(key, "")
         data[key] = get_setting(key, default)
     return json.dumps(data, indent=4, ensure_ascii=False)
@@ -233,6 +304,8 @@ def _coerce_value(key, value, spec, warnings):
             warnings.append(f"{key}: valor interpretado como porcentaje y convertido a {coerced:.4f}.")
     elif expected is str:
         coerced = str(value).strip()
+        if key.startswith("PROMPT_") and not coerced:
+            warnings.append(f"{key}: vacío; el bot usará el prompt por defecto interno.")
         if not coerced and not spec.get("allow_empty"):
             raise ValueError("no puede estar vacío")
         if len(coerced) > spec.get("max_len", 10_000):
