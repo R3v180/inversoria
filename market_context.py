@@ -7,6 +7,7 @@ Fuentes: CoinGecko (sin API key), Blockchain.info, Etherscan público,
 import requests
 import time
 import json
+import config
 from database_manager import DatabaseManager
 from i18n import _
 
@@ -244,7 +245,9 @@ class MarketContext:
         # Lógica de régimen macro simplificada pero efectiva:
         # BTC dominancia alta + cap bajando = mercado temeroso / risk-off
         # BTC dominancia baja + cap subiendo = altseason / risk-on
-        if btc_dom > 58 and market_cap_change < -2:
+        risk_off_dom = float(getattr(config, 'MACRO_RISK_OFF_BTC_DOM', 58.0))
+        risk_off_cap = float(getattr(config, 'MACRO_RISK_OFF_CAP_CHANGE_PCT', -2.0))
+        if btc_dom > risk_off_dom and market_cap_change < risk_off_cap:
             macro_regime = 'RISK_OFF'       # Mal momento para altcoins
         elif btc_dom < 48 and market_cap_change > 2:
             macro_regime = 'ALTSEASON'      # Momento ideal para altcoins
@@ -313,20 +316,25 @@ ETH actividad de red: {eth_gas.get('eth_network_activity', 'N/A')} ({eth_gas.get
         macro_data = self.db.get_all_macro_data()
         
         # 1. Veto por DXY (Dólar fuerte = Riesgo en Cripto)
+        dxy_limit = float(getattr(config, 'MACRO_DXY_VETO_PCT', 1.5))
+        spy_limit = float(getattr(config, 'MACRO_SPY_VETO_PCT', -2.0))
+        caution_dom = float(getattr(config, 'MACRO_CAUTION_BTC_DOM', 60.0))
+        veto_alts_risk_off = bool(getattr(config, 'MACRO_VETO_ALTS_IN_RISK_OFF', True))
+
         dxy = macro_data.get('UUP') # Proxy del DXY
-        if dxy and dxy['change_24h'] > 1.5:
+        if dxy and dxy['change_24h'] > dxy_limit:
             return False, f"{ _('MACRO_VETO_DXY', lang=self.u_lang) } (+{dxy['change_24h']}%)"
 
         # 2. Veto por SP500 (Pánico en Bolsa)
         spy = macro_data.get('SPY')
-        if spy and spy['change_24h'] < -2.0:
+        if spy and spy['change_24h'] < spy_limit:
             return False, f"{ _('MACRO_VETO_MARKET', lang=self.u_lang) } (SP500: {spy['change_24h']}%)"
 
         is_btc = symbol == 'BTC/USDT'
 
-        if regime == 'RISK_OFF' and not is_btc:
+        if regime == 'RISK_OFF' and veto_alts_risk_off and not is_btc:
             return False, f"RISK_OFF Mode: BTC Dom {btc_dom}%, risk-off market"
-        if regime == 'CAUTION' and btc_dom > 60 and not is_btc:
+        if regime == 'CAUTION' and btc_dom > caution_dom and not is_btc:
             reason = _('MACRO_VETO_DOM', lang=self.u_lang)
             return False, f"{reason} ({btc_dom}%)"
 

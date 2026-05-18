@@ -164,12 +164,17 @@ def render_dashboard():
             if amount > 0:
                 portfolio[sym] = amount
     else:
-        # Modo real: leer balances del exchange
+        # Modo real: leer inventario a través del helper, que usa instancia privada bajo demanda.
         try:
-            raw_balances = exchange.exchange.fetch_balance()['free']
-            for coin, amount in raw_balances.items():
-                if amount > 0 and coin not in ['USDT', 'USD']:
-                    portfolio[f"{coin}/USDT"] = amount
+            rows = exchange.get_spot_inventory_rows()
+            if rows and rows[0].get("error"):
+                raise RuntimeError(rows[0].get("error"))
+            for row in rows:
+                coin = row.get("coin")
+                symbol = row.get("symbol")
+                amount = float(row.get("free") or 0)
+                if amount > 0 and symbol and coin not in ['USDT', 'USD']:
+                    portfolio[symbol] = amount
         except Exception as e:
             st.warning(_('DASH_REAL_BALANCE_ERROR').format(e))
 

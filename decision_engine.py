@@ -407,9 +407,12 @@ class DecisionEngine:
     def quick_technical_filter(self, indicators, current_price):
         if not indicators: return False, _('FILTER_SIN_DATOS', lang=self.current_lang)
         rsi = indicators.get('rsi')
-        trend = indicators.get('trend', 'UNKNOWN')
         adx = indicators.get('adx', 0)
-        if rsi > 44 and rsi < 56 and adx < 15:
+        aggressive = bool(getattr(config, 'AGGRESSIVE_TRADING_PROFILE', False))
+        if aggressive:
+            if 48 < rsi < 52 and adx < 10:
+                return False, f"{ _('FILTER_SIDEWAYS', lang=self.current_lang) } (RSI: {rsi:.1f}, ADX: {adx:.1f})"
+        elif rsi > 44 and rsi < 56 and adx < 15:
             return False, f"{ _('FILTER_SIDEWAYS', lang=self.current_lang) } (RSI: {rsi:.1f}, ADX: {adx:.1f})"
         return True, "Filtro OK"
 
@@ -485,8 +488,10 @@ class DecisionEngine:
             except Exception as e:
                 print(f"[DecisionEngine] Error MTF para {symbol}: {e}")
 
-        # Si la confluencia MTF es muy bajista, no gastar tokens de IA
-        if not allow_long:
+        allow_counter = bool(getattr(config, 'MTF_ALLOW_COUNTER_TREND', False)) or bool(
+            getattr(config, 'AGGRESSIVE_TRADING_PROFILE', False)
+        )
+        if not allow_long and not allow_counter:
             hold_decision = {
                 "regime": "TRENDING_DOWN",
                 "best_strategy": "HOLD",
@@ -501,6 +506,9 @@ class DecisionEngine:
             self.last_analysis[symbol] = now
             self.decision_cache[symbol] = hold_decision
             return hold_decision
+        if not allow_long and allow_counter:
+            confluence_score = min(confluence_score, 0.38)
+            mtf_text = (mtf_text or "") + "\n[MTF] Counter-trend permitido (perfil agresivo); confluencia reducida."
 
         # ─── CAPA 3: Prior histórico del Backtest ───
         prior_text = ""
@@ -768,12 +776,12 @@ Si la confluencia MTF es fuerte ({confluence_score:.0%}), puedes aumentar positi
         if not decision:
             return {"action": "HOLD", "reasoning": "AI offline", "confidence": 0.0}
 
-        # Umbral bajado de 0.60 a 0.52 para más operaciones
-        if decision.get("action") != "HOLD" and decision.get("confidence", 0) < 0.52:
+        min_conf = float(getattr(config, 'MIN_CONFIDENCE_ENTRY', 0.52))
+        if decision.get("action") != "HOLD" and decision.get("confidence", 0) < min_conf:
             decision["action"] = "HOLD"
             decision["reasoning"] = (
                 f"[LOW CONF] {decision.get('reasoning', '')} "
-                f"(conf {decision.get('confidence', 0):.0%} < 52%)"
+                f"(conf {decision.get('confidence', 0):.0%} < {min_conf:.0%})"
             )
 
         return decision

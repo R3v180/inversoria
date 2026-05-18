@@ -408,6 +408,12 @@ class BotDaemon:
 
         if config.VOLATILITY_SIZING_ENABLED and price > 0 and atr > 0 and stop_mult > 0:
             stop_distance_pct = (atr * stop_mult) / float(price)
+            small_account = float(total_value or 0) < float(
+                getattr(config, 'SMALL_ACCOUNT_USDT_THRESHOLD', 150.0)
+            )
+            max_stop_pct = float(getattr(config, 'SMALL_ACCOUNT_MAX_STOP_DISTANCE_PCT', 8.0)) / 100.0
+            if small_account and max_stop_pct > 0:
+                stop_distance_pct = min(stop_distance_pct, max_stop_pct)
             risk_budget = float(total_value or 0) * config.MAX_POSITION_RISK_PCT
             if stop_distance_pct > 0:
                 volatility_amount = risk_budget / stop_distance_pct
@@ -419,6 +425,17 @@ class BotDaemon:
 
         amount_usdt = min(raw_amount, cap_amount, balance_usdt)
         amount_usdt = max(0.0, amount_usdt)
+        min_order = float(config.MIN_POSITION_USDT)
+        if (
+            bool(getattr(config, 'SMALL_ACCOUNT_FORCE_MIN_ORDER', True))
+            and float(total_value or 0) < float(getattr(config, 'SMALL_ACCOUNT_USDT_THRESHOLD', 150.0))
+            and score >= float(config.MIN_AUTO_DECISION_SCORE)
+            and balance_usdt >= min_order
+            and amount_usdt > 0
+            and amount_usdt < min_order
+        ):
+            amount_usdt = min(min_order, balance_usdt * 0.98)
+            reason = f"{reason}_min_floor"
         risk_amount = amount_usdt * stop_distance_pct if stop_distance_pct else amount_usdt * config.STOP_LOSS_PCT
         return {
             "amount_usdt": round(amount_usdt, 8),
@@ -709,7 +726,8 @@ class BotDaemon:
                     )
                     time.sleep(60)
                     continue
-                if now - self.last_watchlist_update > 43200:
+                watchlist_ttl = int(getattr(config, 'WATCHLIST_UPDATE_SECONDS', 14400))
+                if now - self.last_watchlist_update > watchlist_ttl:
                     self.update_dynamic_watchlist()
                     self.last_watchlist_update = now
 
@@ -750,7 +768,8 @@ class BotDaemon:
 
                 if str(is_running).lower() == 'true':
                     self.bot_iteration()
-                    self.update_daemon_status("sleeping", next_cycle_in=60)
+                    cycle_sleep = max(15, int(getattr(config, 'DAEMON_CYCLE_SECONDS', 60)))
+                    self.update_daemon_status("sleeping", next_cycle_in=cycle_sleep)
                 else:
                     if time.time() - getattr(self, "_last_idle_log", 0) > 300:
                         self.log_message("[IDLE] Trading pausado: is_running=false. Esperando Start/Arrancar bot.")
@@ -760,7 +779,8 @@ class BotDaemon:
                         execution_mode=getattr(config, "TRADING_EXECUTION_MODE", "auto"),
                         decision_mode=getattr(config, "DECISION_MODE", "hybrid"),
                     )
-                time.sleep(60)
+                cycle_sleep = max(15, int(getattr(config, 'DAEMON_CYCLE_SECONDS', 60)))
+                time.sleep(cycle_sleep)
             except Exception as e:
                 self.update_daemon_status("error", error=str(e))
                 self.log_message(f"Error crítico en daemon: {e}")
