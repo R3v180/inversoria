@@ -82,6 +82,46 @@ DEFAULT_SETTINGS = {
     'DAEMON_CYCLE_SECONDS': 60,
     'WATCHLIST_UPDATE_SECONDS': 14400,
     'AI_BATCH_DECISIONS_ENABLED': True,
+    # Inventario/dust: base configurable para vigilancia persistente futura.
+    'DUST_WATCH_ENABLED': True,
+    'DUST_AUTO_SELL_ENABLED': False,
+    'DUST_SELL_MIN_USDT': 5.0,
+    'DUST_ALERT_ON_RECOVERABLE': True,
+    'DUST_LOG_COMPACT_ENABLED': True,
+    # Ordenes/reconciliacion: por defecto se preparan los guardrails, no aumentan agresividad.
+    'ORDER_RECONCILE_ENABLED': True,
+    'ORDER_RECONCILE_TIMEOUT_SECONDS': 30,
+    'ORDER_MAX_PENDING_SECONDS': 120,
+    'BUY_FEE_BUFFER_PCT': 0.5,
+    'ORDERBOOK_DEPTH_LEVELS': 5,
+    # Kill-switches operativos.
+    'KILL_SWITCH_ENABLED': True,
+    'MAX_EXCHANGE_ERRORS_PER_CYCLE': 3,
+    'MAX_UNRECONCILED_ORDERS': 0,
+    'AUTO_PAUSE_ON_DB_EXCHANGE_MISMATCH': True,
+    'AUTO_PAUSE_ON_STALE_HEARTBEAT': True,
+    # Presupuesto IA.
+    'AI_MAX_REQUESTS_PER_CYCLE': 2,
+    'AI_MAX_REQUESTS_PER_DAY': 80,
+    'AI_MAX_EST_TOKENS_PER_DAY': 120000,
+    'AI_RULES_ONLY_ON_BUDGET_EXHAUSTED': True,
+    'AI_MAX_OUTPUT_TOKENS': 700,
+    # Gestion avanzada de posiciones (apagada hasta implementar la logica completa).
+    'ADD_TO_WINNER_ENABLED': False,
+    'ADD_MIN_PROFIT_PCT': 1.0,
+    'ADD_MIN_SCORE': 0.62,
+    'ADD_MIN_CONFIDENCE': 0.65,
+    'ADD_MAX_PER_SYMBOL': 1,
+    'ADD_SIZE_MULTIPLIER': 0.5,
+    'BREAK_EVEN_ENABLED': False,
+    'PARTIAL_TAKE_PROFIT_ENABLED': False,
+    'PARTIAL_TAKE_PROFIT_PCT': 50.0,
+    # Observabilidad/alertas.
+    'ALERTS_ENABLED': False,
+    'ALERT_WEBHOOK_URL': '',
+    'HEALTH_EXPORT_ENABLED': True,
+    'STRUCTURED_LOGS_ENABLED': True,
+    'AUDIT_EVENTS_ENABLED': True,
 }
 
 def get_setting(key, default, cast_type=str):
@@ -107,6 +147,12 @@ def get_setting(key, default, cast_type=str):
             return str(val).lower() in ('true', '1', 't')
         return cast_type(val)
     except: return default
+
+def get_text_setting(key, default):
+    value = get_setting(key, default, str)
+    if not str(value or "").strip():
+        return default
+    return value
 
 def save_settings(new_settings):
     settings = {}
@@ -188,9 +234,9 @@ ROTATION_CONFIDENCE_GAP = get_setting('ROTATION_CONFIDENCE_GAP', 0.20, float)
 ROTATION_MIN_NEW_CONFIDENCE = get_setting('ROTATION_MIN_NEW_CONFIDENCE', 0.85, float)
 
 # Prompts
-PROMPT_SENTIMENT = get_setting('PROMPT_SENTIMENT', DEFAULT_SETTINGS['PROMPT_SENTIMENT'])
-PROMPT_DECISION = get_setting('PROMPT_DECISION', DEFAULT_SETTINGS['PROMPT_DECISION'])
-PROMPT_CURATION = get_setting('PROMPT_CURATION', DEFAULT_SETTINGS['PROMPT_CURATION'])
+PROMPT_SENTIMENT = get_text_setting('PROMPT_SENTIMENT', DEFAULT_SETTINGS['PROMPT_SENTIMENT'])
+PROMPT_DECISION = get_text_setting('PROMPT_DECISION', DEFAULT_SETTINGS['PROMPT_DECISION'])
+PROMPT_CURATION = get_text_setting('PROMPT_CURATION', DEFAULT_SETTINGS['PROMPT_CURATION'])
 AI_ANALYSIS_INTERVAL = get_setting('AI_ANALYSIS_INTERVAL', 1200, int)
 TRADING_FEE_RATE = get_setting('TRADING_FEE_RATE', 0.001, float)
 BUY_SLIPPAGE_LIMIT = get_setting('BUY_SLIPPAGE_LIMIT', 0.005, float)
@@ -212,6 +258,40 @@ SMALL_ACCOUNT_MAX_STOP_DISTANCE_PCT = get_setting('SMALL_ACCOUNT_MAX_STOP_DISTAN
 DAEMON_CYCLE_SECONDS = get_setting('DAEMON_CYCLE_SECONDS', 60, int)
 WATCHLIST_UPDATE_SECONDS = get_setting('WATCHLIST_UPDATE_SECONDS', 14400, int)
 AI_BATCH_DECISIONS_ENABLED = get_setting('AI_BATCH_DECISIONS_ENABLED', True, bool)
+DUST_WATCH_ENABLED = get_setting('DUST_WATCH_ENABLED', True, bool)
+DUST_AUTO_SELL_ENABLED = get_setting('DUST_AUTO_SELL_ENABLED', False, bool)
+DUST_SELL_MIN_USDT = get_setting('DUST_SELL_MIN_USDT', 5.0, float)
+DUST_ALERT_ON_RECOVERABLE = get_setting('DUST_ALERT_ON_RECOVERABLE', True, bool)
+DUST_LOG_COMPACT_ENABLED = get_setting('DUST_LOG_COMPACT_ENABLED', True, bool)
+ORDER_RECONCILE_ENABLED = get_setting('ORDER_RECONCILE_ENABLED', True, bool)
+ORDER_RECONCILE_TIMEOUT_SECONDS = get_setting('ORDER_RECONCILE_TIMEOUT_SECONDS', 30, int)
+ORDER_MAX_PENDING_SECONDS = get_setting('ORDER_MAX_PENDING_SECONDS', 120, int)
+BUY_FEE_BUFFER_PCT = get_setting('BUY_FEE_BUFFER_PCT', 0.5, float) / 100.0
+ORDERBOOK_DEPTH_LEVELS = get_setting('ORDERBOOK_DEPTH_LEVELS', 5, int)
+KILL_SWITCH_ENABLED = get_setting('KILL_SWITCH_ENABLED', True, bool)
+MAX_EXCHANGE_ERRORS_PER_CYCLE = get_setting('MAX_EXCHANGE_ERRORS_PER_CYCLE', 3, int)
+MAX_UNRECONCILED_ORDERS = get_setting('MAX_UNRECONCILED_ORDERS', 0, int)
+AUTO_PAUSE_ON_DB_EXCHANGE_MISMATCH = get_setting('AUTO_PAUSE_ON_DB_EXCHANGE_MISMATCH', True, bool)
+AUTO_PAUSE_ON_STALE_HEARTBEAT = get_setting('AUTO_PAUSE_ON_STALE_HEARTBEAT', True, bool)
+AI_MAX_REQUESTS_PER_CYCLE = get_setting('AI_MAX_REQUESTS_PER_CYCLE', 2, int)
+AI_MAX_REQUESTS_PER_DAY = get_setting('AI_MAX_REQUESTS_PER_DAY', 80, int)
+AI_MAX_EST_TOKENS_PER_DAY = get_setting('AI_MAX_EST_TOKENS_PER_DAY', 120000, int)
+AI_RULES_ONLY_ON_BUDGET_EXHAUSTED = get_setting('AI_RULES_ONLY_ON_BUDGET_EXHAUSTED', True, bool)
+AI_MAX_OUTPUT_TOKENS = get_setting('AI_MAX_OUTPUT_TOKENS', 700, int)
+ADD_TO_WINNER_ENABLED = get_setting('ADD_TO_WINNER_ENABLED', False, bool)
+ADD_MIN_PROFIT_PCT = get_setting('ADD_MIN_PROFIT_PCT', 1.0, float)
+ADD_MIN_SCORE = get_setting('ADD_MIN_SCORE', 0.62, float)
+ADD_MIN_CONFIDENCE = get_setting('ADD_MIN_CONFIDENCE', 0.65, float)
+ADD_MAX_PER_SYMBOL = get_setting('ADD_MAX_PER_SYMBOL', 1, int)
+ADD_SIZE_MULTIPLIER = get_setting('ADD_SIZE_MULTIPLIER', 0.5, float)
+BREAK_EVEN_ENABLED = get_setting('BREAK_EVEN_ENABLED', False, bool)
+PARTIAL_TAKE_PROFIT_ENABLED = get_setting('PARTIAL_TAKE_PROFIT_ENABLED', False, bool)
+PARTIAL_TAKE_PROFIT_PCT = get_setting('PARTIAL_TAKE_PROFIT_PCT', 50.0, float)
+ALERTS_ENABLED = get_setting('ALERTS_ENABLED', False, bool)
+ALERT_WEBHOOK_URL = get_text_setting('ALERT_WEBHOOK_URL', '')
+HEALTH_EXPORT_ENABLED = get_setting('HEALTH_EXPORT_ENABLED', True, bool)
+STRUCTURED_LOGS_ENABLED = get_setting('STRUCTURED_LOGS_ENABLED', True, bool)
+AUDIT_EVENTS_ENABLED = get_setting('AUDIT_EVENTS_ENABLED', True, bool)
 
 def get_dynamic_max_positions(balance_usdt: float) -> int:
     """Escala dinámica de posiciones basada en el balance total (v6.1)"""
