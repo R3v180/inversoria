@@ -14,6 +14,7 @@ import os
 import config
 from database_manager import DatabaseManager
 from i18n import _
+from trading_logic import TradingLogic
 
 
 class BacktestEngine:
@@ -225,6 +226,7 @@ class BacktestEngine:
         equity_curve = [initial_capital]
         capital = initial_capital
         position = None  # Dict con datos de posición abierta
+        live_logic = TradingLogic()
         fee_rate = float(getattr(config, "TRADING_FEE_RATE", 0.001) or 0.0)
         buy_slippage = float(getattr(config, "BUY_SLIPPAGE_LIMIT", 0.0) or 0.0)
         sell_slippage = float(getattr(config, "SELL_SLIPPAGE_LIMIT", 0.0) or 0.0)
@@ -239,13 +241,15 @@ class BacktestEngine:
                 if price > position['highest_price']:
                     position['highest_price'] = price
 
-                # 1. Stop Loss Estático (basado en el ATR de entrada)
-                stop_price = position['entry_stop']
-
-                # 2. Trailing Stop (activo a partir de +2% de beneficio)
-                trailing_price = None
-                if price > position['entry_price'] * 1.02:
-                    trailing_price = position['highest_price'] * (1 - params['trailing_pct'])
+                levels = live_logic.protective_levels(
+                    position['entry_price'],
+                    position['highest_price'],
+                    position.get('atr', 0),
+                    position.get('regime', 'RANGING'),
+                    aggressive=bool(getattr(config, 'AGGRESSIVE_TRADING_PROFILE', False)),
+                )
+                stop_price = levels['stop_loss_price']
+                trailing_price = levels['trailing_stop'] if price >= levels['trailing_activation'] else None
 
                 # 3. Condición de salida
                 exit_price = None
@@ -297,13 +301,19 @@ class BacktestEngine:
                 if should_enter and capital > 0:
                     position_size = capital * risk_per_trade
                     entry_price = price * (1 + buy_slippage)
-                    # Guardamos el Stop Loss inicial basado en el ATR de este momento
-                    initial_sl = entry_price - (row['atr'] * params['sl_atr_mult'])
+                    initial_sl = live_logic.protective_levels(
+                        entry_price,
+                        entry_price,
+                        row.get('atr', 0),
+                        str(row.get('regime', 'RANGING')),
+                        aggressive=bool(getattr(config, 'AGGRESSIVE_TRADING_PROFILE', False)),
+                    )['stop_loss_price']
                     
                     position = {
                         'entry_price': entry_price,
                         'highest_price': entry_price,
                         'entry_stop': initial_sl,
+                        'atr': row.get('atr', 0),
                         'position_size': position_size,
                         'entry_index': i,
                         'regime': str(row.get('regime', 'UNKNOWN')),

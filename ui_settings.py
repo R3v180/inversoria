@@ -236,6 +236,13 @@ def render_settings():
                     step=0.1,
                     help="Fallback porcentual configurable. En fases siguientes se unificará con ATR/backtest.",
                 )
+                atr_stop_enabled = st.checkbox("Stop-loss basado en ATR", value=get_setting('ATR_STOP_ENABLED', True, bool))
+                stop_loss_atr_mult = st.number_input("Multiplicador ATR stop", min_value=0.2, max_value=10.0, value=get_setting('STOP_LOSS_ATR_MULT', 1.5, float), step=0.1)
+                atr_trailing_enabled = st.checkbox("Trailing basado en ATR", value=get_setting('ATR_TRAILING_ENABLED', True, bool))
+                trailing_atr_mult = st.number_input("Multiplicador ATR trailing", min_value=0.2, max_value=15.0, value=get_setting('TRAILING_ATR_MULT', 2.5, float), step=0.1)
+                trailing_activation_pct = st.number_input("Activación trailing (%)", min_value=0.1, max_value=50.0, value=get_setting('TRAILING_ACTIVATION_PCT', 2.0, float), step=0.1)
+                break_even_activation_pct = st.number_input("Activación break-even (%)", min_value=0.1, max_value=50.0, value=get_setting('BREAK_EVEN_ACTIVATION_PCT', 1.5, float), step=0.1)
+                max_position_age_hours = st.number_input("Edad máxima posición (h)", min_value=1, max_value=8760, value=get_setting('MAX_POSITION_AGE_HOURS', 168, int), step=1)
             
             st.markdown("---")
             st.subheader(_('ROTATION_MODULE'))
@@ -365,6 +372,13 @@ def render_settings():
                 "MAX_OPEN_POSITIONS": int(max_pos),
                 "MIN_PROFIT_NET": float(min_profit),
                 "STOP_LOSS_PERCENT": float(stop_loss_percent),
+                "ATR_STOP_ENABLED": bool(atr_stop_enabled),
+                "STOP_LOSS_ATR_MULT": float(stop_loss_atr_mult),
+                "ATR_TRAILING_ENABLED": bool(atr_trailing_enabled),
+                "TRAILING_ATR_MULT": float(trailing_atr_mult),
+                "TRAILING_ACTIVATION_PCT": float(trailing_activation_pct),
+                "BREAK_EVEN_ACTIVATION_PCT": float(break_even_activation_pct),
+                "MAX_POSITION_AGE_HOURS": int(max_position_age_hours),
                 "RISK_PER_TRADE": riesgo / 100.0,
                 "MAX_DAILY_LOSS_PCT": float(max_daily_loss),
                 "MAX_PORTFOLIO_DRAWDOWN_PCT": float(max_portfolio_drawdown_pct),

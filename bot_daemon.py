@@ -1334,6 +1334,7 @@ class BotDaemon:
                     'entry_price': executed_price,
                     'highest_price': executed_price,
                     'amount': executed_amount,
+                    'entry_time': time.time(),
                     'entry_confidence': decision.get('entry_confidence', 0.7),
                     'extra_data': extra_json,
                 }
