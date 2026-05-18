@@ -1282,6 +1282,154 @@ class BotDaemon:
                 )
             return False
 
+        def execute_add_to_winner(symbol, current_price, indicators, decision, provider, decision_journal_id):
+            if not getattr(config, "ADD_TO_WINNER_ENABLED", False):
+                return False
+            pos = open_positions.get(symbol)
+            if not pos:
+                return False
+            entry_price = self._safe_float(pos.get("entry_price"), 0.0)
+            if entry_price <= 0 or current_price <= entry_price:
+                return False
+
+            profit_pct = ((current_price - entry_price) / entry_price) * 100
+            if profit_pct < float(getattr(config, "ADD_MIN_PROFIT_PCT", 2.5) or 2.5):
+                return False
+            decision_score = self._safe_float(decision.get("decision_score"), 0.0)
+            confidence = self._safe_float(decision.get("confidence"), 0.0)
+            if decision_score < float(getattr(config, "ADD_MIN_SCORE", 0.74) or 0.74):
+                return False
+            if confidence < float(getattr(config, "ADD_MIN_CONFIDENCE", 0.72) or 0.72):
+                return False
+
+            extra = self._position_extra(pos)
+            add_count = int(extra.get("add_count") or 0)
+            max_adds = int(getattr(config, "ADD_MAX_PER_SYMBOL", 1) or 1)
+            if add_count >= max_adds:
+                return False
+
+            sizing = self.calculate_position_size(symbol, current_price, indicators, decision, total_value, open_positions)
+            amount_usdt = self._safe_float(sizing.get("amount_usdt"), 0.0) * float(getattr(config, "ADD_SIZE_MULTIPLIER", 0.5) or 0.5)
+            capped_amount, cap_info = self.cap_size_to_risk_capacity(symbol, amount_usdt, total_value, open_positions)
+            if cap_info.get("capped"):
+                amount_usdt = capped_amount
+                sizing["risk_cap"] = cap_info
+            candidate_risk = self.evaluate_risk_guards(
+                total_value,
+                open_positions,
+                pending_buy_usdt=amount_usdt,
+                pending_symbol=symbol,
+            )
+            if not candidate_risk.get("ok"):
+                if decision_journal_id:
+                    self.db.update_decision_journal(
+                        decision_journal_id,
+                        execution_status="blocked_add_risk",
+                        block_reason=", ".join(candidate_risk.get("reasons") or []),
+                        sizing=sizing,
+                        risk=candidate_risk,
+                    )
+                return False
+            if amount_usdt < config.MIN_POSITION_USDT:
+                if decision_journal_id:
+                    self.db.update_decision_journal(
+                        decision_journal_id,
+                        execution_status="blocked_add_min_size",
+                        block_reason=f"ADD_TO_WINNER amount {amount_usdt:.4f} < MIN_POSITION_USDT {config.MIN_POSITION_USDT:.4f}",
+                        sizing=sizing,
+                        risk=candidate_risk,
+                    )
+                return False
+            if consultive_mode:
+                self.log_message(
+                    f"[CONSULTIVE] {symbol} ADD_TO_WINNER | profit={profit_pct:.2f}% | "
+                    f"score={decision_score:.2f} | conf={confidence:.2f} | amount={amount_usdt:.2f} USDT"
+                )
+                if decision_journal_id:
+                    self.db.update_decision_journal(
+                        decision_journal_id,
+                        execution_status="consultive_add",
+                        block_reason="TRADING_EXECUTION_MODE=consultive",
+                        sizing=sizing,
+                        risk=candidate_risk,
+                    )
+                return False
+
+            add_amount_coin = amount_usdt / current_price
+            local_order_id = self._new_local_order_id(symbol, "add")
+            res = self.exchange.execute_order(symbol, "buy", add_amount_coin, current_price)
+            self._record_order_event(local_order_id, symbol, "buy_add", add_amount_coin, current_price, res, decision_journal_id)
+            if res.get("status") not in ["closed", "simulated"]:
+                if decision_journal_id:
+                    self.db.update_decision_journal(
+                        decision_journal_id,
+                        execution_status="failed_add",
+                        block_reason=str(res.get("reason", res)),
+                        sizing=sizing,
+                        risk=candidate_risk,
+                    )
+                self.log_message(f"[ERROR] {symbol} ADD failed | reason={res.get('reason', 'unknown')}")
+                return False
+
+            executed_amount, executed_price = self._order_execution_details(res, add_amount_coin, current_price)
+            if executed_amount <= 0:
+                executed_amount = add_amount_coin
+            if executed_price <= 0:
+                executed_price = current_price
+            add_event = {
+                "ts": time.time(),
+                "price": executed_price,
+                "amount": executed_amount,
+                "profit_pct_before_add": profit_pct,
+                "decision_score": decision_score,
+                "confidence": confidence,
+                "order_id": local_order_id,
+            }
+            history = list(extra.get("add_history") or [])
+            history.append(add_event)
+            extra.update({
+                "add_count": add_count + 1,
+                "add_history": history[-10:],
+                "last_add_ts": add_event["ts"],
+            })
+            trade_reason = (
+                f"ADD_TO_WINNER [{provider}] | profit={profit_pct:.2f}% | "
+                f"score={decision_score:.2f} | conf={confidence:.2f}"
+            )
+            updated = self.db.add_to_open_position_with_trade(
+                symbol,
+                executed_price,
+                executed_amount,
+                trade_reason,
+                extra_data=json.dumps(extra),
+            )
+            if not updated:
+                self.log_message(f"[WARN] {symbol} ADD executed but DB position was not found")
+                return False
+            open_positions[symbol] = {
+                **pos,
+                "entry_price": updated["entry_price"],
+                "highest_price": updated["highest_price"],
+                "amount": updated["amount"],
+                "extra_data": json.dumps(extra),
+            }
+            if decision_journal_id:
+                self.db.update_decision_journal(
+                    decision_journal_id,
+                    execution_status=res.get("status", "executed_add"),
+                    execution_side="buy_add",
+                    executed_price=float(executed_price),
+                    executed_amount=float(executed_amount),
+                    sizing=sizing,
+                    risk=candidate_risk,
+                    block_reason=f"trade_id={updated.get('trade_id')};order_id={local_order_id}",
+                )
+            self.log_message(
+                f"[ADD] {symbol} qty={executed_amount:.8g} | px={executed_price:.6g} | "
+                f"profit_before={profit_pct:+.2f}% | add={add_count + 1}/{max_adds} | order={local_order_id}"
+            )
+            return True
+
         scan_symbols = []
         for symbol in list(self.active_symbols or []) + list(open_positions.keys()):
             if symbol not in scan_symbols:
@@ -1404,9 +1552,12 @@ class BotDaemon:
                             exit_reason=sell_res['reason'],
                         )
                         continue
+                    sell_fraction = self._safe_float(sell_res.get("sell_fraction"), 1.0)
+                    sell_fraction = self._clamp(sell_fraction, 0.0, 1.0)
+                    requested_sell = self._safe_float(pos.get('amount'), 0.0) * sell_fraction
                     validation = self.exchange.prevalidate_market_sell(
                         symbol,
-                        pos['amount'],
+                        requested_sell,
                         price_hint=current_price,
                     )
                     if not validation.get("ok"):
@@ -1428,7 +1579,6 @@ class BotDaemon:
                             exit_reason=sell_res['reason'],
                         )
                         continue
-                    requested_sell = self._safe_float(pos.get('amount'), 0.0)
                     local_order_id = self._new_local_order_id(symbol, "sell")
                     order_result = self.exchange.execute_order(symbol, 'sell', requested_sell, current_price)
                     self._record_order_event(
@@ -1475,6 +1625,13 @@ class BotDaemon:
                                 )
                             still = self.db.get_open_positions().get(symbol)
                             if still:
+                                if sell_fraction < 0.999:
+                                    updated_extra = self._position_extra(still)
+                                    updated_extra["partial_take_profit_done"] = True
+                                    updated_extra["partial_take_profit_ts"] = time.time()
+                                    updated_extra["partial_take_profit_order_id"] = local_order_id
+                                    still["extra_data"] = json.dumps(updated_extra)
+                                    self.db.update_position_extra_data(symbol, still["extra_data"])
                                 open_positions[symbol] = still
                             else:
                                 del open_positions[symbol]
@@ -1508,6 +1665,13 @@ class BotDaemon:
                             execution_side="sell",
                             block_reason=f"SELL confidence {confidence:.2f} < threshold {threshold:.2f}; no protective trigger",
                         )
+                if (
+                    symbol in open_positions
+                    and action == "BUY"
+                    and executable_action == "BUY"
+                    and not sell_res.get("should_sell")
+                ):
+                    execute_add_to_winner(symbol, current_price, indicators, decision, provider, decision_journal_id)
             
             # 2. Lógica de COMPRA
             else:

@@ -52,6 +52,7 @@ class TradingLogic:
         Los parámetros de stop y trailing cambian dinámicamente según el contexto.
         """
         import config
+        import json
 
         entry_price = position.get('entry_price', 0)
         highest_price = position.get('highest_price', entry_price)
@@ -96,6 +97,12 @@ class TradingLogic:
 
         # ─── 1. Stop Loss adaptativo ───
         stop_loss_price = entry_price * (1 - params['sl_pct'])
+        profit_pct = ((current_price - entry_price) / entry_price) * 100 if entry_price else 0.0
+        if bool(getattr(config, 'BREAK_EVEN_ENABLED', False)):
+            activation_pct = float(getattr(config, 'ADD_MIN_PROFIT_PCT', 2.5) or 2.5)
+            fee_buffer_pct = max(0.05, float(config.get_setting('MIN_PROFIT_NET', 1.0, float)) * 0.20)
+            if profit_pct >= activation_pct:
+                stop_loss_price = max(stop_loss_price, entry_price * (1 + fee_buffer_pct / 100))
         if current_price <= stop_loss_price:
             return {
                 'should_sell': True,
@@ -127,8 +134,23 @@ class TradingLogic:
                     'reason': f"IA SELL [{ai_decision.get('provider', 'IA')}] conf:{confidence:.0%}"
                 }
 
-        profit_pct = ((current_price - entry_price) / entry_price) * 100 if entry_price else 0.0
         min_profit_pct = float(config.get_setting('MIN_PROFIT_NET', 1.0, float))
+        extra = {}
+        try:
+            extra = json.loads(position.get('extra_data') or '{}')
+        except Exception:
+            extra = {}
+        if (
+            bool(getattr(config, 'PARTIAL_TAKE_PROFIT_ENABLED', False))
+            and not extra.get('partial_take_profit_done')
+            and profit_pct >= min_profit_pct
+        ):
+            fraction = max(0.05, min(1.0, float(getattr(config, 'PARTIAL_TAKE_PROFIT_PCT', 50.0) or 50.0) / 100.0))
+            return {
+                'should_sell': True,
+                'reason': f"PARTIAL TAKE PROFIT [{regime}] (+{profit_pct:.2f}% >= {min_profit_pct:.2f}%)",
+                'sell_fraction': fraction,
+            }
         if aggressive and profit_pct >= min_profit_pct:
             return {
                 'should_sell': True,

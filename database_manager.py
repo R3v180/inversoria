@@ -541,6 +541,51 @@ class DatabaseManager:
             conn.commit()
             return cursor.lastrowid
 
+    def add_to_open_position_with_trade(
+        self,
+        symbol,
+        add_price,
+        add_amount,
+        trade_reason,
+        extra_data=None,
+        pnl_pct=0.0,
+    ):
+        with self._get_connection() as conn:
+            row = conn.execute(
+                'SELECT entry_price, highest_price, amount FROM open_positions WHERE symbol = ?',
+                (symbol,),
+            ).fetchone()
+            if not row:
+                return None
+            old_amount = float(row['amount'] or 0)
+            amount = float(add_amount or 0)
+            if old_amount <= 0 or amount <= 0:
+                return None
+            old_entry = float(row['entry_price'] or 0)
+            price = float(add_price or 0)
+            new_amount = old_amount + amount
+            new_entry = ((old_entry * old_amount) + (price * amount)) / new_amount if new_amount > 0 else price
+            highest = max(float(row['highest_price'] or 0), price)
+            conn.execute(
+                '''
+                UPDATE open_positions
+                SET entry_price = ?, highest_price = ?, amount = ?, extra_data = ?
+                WHERE symbol = ?
+                ''',
+                (new_entry, highest, new_amount, extra_data, symbol),
+            )
+            cursor = conn.execute('''
+                INSERT INTO trades (symbol, side, price, amount, reason, pnl_pct, timestamp)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            ''', (symbol, 'buy', price, amount, trade_reason, float(pnl_pct or 0), time.time()))
+            conn.commit()
+            return {
+                'trade_id': cursor.lastrowid,
+                'entry_price': new_entry,
+                'highest_price': highest,
+                'amount': new_amount,
+            }
+
     def record_order_event(
         self,
         local_order_id,
@@ -594,6 +639,11 @@ class DatabaseManager:
     def update_highest_price(self, symbol, highest_price):
         with self._get_connection() as conn:
             conn.execute('UPDATE open_positions SET highest_price = ? WHERE symbol = ?', (highest_price, symbol))
+            conn.commit()
+
+    def update_position_extra_data(self, symbol, extra_data):
+        with self._get_connection() as conn:
+            conn.execute('UPDATE open_positions SET extra_data = ? WHERE symbol = ?', (extra_data, symbol))
             conn.commit()
 
     def remove_open_position(self, symbol):
