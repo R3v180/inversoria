@@ -839,7 +839,8 @@ def render_assistant():
                 
                 raw_response, provider = sentiment.call_ai_hybrid(
                     system_instruction=system_prompt,
-                    prompt=f"{context}\nUSUARIO DICE: {prompt}"
+                    prompt=f"{context}\nUSUARIO DICE: {prompt}",
+                    feature="assistant",
                 )
                 
                 full_response = raw_response if raw_response else "Lo siento, no he podido procesar esa consulta."

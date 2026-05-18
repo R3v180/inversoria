@@ -728,7 +728,11 @@ Si la confluencia MTF es fuerte ({confluence_score:.0%}), puedes aumentar positi
                 "decision_mode": decision_mode,
             }
 
-        raw_content, provider = self.sentiment.call_ai_hybrid(prompt, system_instruction)
+        raw_content, provider = self.sentiment.call_ai_hybrid(
+            prompt,
+            system_instruction,
+            feature="decision_single",
+        )
 
         if raw_content:
             try:
@@ -851,7 +855,11 @@ Si la confluencia MTF es fuerte ({confluence_score:.0%}), puedes aumentar positi
         ]
         for ctx in contexts:
             prompt_parts.append(f"\n--- SYMBOL_CONTEXT {ctx['symbol']} ---\n{ctx['prompt']}")
-        raw_content, provider = self.sentiment.call_ai_hybrid("\n".join(prompt_parts), shared_instruction)
+        raw_content, provider = self.sentiment.call_ai_hybrid(
+            "\n".join(prompt_parts),
+            shared_instruction,
+            feature="decision_batch",
+        )
         if not raw_content:
             return {}
 
@@ -929,7 +937,11 @@ Si la confluencia MTF es fuerte ({confluence_score:.0%}), puedes aumentar positi
     def curate_watchlist(self, raw_symbols):
         system_instruction = config.PROMPT_CURATION
         prompt = f"Filtra esta lista y devuelve solo los nombres de los elegidos separados por comas: {', '.join(raw_symbols)}"
-        raw_content, provider = self.sentiment.call_ai_hybrid(prompt, system_instruction)
+        raw_content, provider = self.sentiment.call_ai_hybrid(
+            prompt,
+            system_instruction,
+            feature="radar_curation",
+        )
         if raw_content:
             # Extraer cualquier cosa que se parezca a un símbolo (ABC/USDT, ABC-USDT o solo ABC)
             potential = re.findall(r'([A-Z0-9]+)', raw_content.upper())
