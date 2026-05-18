@@ -2,6 +2,7 @@ import requests
 import json
 import re
 import time
+import hashlib
 from datetime import datetime, timedelta, timezone
 from google import genai
 from groq import Groq
@@ -184,6 +185,58 @@ class SentimentEngine:
         except Exception:
             return False
 
+    def _estimate_tokens(self, text):
+        # Estimación conservadora y barata: 1 token ~= 4 caracteres en español/inglés.
+        return max(1, int(len(str(text or "")) / 4) + 1)
+
+    def _prompt_hash(self, prompt, system_instruction):
+        raw = f"{system_instruction or ''}\n{prompt or ''}"
+        return hashlib.sha256(raw.encode("utf-8", errors="ignore")).hexdigest()[:16]
+
+    def _ai_budget_check(self, prompt, system_instruction, feature):
+        input_tokens = self._estimate_tokens(f"{system_instruction or ''}\n{prompt or ''}")
+        output_tokens = int(getattr(config, 'AI_MAX_OUTPUT_TOKENS', 700) or 700)
+        prompt_hash = self._prompt_hash(prompt, system_instruction)
+        now = time.time()
+        cycle_window = max(15, int(getattr(config, 'DAEMON_CYCLE_SECONDS', 60) or 60))
+        try:
+            cycle = self.db.get_ai_usage_summary(since_ts=now - cycle_window)
+            day = self.db.get_ai_usage_summary(since_ts=now - 86400)
+        except Exception:
+            return True, "", input_tokens, output_tokens, prompt_hash
+
+        limits = [
+            (
+                int(getattr(config, 'AI_MAX_REQUESTS_PER_CYCLE', 0) or 0),
+                cycle.get('requests', 0),
+                'AI_MAX_REQUESTS_PER_CYCLE',
+            ),
+            (
+                int(getattr(config, 'AI_MAX_REQUESTS_PER_DAY', 0) or 0),
+                day.get('requests', 0),
+                'AI_MAX_REQUESTS_PER_DAY',
+            ),
+            (
+                int(getattr(config, 'AI_MAX_EST_TOKENS_PER_DAY', 0) or 0),
+                day.get('estimated_tokens', 0) + input_tokens + output_tokens,
+                'AI_MAX_EST_TOKENS_PER_DAY',
+            ),
+        ]
+        for limit, used, label in limits:
+            if limit > 0 and used >= limit:
+                reason = f"{label} reached ({used}/{limit})"
+                self.db.record_ai_usage(
+                    provider='budget',
+                    feature=feature,
+                    prompt_hash=prompt_hash,
+                    estimated_input_tokens=input_tokens,
+                    estimated_output_tokens=output_tokens,
+                    success=False,
+                    blocked_reason=reason,
+                )
+                return False, reason, input_tokens, output_tokens, prompt_hash
+        return True, "", input_tokens, output_tokens, prompt_hash
+
     def _format_cooldown_until(self):
         until = datetime.fromtimestamp(self.gemini_cooldown_until, timezone.utc).astimezone()
         return until.strftime("%Y-%m-%d %H:%M:%S %Z").strip()
@@ -220,7 +273,16 @@ class SentimentEngine:
         self._log_gemini_cooldown(now=now, force=True)
         return True
 
-    def call_ai_hybrid(self, prompt, system_instruction=""):
+    def call_ai_hybrid(self, prompt, system_instruction="", feature="general"):
+        allowed, block_reason, input_tokens, output_tokens, prompt_hash = self._ai_budget_check(
+            prompt,
+            system_instruction,
+            feature,
+        )
+        if not allowed:
+            print(f"[AI] Presupuesto IA agotado ({block_reason}); usando fallback sin llamada externa.")
+            return None, None
+
         # 1. GEMINI
         if self.gemini_client:
             now = time.time()
@@ -234,6 +296,14 @@ class SentimentEngine:
                             contents=f"{system_instruction}\n\n{prompt}"
                         )
                         if response and response.text:
+                            self.db.record_ai_usage(
+                                provider=provider_name,
+                                feature=feature,
+                                prompt_hash=prompt_hash,
+                                estimated_input_tokens=input_tokens,
+                                estimated_output_tokens=self._estimate_tokens(response.text),
+                                success=True,
+                            )
                             return response.text.strip(), provider_name
                     except Exception as e:
                         if self._apply_gemini_cooldown_from_error(model_label, e):
@@ -245,9 +315,19 @@ class SentimentEngine:
                 completion = self.groq_client.chat.completions.create(
                     model="llama-3.1-8b-instant",
                     messages=[{"role": "user", "content": f"{system_instruction}\n{prompt}"}],
-                    temperature=0.1
+                    temperature=0.1,
+                    max_tokens=int(getattr(config, 'AI_MAX_OUTPUT_TOKENS', 700) or 700),
                 )
-                return completion.choices[0].message.content.strip(), "Groq-8B"
+                text = completion.choices[0].message.content.strip()
+                self.db.record_ai_usage(
+                    provider="Groq-8B",
+                    feature=feature,
+                    prompt_hash=prompt_hash,
+                    estimated_input_tokens=input_tokens,
+                    estimated_output_tokens=self._estimate_tokens(text),
+                    success=True,
+                )
+                return text, "Groq-8B"
             except Exception as e:
                 safe = self._safe_error_message(e)
                 self._set_ai_cooldown('Groq', time.time() + 300, safe)
@@ -267,7 +347,7 @@ class SentimentEngine:
         system_instruction = f"User: {self.user_name}. Language: {lang_name}. " + config.PROMPT_SENTIMENT
         
         prompt = f"Activo: {symbol}\nF&G Index: {fng_val}\n{stats_str}\nNoticias:\n" + "\n".join(titles)
-        res, provider = self.call_ai_hybrid(prompt, system_instruction)
+        res, provider = self.call_ai_hybrid(prompt, system_instruction, feature="sentiment")
         if res:
             sentiment = "NEUTRAL"
             if "BULLISH" in res.upper(): sentiment = "BULLISH"

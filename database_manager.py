@@ -230,6 +230,28 @@ class DatabaseManager:
                 cursor.execute(
                     f'CREATE INDEX IF NOT EXISTS {idx_name} ON exchange_balance_watch ({idx_cols})'
                 )
+
+            # AI Usage Events: presupuesto preventivo de requests/tokens estimados.
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS ai_usage_events (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    timestamp REAL,
+                    provider TEXT,
+                    feature TEXT,
+                    prompt_hash TEXT,
+                    estimated_input_tokens INTEGER,
+                    estimated_output_tokens INTEGER,
+                    success INTEGER,
+                    blocked_reason TEXT
+                )
+            ''')
+            for idx_name, idx_cols in {
+                'idx_ai_usage_ts': 'timestamp',
+                'idx_ai_usage_provider_feature': 'provider, feature',
+            }.items():
+                cursor.execute(
+                    f'CREATE INDEX IF NOT EXISTS {idx_name} ON ai_usage_events ({idx_cols})'
+                )
             
             conn.commit()
 
@@ -378,6 +400,82 @@ class DatabaseManager:
                 'usd_total': float(row['usd_total'] or 0),
             }
             for row in rows
+        }
+
+    def record_ai_usage(
+        self,
+        provider,
+        feature,
+        prompt_hash,
+        estimated_input_tokens=0,
+        estimated_output_tokens=0,
+        success=True,
+        blocked_reason='',
+        timestamp=None,
+    ):
+        ts = time.time() if timestamp is None else float(timestamp)
+        with self._get_connection() as conn:
+            conn.execute(
+                '''
+                INSERT INTO ai_usage_events
+                    (timestamp, provider, feature, prompt_hash, estimated_input_tokens,
+                     estimated_output_tokens, success, blocked_reason)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                ''',
+                (
+                    ts,
+                    str(provider or ''),
+                    str(feature or 'general'),
+                    str(prompt_hash or ''),
+                    int(estimated_input_tokens or 0),
+                    int(estimated_output_tokens or 0),
+                    1 if success else 0,
+                    str(blocked_reason or ''),
+                ),
+            )
+            conn.commit()
+
+    def get_ai_usage_summary(self, since_ts=None):
+        if since_ts is None:
+            since_ts = time.time() - 86400
+        with self._get_connection() as conn:
+            row = conn.execute(
+                '''
+                SELECT
+                    COUNT(*) AS requests,
+                    SUM(CASE WHEN success = 1 THEN 1 ELSE 0 END) AS successes,
+                    SUM(CASE WHEN success = 0 THEN 1 ELSE 0 END) AS blocked,
+                    SUM(estimated_input_tokens) AS input_tokens,
+                    SUM(estimated_output_tokens) AS output_tokens
+                FROM ai_usage_events
+                WHERE timestamp >= ?
+                ''',
+                (float(since_ts),),
+            ).fetchone()
+            by_feature = conn.execute(
+                '''
+                SELECT feature, COUNT(*) AS requests,
+                       SUM(estimated_input_tokens + estimated_output_tokens) AS tokens
+                FROM ai_usage_events
+                WHERE timestamp >= ?
+                GROUP BY feature
+                ''',
+                (float(since_ts),),
+            ).fetchall()
+        return {
+            'requests': int(row['requests'] or 0) if row else 0,
+            'successes': int(row['successes'] or 0) if row else 0,
+            'blocked': int(row['blocked'] or 0) if row else 0,
+            'input_tokens': int(row['input_tokens'] or 0) if row else 0,
+            'output_tokens': int(row['output_tokens'] or 0) if row else 0,
+            'estimated_tokens': int((row['input_tokens'] or 0) + (row['output_tokens'] or 0)) if row else 0,
+            'by_feature': {
+                item['feature']: {
+                    'requests': int(item['requests'] or 0),
+                    'tokens': int(item['tokens'] or 0),
+                }
+                for item in by_feature
+            },
         }
 
     def add_open_position(self, symbol, entry_price, highest_price, amount, entry_time=None, extra_data=None):

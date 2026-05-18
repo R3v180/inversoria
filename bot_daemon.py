@@ -139,6 +139,10 @@ class BotDaemon:
                 "reason": (state_info or {}).get("reason", ""),
             }
         payload["ai_provider_cooldowns"] = ai_cooldowns
+        try:
+            payload["ai_usage_24h"] = self.db.get_ai_usage_summary(time.time() - 86400)
+        except Exception:
+            payload["ai_usage_24h"] = {}
         if state == "cycle_done":
             payload["cycle_ts"] = payload["state_ts"]
         payload.update(extra)
