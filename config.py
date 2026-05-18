@@ -3,14 +3,15 @@ import json
 from dotenv import load_dotenv
 from simulation_profiles import (
     GLOBAL_SETTING_KEYS,
+    ROOT,
     get_active_profile_settings,
     save_active_profile_settings,
 )
 
 # Cargar variables de entorno desde .env
-load_dotenv()
+load_dotenv(ROOT / '.env')
 
-USER_SETTINGS_FILE = 'user_settings.json'
+USER_SETTINGS_FILE = ROOT / 'user_settings.json'
 
 DEFAULT_SETTINGS = {
     'MODO_SIMULACION': True,
@@ -64,6 +65,23 @@ DEFAULT_SETTINGS = {
     # Protección de spread/slippage antes de enviar órdenes a mercado
     'BUY_SLIPPAGE_LIMIT': 0.005,   # 0.5%
     'SELL_SLIPPAGE_LIMIT': 0.010,  # 1.0%
+    # Perfil agresivo / macro (ajustables sin tocar código)
+    'AGGRESSIVE_TRADING_PROFILE': False,
+    'MACRO_VETO_ALTS_IN_RISK_OFF': True,
+    'MACRO_RISK_OFF_BTC_DOM': 58.0,
+    'MACRO_RISK_OFF_CAP_CHANGE_PCT': -2.0,
+    'MACRO_CAUTION_BTC_DOM': 60.0,
+    'MACRO_DXY_VETO_PCT': 1.5,
+    'MACRO_SPY_VETO_PCT': -2.0,
+    'MIN_CONFIDENCE_ENTRY': 0.52,
+    'MTF_ALLOW_COUNTER_TREND': False,
+    'BACKTEST_HARD_VETO_WIN_RATE': 0.35,
+    'SMALL_ACCOUNT_USDT_THRESHOLD': 150.0,
+    'SMALL_ACCOUNT_FORCE_MIN_ORDER': True,
+    'SMALL_ACCOUNT_MAX_STOP_DISTANCE_PCT': 8.0,
+    'DAEMON_CYCLE_SECONDS': 60,
+    'WATCHLIST_UPDATE_SECONDS': 14400,
+    'AI_BATCH_DECISIONS_ENABLED': True,
 }
 
 def get_setting(key, default, cast_type=str):
@@ -177,6 +195,23 @@ AI_ANALYSIS_INTERVAL = get_setting('AI_ANALYSIS_INTERVAL', 1200, int)
 TRADING_FEE_RATE = get_setting('TRADING_FEE_RATE', 0.001, float)
 BUY_SLIPPAGE_LIMIT = get_setting('BUY_SLIPPAGE_LIMIT', 0.005, float)
 SELL_SLIPPAGE_LIMIT = get_setting('SELL_SLIPPAGE_LIMIT', 0.010, float)
+
+AGGRESSIVE_TRADING_PROFILE = get_setting('AGGRESSIVE_TRADING_PROFILE', False, bool)
+MACRO_VETO_ALTS_IN_RISK_OFF = get_setting('MACRO_VETO_ALTS_IN_RISK_OFF', True, bool)
+MACRO_RISK_OFF_BTC_DOM = get_setting('MACRO_RISK_OFF_BTC_DOM', 58.0, float)
+MACRO_RISK_OFF_CAP_CHANGE_PCT = get_setting('MACRO_RISK_OFF_CAP_CHANGE_PCT', -2.0, float)
+MACRO_CAUTION_BTC_DOM = get_setting('MACRO_CAUTION_BTC_DOM', 60.0, float)
+MACRO_DXY_VETO_PCT = get_setting('MACRO_DXY_VETO_PCT', 1.5, float)
+MACRO_SPY_VETO_PCT = get_setting('MACRO_SPY_VETO_PCT', -2.0, float)
+MIN_CONFIDENCE_ENTRY = get_setting('MIN_CONFIDENCE_ENTRY', 0.52, float)
+MTF_ALLOW_COUNTER_TREND = get_setting('MTF_ALLOW_COUNTER_TREND', False, bool)
+BACKTEST_HARD_VETO_WIN_RATE = get_setting('BACKTEST_HARD_VETO_WIN_RATE', 0.35, float)
+SMALL_ACCOUNT_USDT_THRESHOLD = get_setting('SMALL_ACCOUNT_USDT_THRESHOLD', 150.0, float)
+SMALL_ACCOUNT_FORCE_MIN_ORDER = get_setting('SMALL_ACCOUNT_FORCE_MIN_ORDER', True, bool)
+SMALL_ACCOUNT_MAX_STOP_DISTANCE_PCT = get_setting('SMALL_ACCOUNT_MAX_STOP_DISTANCE_PCT', 8.0, float)
+DAEMON_CYCLE_SECONDS = get_setting('DAEMON_CYCLE_SECONDS', 60, int)
+WATCHLIST_UPDATE_SECONDS = get_setting('WATCHLIST_UPDATE_SECONDS', 14400, int)
+AI_BATCH_DECISIONS_ENABLED = get_setting('AI_BATCH_DECISIONS_ENABLED', True, bool)
 
 def get_dynamic_max_positions(balance_usdt: float) -> int:
     """Escala dinámica de posiciones basada en el balance total (v6.1)"""

@@ -2,12 +2,14 @@ import json
 import time
 import re
 import ast
+import hashlib
 from sentiment_engine import SentimentEngine
 import pandas as pd
 import config # Importar el módulo completo para hot-reload
 from market_context import MarketContext
 from multi_timeframe import MultiTimeframeAnalyzer
 from backtest_engine import BacktestEngine
+from database_manager import DatabaseManager
 from i18n import _
 
 
@@ -154,6 +156,7 @@ class DecisionEngine:
         self.current_lang = lang
         self.last_analysis = {}
         self.decision_cache = {}
+        self.db = DatabaseManager()
 
         # Nuevas capas de inteligencia
         self.market_context = MarketContext(lang=self.current_lang)
@@ -167,6 +170,67 @@ class DecisionEngine:
         self._adaptive_cache = None
         self._adaptive_cache_ts = 0
         self.ADAPTIVE_CACHE_TTL = 900  # 15 minutos
+
+    def _decision_cache_signature(self):
+        keys = {
+            'decision_mode': getattr(config, 'DECISION_MODE', 'hybrid'),
+            'min_score': getattr(config, 'MIN_AUTO_DECISION_SCORE', 0.62),
+            'min_conf': getattr(config, 'MIN_CONFIDENCE_ENTRY', 0.52),
+            'aggressive': getattr(config, 'AGGRESSIVE_TRADING_PROFILE', False),
+            'macro_veto': getattr(config, 'MACRO_VETO_ALTS_IN_RISK_OFF', True),
+            'mtf_counter': getattr(config, 'MTF_ALLOW_COUNTER_TREND', False),
+            'prompt': getattr(config, 'PROMPT_DECISION', ''),
+            'lang': self.current_lang,
+        }
+        raw = json.dumps(keys, sort_keys=True, ensure_ascii=False)
+        return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:16]
+
+    def _decision_cache_key(self, symbol):
+        safe_symbol = str(symbol or '').replace('/', '_').replace(':', '_')
+        return f"ai_decision_cache_{safe_symbol}"
+
+    def _load_persistent_decision(self, symbol, now):
+        raw = self.db.get_system_status(self._decision_cache_key(symbol))
+        if not raw:
+            return None
+        try:
+            payload = json.loads(raw)
+        except Exception:
+            return None
+        if payload.get('signature') != self._decision_cache_signature():
+            return None
+        ts = _safe_float(payload.get('timestamp'), 0.0)
+        if now - ts >= getattr(config, 'AI_ANALYSIS_INTERVAL', 1200):
+            return None
+        decision = payload.get('decision')
+        if not isinstance(decision, dict):
+            return None
+        decision = dict(decision)
+        decision['cache_hit'] = 'persistent'
+        return decision
+
+    def _store_persistent_decision(self, symbol, decision, now):
+        if not decision:
+            return
+        payload = {
+            'timestamp': now,
+            'signature': self._decision_cache_signature(),
+            'decision': decision,
+        }
+        try:
+            self.db.set_system_status(
+                self._decision_cache_key(symbol),
+                json.dumps(payload, ensure_ascii=False),
+            )
+        except Exception:
+            pass
+
+    def _remember_decision(self, symbol, decision, now, persist=True):
+        self.last_analysis[symbol] = now
+        self.decision_cache[symbol] = decision
+        if persist:
+            self._store_persistent_decision(symbol, decision, now)
+        return decision
 
     def _dynamic_score_weights(self, indicators, macro_regime):
         regime = str(indicators.get('trend_regime') or indicators.get('trend') or '').upper()
@@ -407,13 +471,16 @@ class DecisionEngine:
     def quick_technical_filter(self, indicators, current_price):
         if not indicators: return False, _('FILTER_SIN_DATOS', lang=self.current_lang)
         rsi = indicators.get('rsi')
-        trend = indicators.get('trend', 'UNKNOWN')
         adx = indicators.get('adx', 0)
-        if rsi > 44 and rsi < 56 and adx < 15:
+        aggressive = bool(getattr(config, 'AGGRESSIVE_TRADING_PROFILE', False))
+        if aggressive:
+            if 48 < rsi < 52 and adx < 10:
+                return False, f"{ _('FILTER_SIDEWAYS', lang=self.current_lang) } (RSI: {rsi:.1f}, ADX: {adx:.1f})"
+        elif rsi > 44 and rsi < 56 and adx < 15:
             return False, f"{ _('FILTER_SIDEWAYS', lang=self.current_lang) } (RSI: {rsi:.1f}, ADX: {adx:.1f})"
         return True, "Filtro OK"
 
-    def analyze_with_ai_hybrid(self, symbol, current_price, indicators, ohlcv):
+    def analyze_with_ai_hybrid(self, symbol, current_price, indicators, ohlcv, return_context_only=False):
         """
         Análisis IA enriquecido con tres capas de contexto:
         1. Contexto macro del mercado (BTC dominance, sectores, on-chain)
@@ -433,6 +500,11 @@ class DecisionEngine:
         # Respetar intervalo de análisis por símbolo
         if symbol in self.last_analysis and now - self.last_analysis[symbol] < config.AI_ANALYSIS_INTERVAL:
             return self.decision_cache.get(symbol)
+        persisted = self._load_persistent_decision(symbol, now)
+        if persisted:
+            self.last_analysis[symbol] = now
+            self.decision_cache[symbol] = persisted
+            return persisted
 
         # ─── CAPA 1: Contexto Macro (caché 6h) ───
         macro_text = ""
@@ -465,9 +537,7 @@ class DecisionEngine:
                 "reasoning": f"[{ _('MACRO_VETO_LABEL', lang=self.current_lang) }] {no_trade_reason}",
                 "provider": "MacroFilter"
             }
-            self.last_analysis[symbol] = now
-            self.decision_cache[symbol] = hold_decision
-            return hold_decision
+            return self._remember_decision(symbol, hold_decision, now, persist=False)
 
         # ─── CAPA 2: Multi-Timeframe ───
         mtf_text = ""
@@ -485,8 +555,10 @@ class DecisionEngine:
             except Exception as e:
                 print(f"[DecisionEngine] Error MTF para {symbol}: {e}")
 
-        # Si la confluencia MTF es muy bajista, no gastar tokens de IA
-        if not allow_long:
+        allow_counter = bool(getattr(config, 'MTF_ALLOW_COUNTER_TREND', False)) or bool(
+            getattr(config, 'AGGRESSIVE_TRADING_PROFILE', False)
+        )
+        if not allow_long and not allow_counter:
             hold_decision = {
                 "regime": "TRENDING_DOWN",
                 "best_strategy": "HOLD",
@@ -498,9 +570,10 @@ class DecisionEngine:
                 "reasoning": "[MTF VETO] Confluencia multi-timeframe bajista: 1D y 4H en tendencia descendente",
                 "provider": "MTFFilter"
             }
-            self.last_analysis[symbol] = now
-            self.decision_cache[symbol] = hold_decision
-            return hold_decision
+            return self._remember_decision(symbol, hold_decision, now, persist=False)
+        if not allow_long and allow_counter:
+            confluence_score = min(confluence_score, 0.38)
+            mtf_text = (mtf_text or "") + "\n[MTF] Counter-trend permitido (perfil agresivo); confluencia reducida."
 
         # ─── CAPA 3: Prior histórico del Backtest ───
         prior_text = ""
@@ -555,9 +628,7 @@ class DecisionEngine:
                 "reasoning": veto_reason,
                 "provider": "BacktestVeto"
             }
-            self.last_analysis[symbol] = now
-            self.decision_cache[symbol] = hold_decision
-            return hold_decision
+            return self._remember_decision(symbol, hold_decision, now, persist=False)
 
         decision_score, score_components = self.build_decision_score(
             indicators=indicators,
@@ -577,9 +648,7 @@ class DecisionEngine:
                 mtf_recommended_strategy,
                 macro_regime,
             )
-            self.last_analysis[symbol] = now
-            self.decision_cache[symbol] = rules_decision
-            return rules_decision
+            return self._remember_decision(symbol, rules_decision, now, persist=False)
 
         # ─── CONSTRUIR PROMPT ENRIQUECIDO ───
         df = pd.DataFrame(ohlcv[-100:], columns=['ts', 'open', 'high', 'low', 'close', 'volume'])
@@ -645,6 +714,19 @@ Reglas estrictas de salida:
 Considera que el umbral mínimo de confianza para BUY es 0.52 (más agresivo que el estándar).
 Si la confluencia MTF es fuerte ({confluence_score:.0%}), puedes aumentar position_size_multiplier hasta 1.5.
 """
+
+        if return_context_only:
+            return {
+                "_batch_context": True,
+                "symbol": symbol,
+                "prompt": prompt,
+                "system_instruction": system_instruction,
+                "confluence_score": confluence_score,
+                "macro_regime": macro_regime,
+                "decision_score": decision_score,
+                "score_components": score_components,
+                "decision_mode": decision_mode,
+            }
 
         raw_content, provider = self.sentiment.call_ai_hybrid(prompt, system_instruction)
 
@@ -714,13 +796,116 @@ Si la confluencia MTF es fuerte ({confluence_score:.0%}), puedes aumentar positi
                         ai_conf = _safe_float(result.get('confidence'), 0.0)
                         result['confidence'] = round(_clamp((ai_conf * 0.70) + (effective_score * 0.30)), 3)
 
-                self.last_analysis[symbol] = now
-                self.decision_cache[symbol] = result
-                return result
+                return self._remember_decision(symbol, result, now, persist=True)
             except Exception as e:
                 print(f"[DecisionEngine] Error parseando respuesta IA para {symbol}: {e}")
 
         return self.decision_cache.get(symbol)
+
+    def analyze_batch_with_ai(self, items):
+        """
+        Precalienta decision_cache para varios símbolos con una sola llamada IA.
+        Si algo falla, el flujo individual existente sigue siendo el fallback.
+        """
+        now = time.time()
+        contexts = []
+        by_symbol = {}
+        for item in items or []:
+            symbol = item.get('symbol')
+            if not symbol:
+                continue
+            if symbol in self.last_analysis and now - self.last_analysis[symbol] < config.AI_ANALYSIS_INTERVAL:
+                continue
+            persisted = self._load_persistent_decision(symbol, now)
+            if persisted:
+                self._remember_decision(symbol, persisted, now, persist=False)
+                continue
+            if not item.get('is_open'):
+                passes, reason = self.quick_technical_filter(item.get('indicators') or {}, item.get('price'))
+                if not passes:
+                    continue
+            prepared = self.analyze_with_ai_hybrid(
+                symbol,
+                item.get('price'),
+                item.get('indicators') or {},
+                item.get('ohlcv') or [],
+                return_context_only=True,
+            )
+            if isinstance(prepared, dict) and prepared.get('_batch_context'):
+                contexts.append(prepared)
+                by_symbol[symbol] = prepared
+
+        if not contexts:
+            return {}
+
+        shared_instruction = (
+            f"{config.PROMPT_DECISION}\n"
+            "DEBES responder SOLO JSON válido con esta forma exacta: "
+            "{\"decisions\":[{\"symbol\":\"BTC/USDT\",\"regime\":\"...\",\"best_strategy\":\"...\","
+            "\"action\":\"BUY|SELL|HOLD\",\"confidence\":0.0,\"position_size_multiplier\":1.0,"
+            "\"stop_loss_atr\":2.0,\"take_profit_ratio\":2.0,\"reasoning\":\"máximo 1 frase\"}]}."
+            " No incluyas markdown ni texto fuera del JSON."
+        )
+        prompt_parts = [
+            "Analiza estos activos como un lote. Mantén cada decisión independiente y devuelve una entrada por símbolo.",
+        ]
+        for ctx in contexts:
+            prompt_parts.append(f"\n--- SYMBOL_CONTEXT {ctx['symbol']} ---\n{ctx['prompt']}")
+        raw_content, provider = self.sentiment.call_ai_hybrid("\n".join(prompt_parts), shared_instruction)
+        if not raw_content:
+            return {}
+
+        try:
+            raw_object = _extract_first_json_object(raw_content)
+            parsed = json.loads(_repair_common_json_issues(raw_object or raw_content))
+            decisions = parsed.get('decisions') if isinstance(parsed, dict) else None
+            if not isinstance(decisions, list):
+                return {}
+        except Exception as exc:
+            print(f"[DecisionEngine] Error parseando batch IA: {exc}")
+            return {}
+
+        out = {}
+        for raw_decision in decisions:
+            if not isinstance(raw_decision, dict):
+                continue
+            symbol = str(raw_decision.get('symbol') or '').upper()
+            ctx = by_symbol.get(symbol)
+            if not ctx:
+                continue
+            raw_decision = dict(raw_decision)
+            raw_decision.pop('symbol', None)
+            try:
+                result = self._validate_ai_decision(raw_decision)
+            except Exception as exc:
+                print(f"[DecisionEngine] Decisión batch inválida para {symbol}: {exc}")
+                continue
+            result['provider'] = provider or 'BatchAI'
+            result['confluence_score'] = ctx.get('confluence_score', 0.5)
+            result['macro_regime'] = ctx.get('macro_regime', 'NEUTRAL')
+            result['decision_score'] = ctx.get('decision_score', 0.0)
+            result['score_components'] = ctx.get('score_components', {})
+            result['decision_mode'] = ctx.get('decision_mode', getattr(config, 'DECISION_MODE', 'hybrid'))
+            result['ai_action'] = result.get('action', 'HOLD')
+            result['adaptive_adjustment'] = result.get('score_components', {}).get('adaptive_adjustment', 0.0)
+            result['adaptive_evidence'] = result.get('score_components', {}).get('adaptive_evidence', {})
+            result['batch_ai'] = True
+
+            if result['decision_mode'] == 'hybrid':
+                effective_score = _safe_float(result.get('decision_score'), 0.0)
+                if result.get('action') == 'BUY' and effective_score < config.MIN_AUTO_DECISION_SCORE:
+                    result['action'] = 'HOLD'
+                    result['reasoning'] = (
+                        f"[LOW RULE SCORE] {result.get('reasoning', '')} "
+                        f"(score {effective_score:.0%} < {config.MIN_AUTO_DECISION_SCORE:.0%})"
+                    )
+                else:
+                    ai_conf = _safe_float(result.get('confidence'), 0.0)
+                    result['confidence'] = round(_clamp((ai_conf * 0.70) + (effective_score * 0.30)), 3)
+
+            self._remember_decision(symbol, result, now, persist=True)
+            out[symbol] = result
+        return out
 
     def evaluate_rotation_potential(self, new_signal, open_positions_details):
         if not new_signal or new_signal.get('action') != 'BUY': return None
@@ -768,12 +953,12 @@ Si la confluencia MTF es fuerte ({confluence_score:.0%}), puedes aumentar positi
         if not decision:
             return {"action": "HOLD", "reasoning": "AI offline", "confidence": 0.0}
 
-        # Umbral bajado de 0.60 a 0.52 para más operaciones
-        if decision.get("action") != "HOLD" and decision.get("confidence", 0) < 0.52:
+        min_conf = float(getattr(config, 'MIN_CONFIDENCE_ENTRY', 0.52))
+        if decision.get("action") != "HOLD" and decision.get("confidence", 0) < min_conf:
             decision["action"] = "HOLD"
             decision["reasoning"] = (
                 f"[LOW CONF] {decision.get('reasoning', '')} "
-                f"(conf {decision.get('confidence', 0):.0%} < 52%)"
+                f"(conf {decision.get('confidence', 0):.0%} < {min_conf:.0%})"
             )
 
         return decision

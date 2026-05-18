@@ -1,11 +1,13 @@
 import datetime as dt
 import email.utils
 import html
+import json
 import re
 import urllib.request
 import xml.etree.ElementTree as ET
 
 from config import SYMBOLS
+from database_manager import DatabaseManager
 
 
 NEWS_SOURCES = [
@@ -197,3 +199,77 @@ def fetch_crypto_news(limit_per_source: int = 12):
         seen.add(key)
         unique.append(item)
     return unique, errors
+
+
+def _serialize_item(item: dict) -> dict:
+    out = dict(item or {})
+    published = out.get("published_at")
+    if isinstance(published, dt.datetime):
+        out["published_at"] = published.isoformat()
+    return out
+
+
+def _deserialize_item(item: dict) -> dict:
+    out = dict(item or {})
+    published = out.get("published_at")
+    if isinstance(published, str):
+        try:
+            out["published_at"] = dt.datetime.fromisoformat(published)
+        except Exception:
+            out["published_at"] = dt.datetime.utcnow()
+    return out
+
+
+def get_cached_crypto_news(ttl_seconds: int = 900, db=None):
+    """
+    Cache compartida en SQLite para que daemon, dashboard y asistente usen la
+    misma foto de noticias sin refetch tras cada reinicio/proceso.
+    """
+    db = db or DatabaseManager()
+    now = dt.datetime.utcnow().timestamp()
+    raw = db.get_system_status("shared_news_cache")
+    if raw:
+        try:
+            cached = json.loads(raw)
+            ts = float(cached.get("timestamp") or 0)
+            if now - ts < ttl_seconds:
+                items = [_deserialize_item(item) for item in cached.get("items", [])]
+                return items, cached.get("errors", [])
+        except Exception:
+            pass
+
+    items, errors = fetch_crypto_news()
+    payload = {
+        "timestamp": now,
+        "items": [_serialize_item(item) for item in items],
+        "errors": errors,
+    }
+    try:
+        db.set_system_status("shared_news_cache", json.dumps(payload, ensure_ascii=False))
+    except Exception:
+        pass
+    return items, errors
+
+
+def relevant_news_lines(symbols, limit: int = 5, ttl_seconds: int = 900, db=None):
+    items, errors = get_cached_crypto_news(ttl_seconds=ttl_seconds, db=db)
+    symbol_set = {str(s).upper() for s in (symbols or [])}
+
+    def score(item):
+        related = {str(s).upper() for s in (item.get("related_symbols") or [])}
+        impact_weight = {"high": 3, "medium": 2, "low": 1}.get(item.get("impact"), 0)
+        sentiment_weight = {"positive": 1, "neutral": 0, "negative": -1}.get(item.get("sentiment"), 0)
+        relation_weight = 4 if related & symbol_set else 0
+        return relation_weight + impact_weight + sentiment_weight
+
+    ranked = sorted(items, key=score, reverse=True)[:limit]
+    lines = []
+    for item in ranked:
+        related = ",".join(item.get("related_symbols") or []) or "global"
+        lines.append(
+            f"{item.get('source')}: {item.get('title')} "
+            f"[{related}; {item.get('sentiment')}; {item.get('impact')}]"
+        )
+    if errors and not lines:
+        lines.append("News cache errors: " + "; ".join(errors[:2]))
+    return lines

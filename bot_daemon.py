@@ -53,10 +53,10 @@ class BotDaemon:
         self.market_context = MarketContext(lang=self.u_lang)
         
         self.active_symbols = config.SYMBOLS
-        self.last_watchlist_update = 0
+        self.last_watchlist_update = self._status_float('last_watchlist_update', 0.0)
 
         # Control del backtest automático semanal
-        self.last_backtest_run = 0
+        self.last_backtest_run = self._status_float('last_backtest_run', 0.0)
         self.BACKTEST_INTERVAL = 604800  # 7 días en segundos
 
         # Control macro v6.0
@@ -122,6 +122,23 @@ class BotDaemon:
             "lang": getattr(self, "u_lang", "es"),
             "watchlist_size": len(getattr(self, "active_symbols", []) or []),
         })
+        now = time.time()
+        watchlist_ttl = int(getattr(config, 'WATCHLIST_UPDATE_SECONDS', 14400))
+        payload.update({
+            "last_watchlist_update": self.last_watchlist_update,
+            "watchlist_next_refresh_in": max(0, int((self.last_watchlist_update + watchlist_ttl) - now)),
+            "last_backtest_run": self.last_backtest_run,
+            "backtest_next_run_in": max(0, int((self.last_backtest_run + self.BACKTEST_INTERVAL) - now)),
+        })
+        ai_cooldowns = {}
+        for provider in ("Gemini", "Groq"):
+            state_info = self.db.get_provider_cooldown(provider, "ai")
+            cooldown_until = float((state_info or {}).get("cooldown_until") or 0)
+            ai_cooldowns[provider] = {
+                "cooldown_in": max(0, int(cooldown_until - now)),
+                "reason": (state_info or {}).get("reason", ""),
+            }
+        payload["ai_provider_cooldowns"] = ai_cooldowns
         if state == "cycle_done":
             payload["cycle_ts"] = payload["state_ts"]
         payload.update(extra)
@@ -138,6 +155,9 @@ class BotDaemon:
             return f
         except (TypeError, ValueError):
             return default
+
+    def _status_float(self, key, default=0.0):
+        return self._safe_float(self.db.get_system_status(key, default), default)
 
     def _clamp(self, value, low, high):
         return max(low, min(high, value))
@@ -408,6 +428,12 @@ class BotDaemon:
 
         if config.VOLATILITY_SIZING_ENABLED and price > 0 and atr > 0 and stop_mult > 0:
             stop_distance_pct = (atr * stop_mult) / float(price)
+            small_account = float(total_value or 0) < float(
+                getattr(config, 'SMALL_ACCOUNT_USDT_THRESHOLD', 150.0)
+            )
+            max_stop_pct = float(getattr(config, 'SMALL_ACCOUNT_MAX_STOP_DISTANCE_PCT', 8.0)) / 100.0
+            if small_account and max_stop_pct > 0:
+                stop_distance_pct = min(stop_distance_pct, max_stop_pct)
             risk_budget = float(total_value or 0) * config.MAX_POSITION_RISK_PCT
             if stop_distance_pct > 0:
                 volatility_amount = risk_budget / stop_distance_pct
@@ -419,6 +445,17 @@ class BotDaemon:
 
         amount_usdt = min(raw_amount, cap_amount, balance_usdt)
         amount_usdt = max(0.0, amount_usdt)
+        min_order = float(config.MIN_POSITION_USDT)
+        if (
+            bool(getattr(config, 'SMALL_ACCOUNT_FORCE_MIN_ORDER', True))
+            and float(total_value or 0) < float(getattr(config, 'SMALL_ACCOUNT_USDT_THRESHOLD', 150.0))
+            and score >= float(config.MIN_AUTO_DECISION_SCORE)
+            and balance_usdt >= min_order
+            and amount_usdt > 0
+            and amount_usdt < min_order
+        ):
+            amount_usdt = min(min_order, balance_usdt * 0.98)
+            reason = f"{reason}_min_floor"
         risk_amount = amount_usdt * stop_distance_pct if stop_distance_pct else amount_usdt * config.STOP_LOSS_PCT
         return {
             "amount_usdt": round(amount_usdt, 8),
@@ -656,6 +693,7 @@ class BotDaemon:
                 self.log_message(f"❌ Error en backtest de {symbol}: {e}")
 
         self.last_backtest_run = time.time()
+        self.db.set_system_status('last_backtest_run', self.last_backtest_run)
         self.log_message(_('LOG_BACKTEST_DONE', lang=self.u_lang))
 
     def run(self):
@@ -709,9 +747,11 @@ class BotDaemon:
                     )
                     time.sleep(60)
                     continue
-                if now - self.last_watchlist_update > 43200:
+                watchlist_ttl = int(getattr(config, 'WATCHLIST_UPDATE_SECONDS', 14400))
+                if now - self.last_watchlist_update > watchlist_ttl:
                     self.update_dynamic_watchlist()
                     self.last_watchlist_update = now
+                    self.db.set_system_status('last_watchlist_update', self.last_watchlist_update)
 
                 # Backtest semanal automático
                 if now - self.last_backtest_run > self.BACKTEST_INTERVAL:
@@ -750,7 +790,8 @@ class BotDaemon:
 
                 if str(is_running).lower() == 'true':
                     self.bot_iteration()
-                    self.update_daemon_status("sleeping", next_cycle_in=60)
+                    cycle_sleep = max(15, int(getattr(config, 'DAEMON_CYCLE_SECONDS', 60)))
+                    self.update_daemon_status("sleeping", next_cycle_in=cycle_sleep)
                 else:
                     if time.time() - getattr(self, "_last_idle_log", 0) > 300:
                         self.log_message("[IDLE] Trading pausado: is_running=false. Esperando Start/Arrancar bot.")
@@ -760,7 +801,8 @@ class BotDaemon:
                         execution_mode=getattr(config, "TRADING_EXECUTION_MODE", "auto"),
                         decision_mode=getattr(config, "DECISION_MODE", "hybrid"),
                     )
-                time.sleep(60)
+                cycle_sleep = max(15, int(getattr(config, 'DAEMON_CYCLE_SECONDS', 60)))
+                time.sleep(cycle_sleep)
             except Exception as e:
                 self.update_daemon_status("error", error=str(e))
                 self.log_message(f"Error crítico en daemon: {e}")
@@ -957,6 +999,7 @@ class BotDaemon:
             if symbol not in scan_symbols:
                 scan_symbols.append(symbol)
 
+        scan_items = []
         for symbol in scan_symbols:
             current_price = self.exchange.get_ticker(symbol)
             if not current_price:
@@ -970,7 +1013,26 @@ class BotDaemon:
             if not indicators:
                 skipped["NO_INDICATORS"] = skipped.get("NO_INDICATORS", 0) + 1
                 continue
-            
+
+            scan_items.append({
+                'symbol': symbol,
+                'price': current_price,
+                'ohlcv': ohlcv,
+                'indicators': indicators,
+                'is_open': symbol in open_positions,
+            })
+
+        if getattr(config, 'AI_BATCH_DECISIONS_ENABLED', True):
+            try:
+                self.decision_engine.analyze_batch_with_ai(scan_items)
+            except Exception as e:
+                self.log_message(f"[WARN] Batch AI skipped | reason={self._short_reason(e, 120)}")
+
+        for scan_item in scan_items:
+            symbol = scan_item['symbol']
+            current_price = scan_item['price']
+            ohlcv = scan_item['ohlcv']
+            indicators = scan_item['indicators']
             is_open = symbol in open_positions
             decision = self.decision_engine.get_decision(symbol, current_price, indicators, ohlcv, len(open_positions), is_open)
             if not decision:
@@ -1021,6 +1083,8 @@ class BotDaemon:
                 'decision_mode': decision.get('decision_mode', getattr(config, 'DECISION_MODE', 'hybrid')),
                 'execution_mode': getattr(config, 'TRADING_EXECUTION_MODE', 'auto'),
                 'provider': provider,
+                'cache_hit': decision.get('cache_hit', ''),
+                'batch_ai': bool(decision.get('batch_ai', False)),
             })
             self.db.set_system_status('last_ia_decision', decision_json)
             self.db.set_system_status(f'decision_{symbol}', decision_json)

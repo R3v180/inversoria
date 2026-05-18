@@ -88,6 +88,11 @@ class TradingLogic:
         }
 
         params = regime_params.get(regime, regime_params['RANGING'])
+        aggressive = bool(getattr(config, 'AGGRESSIVE_TRADING_PROFILE', False))
+        if aggressive:
+            params = dict(params)
+            params['trailing_activation'] = params['trailing_activation'] * 0.75
+            params['trailing_distance'] = params['trailing_distance'] * 0.85
 
         # ─── 1. Stop Loss adaptativo ───
         stop_loss_price = entry_price * (1 - params['sl_pct'])
@@ -112,12 +117,23 @@ class TradingLogic:
         if ai_decision and ai_decision.get('action') == 'SELL':
             confidence = ai_decision.get('confidence', 0)
             # En tendencia fuerte necesitamos más convicción para salir antes de tiempo
-            sell_threshold = 0.75 if regime == 'TRENDING_UP' else 0.65
+            if bool(getattr(config, 'AGGRESSIVE_TRADING_PROFILE', False)):
+                sell_threshold = 0.62 if regime == 'TRENDING_UP' else 0.55
+            else:
+                sell_threshold = 0.75 if regime == 'TRENDING_UP' else 0.65
             if confidence >= sell_threshold:
                 return {
                     'should_sell': True,
                     'reason': f"IA SELL [{ai_decision.get('provider', 'IA')}] conf:{confidence:.0%}"
                 }
+
+        profit_pct = ((current_price - entry_price) / entry_price) * 100 if entry_price else 0.0
+        min_profit_pct = float(config.get_setting('MIN_PROFIT_NET', 1.0, float))
+        if aggressive and profit_pct >= min_profit_pct:
+            return {
+                'should_sell': True,
+                'reason': f"TAKE PROFIT [{regime}] (+{profit_pct:.2f}% >= {min_profit_pct:.2f}%)"
+            }
 
         # ─── 4. Cambio de régimen macro (si la IA detecta un giro) ───
         if regime == 'TRENDING_DOWN' and ai_decision:

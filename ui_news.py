@@ -5,12 +5,12 @@ import streamlit as st
 
 import config
 from i18n import _
-from news_service import fetch_crypto_news
+from news_service import get_cached_crypto_news
 
 
 @st.cache_data(ttl=900, show_spinner=False)
 def _cached_news():
-    return fetch_crypto_news()
+    return get_cached_crypto_news()
 
 
 def _label_sentiment(value: str) -> str:

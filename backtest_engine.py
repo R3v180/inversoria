@@ -549,7 +549,10 @@ class BacktestEngine:
                 total_trades = row['total_trades']
 
                 # Aplicar veto duro si win rate es muy bajo con muestra suficiente
-                hard_veto = win_rate < 0.35 and total_trades >= 5
+                veto_floor = float(getattr(config, 'BACKTEST_HARD_VETO_WIN_RATE', 0.35))
+                if bool(getattr(config, 'AGGRESSIVE_TRADING_PROFILE', False)):
+                    veto_floor = min(veto_floor, 0.28)
+                hard_veto = win_rate < veto_floor and total_trades >= 5
                 veto_reason = ''
                 if hard_veto:
                     veto_reason = (
