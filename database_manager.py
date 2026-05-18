@@ -252,6 +252,34 @@ class DatabaseManager:
                 cursor.execute(
                     f'CREATE INDEX IF NOT EXISTS {idx_name} ON ai_usage_events ({idx_cols})'
                 )
+
+            # Exchange Order Events: auditoría local de órdenes enviadas al exchange.
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS exchange_order_events (
+                    local_order_id TEXT PRIMARY KEY,
+                    exchange_order_id TEXT,
+                    decision_journal_id INTEGER,
+                    symbol TEXT,
+                    side TEXT,
+                    requested_amount REAL,
+                    requested_price REAL,
+                    executed_amount REAL,
+                    executed_price REAL,
+                    status TEXT,
+                    reason TEXT,
+                    raw_json TEXT,
+                    created_at REAL,
+                    updated_at REAL
+                )
+            ''')
+            for idx_name, idx_cols in {
+                'idx_exchange_order_events_symbol': 'symbol, created_at',
+                'idx_exchange_order_events_status': 'status, updated_at',
+                'idx_exchange_order_events_exchange_id': 'exchange_order_id',
+            }.items():
+                cursor.execute(
+                    f'CREATE INDEX IF NOT EXISTS {idx_name} ON exchange_order_events ({idx_cols})'
+                )
             
             conn.commit()
 
@@ -486,6 +514,81 @@ class DatabaseManager:
                 INSERT OR REPLACE INTO open_positions (symbol, entry_price, highest_price, amount, entry_time, extra_data)
                 VALUES (?, ?, ?, ?, ?, ?)
             ''', (symbol, entry_price, highest_price, amount, entry_time, extra_data))
+            conn.commit()
+
+    def add_open_position_with_trade(
+        self,
+        symbol,
+        entry_price,
+        highest_price,
+        amount,
+        trade_reason,
+        pnl_pct=0.0,
+        entry_time=None,
+        extra_data=None,
+    ):
+        if entry_time is None:
+            entry_time = time.time()
+        with self._get_connection() as conn:
+            conn.execute('''
+                INSERT OR REPLACE INTO open_positions (symbol, entry_price, highest_price, amount, entry_time, extra_data)
+                VALUES (?, ?, ?, ?, ?, ?)
+            ''', (symbol, entry_price, highest_price, amount, entry_time, extra_data))
+            cursor = conn.execute('''
+                INSERT INTO trades (symbol, side, price, amount, reason, pnl_pct, timestamp)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            ''', (symbol, 'buy', float(entry_price), float(amount), trade_reason, float(pnl_pct or 0), time.time()))
+            conn.commit()
+            return cursor.lastrowid
+
+    def record_order_event(
+        self,
+        local_order_id,
+        symbol,
+        side,
+        requested_amount=0,
+        requested_price=0,
+        status='created',
+        decision_journal_id=None,
+        exchange_order_id='',
+        executed_amount=0,
+        executed_price=0,
+        reason='',
+        raw=None,
+    ):
+        now = time.time()
+        raw_json = self._json_or_none(raw) if raw is not None else None
+        with self._get_connection() as conn:
+            row = conn.execute(
+                'SELECT created_at FROM exchange_order_events WHERE local_order_id = ?',
+                (str(local_order_id),),
+            ).fetchone()
+            created_at = float(row['created_at']) if row and row['created_at'] else now
+            conn.execute(
+                '''
+                INSERT OR REPLACE INTO exchange_order_events
+                    (local_order_id, exchange_order_id, decision_journal_id, symbol, side,
+                     requested_amount, requested_price, executed_amount, executed_price,
+                     status, reason, raw_json, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ''',
+                (
+                    str(local_order_id),
+                    str(exchange_order_id or ''),
+                    decision_journal_id,
+                    str(symbol),
+                    str(side),
+                    float(requested_amount or 0),
+                    float(requested_price or 0),
+                    float(executed_amount or 0),
+                    float(executed_price or 0),
+                    str(status or ''),
+                    str(reason or ''),
+                    raw_json,
+                    created_at,
+                    now,
+                ),
+            )
             conn.commit()
 
     def update_highest_price(self, symbol, highest_price):

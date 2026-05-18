@@ -2,6 +2,7 @@ import time
 import os
 import json
 import sys
+import uuid
 import config 
 from exchange_helper import ExchangeHelper
 from sentiment_engine import SentimentEngine
@@ -184,6 +185,57 @@ class BotDaemon:
         self.update_daemon_status("kill_switch", kill_switch=payload)
         self.log_message(f"[KILL_SWITCH] Trading pausado | reason={reason} | details={details or {}}")
         return True
+
+    def _new_local_order_id(self, symbol, side):
+        base = str(symbol or "").replace("/", "")
+        return f"{int(time.time() * 1000)}-{base}-{str(side).upper()}-{uuid.uuid4().hex[:8]}"
+
+    def _order_execution_details(self, order_result, fallback_amount, fallback_price):
+        status = str((order_result or {}).get("status") or "")
+        filled = self._safe_float((order_result or {}).get("filled"), 0.0)
+        if filled <= 0:
+            filled = self._safe_float((order_result or {}).get("amount"), 0.0)
+        if filled <= 0 and status == "simulated":
+            filled = self._safe_float(fallback_amount, 0.0)
+        price = self._safe_float((order_result or {}).get("average"), 0.0)
+        if price <= 0:
+            price = self._safe_float((order_result or {}).get("price"), 0.0)
+        if price <= 0:
+            price = self._safe_float(fallback_price, 0.0)
+        return filled, price
+
+    def _record_order_event(
+        self,
+        local_order_id,
+        symbol,
+        side,
+        requested_amount,
+        requested_price,
+        order_result,
+        decision_journal_id=None,
+    ):
+        try:
+            executed_amount, executed_price = self._order_execution_details(
+                order_result,
+                requested_amount,
+                requested_price,
+            )
+            self.db.record_order_event(
+                local_order_id=local_order_id,
+                symbol=symbol,
+                side=side,
+                requested_amount=requested_amount,
+                requested_price=requested_price,
+                status=(order_result or {}).get("status", "unknown"),
+                decision_journal_id=decision_journal_id,
+                exchange_order_id=(order_result or {}).get("id", ""),
+                executed_amount=executed_amount,
+                executed_price=executed_price,
+                reason=(order_result or {}).get("reason", ""),
+                raw=order_result,
+            )
+        except Exception as exc:
+            self.log_message(f"[WARN] order audit failed | {symbol} {side} | reason={self._short_reason(exc, 100)}")
 
     def _position_balance_mismatches(self, open_positions):
         mismatches = []
@@ -1157,20 +1209,19 @@ class BotDaemon:
                 return False
 
             amount_coin = amount_usdt / price
+            local_order_id = self._new_local_order_id(sym, "buy")
             res = self.exchange.execute_order(sym, 'buy', amount_coin, price)
+            self._record_order_event(local_order_id, sym, "buy", amount_coin, price, res, decision_journal_id)
             if res.get('status') in ['closed', 'simulated']:
+                executed_amount, executed_price = self._order_execution_details(res, amount_coin, price)
+                if executed_amount <= 0:
+                    executed_amount = amount_coin
+                if executed_price <= 0:
+                    executed_price = price
                 decision['entry_confidence'] = decision.get('confidence', 0.7)
                 decision['entry_decision_id'] = decision_journal_id
                 decision['atr_at_entry'] = sizing.get('atr', 0)
                 decision['sizing'] = sizing
-                self.db.add_open_position(sym, price, price, amount_coin, extra_data=json.dumps(decision))
-                open_positions[sym] = {
-                    'entry_price': price,
-                    'highest_price': price,
-                    'amount': amount_coin,
-                    'entry_confidence': decision.get('entry_confidence', 0.7),
-                    'extra_data': json.dumps(decision),
-                }
                 trade_reason = (
                     f"BOT [{provider}] | score={self._safe_float(decision.get('decision_score'), 0):.2f} | "
                     f"conf={self._safe_float(decision.get('confidence'), 0):.2f} | "
@@ -1178,27 +1229,40 @@ class BotDaemon:
                     f"strategy={decision.get('best_strategy', 'N/A')} | "
                     f"{self._short_reason(decision.get('reasoning', ''), 160)}"
                 )
-                trade_id = self.db.save_trade(
-                    sym, 'buy', float(price), float(amount_coin),
-                    trade_reason, 0.0,
+                extra_json = json.dumps(decision)
+                trade_id = self.db.add_open_position_with_trade(
+                    sym,
+                    float(executed_price),
+                    float(executed_price),
+                    float(executed_amount),
+                    trade_reason,
+                    0.0,
+                    extra_data=extra_json,
                 )
+                open_positions[sym] = {
+                    'entry_price': executed_price,
+                    'highest_price': executed_price,
+                    'amount': executed_amount,
+                    'entry_confidence': decision.get('entry_confidence', 0.7),
+                    'extra_data': extra_json,
+                }
                 if decision_journal_id:
                     self.db.update_decision_journal(
                         decision_journal_id,
                         execution_status=res.get('status', 'executed'),
                         execution_side="buy",
-                        executed_price=float(price),
-                        executed_amount=float(amount_coin),
+                        executed_price=float(executed_price),
+                        executed_amount=float(executed_amount),
                         sizing=sizing,
                         risk=candidate_risk,
-                        block_reason=f"trade_id={trade_id}",
+                        block_reason=f"trade_id={trade_id};order_id={local_order_id}",
                     )
                 self.log_message(
-                    f"[BUY] {sym} amount={amount_usdt:.2f} USDT | px={price:.6g} | "
-                    f"qty={amount_coin:.8g} | score={self._safe_float(decision.get('decision_score'), 0):.2f} | "
+                    f"[BUY] {sym} amount={amount_usdt:.2f} USDT | px={executed_price:.6g} | "
+                    f"qty={executed_amount:.8g} | score={self._safe_float(decision.get('decision_score'), 0):.2f} | "
                     f"conf={self._safe_float(decision.get('confidence'), 0):.2f} | "
                     f"sizing={sizing.get('sizing_reason')} | risk={sizing.get('risk_amount_usdt', 0):.4f} USDT | "
-                    f"provider={provider}"
+                    f"provider={provider} | order={local_order_id}"
                 )
                 return True
 
@@ -1364,29 +1428,44 @@ class BotDaemon:
                             exit_reason=sell_res['reason'],
                         )
                         continue
-                    order_result = self.exchange.execute_order(symbol, 'sell', pos['amount'], current_price)
+                    requested_sell = self._safe_float(pos.get('amount'), 0.0)
+                    local_order_id = self._new_local_order_id(symbol, "sell")
+                    order_result = self.exchange.execute_order(symbol, 'sell', requested_sell, current_price)
+                    self._record_order_event(
+                        local_order_id,
+                        symbol,
+                        "sell",
+                        requested_sell,
+                        current_price,
+                        order_result,
+                        decision_journal_id,
+                    )
                     if order_result.get('status') in ['closed', 'simulated']:
-                        try:
-                            sold = float(order_result.get('filled') or 0)
-                        except (TypeError, ValueError):
-                            sold = 0.0
+                        sold, executed_price = self._order_execution_details(
+                            order_result,
+                            requested_sell,
+                            current_price,
+                        )
                         if sold <= 0:
                             sold = float(pos['amount'])
                         sold = min(sold, float(pos['amount']))
+                        if executed_price <= 0:
+                            executed_price = current_price
                         entry_extra = self._position_extra(pos)
                         entry_decision_id = entry_extra.get('entry_decision_id')
-                        entry_price = float(pos.get('entry_price') or current_price)
-                        realized_pnl = ((float(current_price) - entry_price) / entry_price) * 100 if entry_price else 0.0
-                        closed = self.db.close_position(symbol, current_price, sell_res['reason'], sold_amount=sold)
+                        entry_price = float(pos.get('entry_price') or executed_price)
+                        realized_pnl = ((float(executed_price) - entry_price) / entry_price) * 100 if entry_price else 0.0
+                        closed = self.db.close_position(symbol, executed_price, sell_res['reason'], sold_amount=sold)
                         if closed:
                             self.db.update_decision_journal(
                                 decision_journal_id,
                                 execution_status=order_result.get('status', 'executed'),
                                 execution_side="sell",
-                                executed_price=float(current_price),
+                                executed_price=float(executed_price),
                                 executed_amount=float(sold),
                                 realized_pnl_pct=realized_pnl,
                                 exit_reason=sell_res['reason'],
+                                block_reason=f"order_id={local_order_id}",
                             )
                             if entry_decision_id:
                                 self.db.update_decision_journal(
@@ -1400,9 +1479,9 @@ class BotDaemon:
                             else:
                                 del open_positions[symbol]
                             self.log_message(
-                                f"[SELL] {symbol} qty={sold:.8g} | px={current_price:.6g} | "
+                                f"[SELL] {symbol} qty={sold:.8g} | px={executed_price:.6g} | "
                                 f"pnl={realized_pnl:+.2f}% | reason={self._short_reason(sell_res['reason'], 80)} | "
-                                f"provider={provider}"
+                                f"provider={provider} | order={local_order_id}"
                             )
                         else:
                             self.log_message(f"[WARN] {symbol} SELL executed but DB position was not found")
