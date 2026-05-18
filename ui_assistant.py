@@ -601,30 +601,56 @@ def _compact_decision_journal_context(db):
     return "\n".join(lines)
 
 
+def _compact_chat_context(db, limit=6):
+    try:
+        rows = db.get_chat_history(limit=limit)
+    except Exception as exc:
+        return f"Historial no disponible: {exc}"
+    if not rows:
+        return "Sin conversación previa relevante."
+    rows = rows[-limit:]
+    lines = []
+    for row in rows:
+        role = str(row.get("role") or "-")[:12]
+        content = " ".join(str(row.get("content") or "").split())
+        if not content:
+            continue
+        lines.append(f"{role}: {content[:260]}")
+    return "\n".join(lines) if lines else "Sin conversación previa relevante."
+
+
 def _compact_news_context(symbols, limit=5):
     try:
-        from ui_news import _cached_news
-        items, errors = _cached_news()
+        from news_service import relevant_news_lines
+        lines = relevant_news_lines(symbols, limit=limit)
     except Exception as exc:
         return f"Noticias no disponibles: {exc}"
-    if not items:
+    if not lines:
         return "Sin noticias cacheadas."
-    symbol_set = set(symbols or [])
+    return "\n".join(lines)
 
-    def score(item):
-        related = set(item.get("related_symbols") or [])
-        impact_weight = {"high": 3, "medium": 2, "low": 1}.get(item.get("impact"), 0)
-        sentiment_weight = {"positive": 1, "neutral": 0, "negative": -1}.get(item.get("sentiment"), 0)
-        relation_weight = 4 if related & symbol_set else 0
-        return relation_weight + impact_weight + sentiment_weight
 
-    ranked = sorted(items, key=score, reverse=True)[:limit]
+def _assistant_priority_context(db, exchange, positions, diag, risk_guards):
     lines = []
-    for item in ranked:
-        related = ",".join(item.get("related_symbols") or []) or "global"
-        lines.append(f"{item.get('source')}: {item.get('title')} [{related}; {item.get('sentiment')}; {item.get('impact')}]")
-    if errors:
-        lines.append("Fuentes con error: " + "; ".join(errors[:2]))
+    mode = "simulación" if exchange.modo_simulacion else "REAL"
+    lines.append(f"Modo={mode}; posiciones={len(positions)}; bot_state={diag.get('state', '-')}")
+    if risk_guards:
+        lines.append(
+            f"Risk ok={risk_guards.get('ok')} daily_loss={risk_guards.get('daily_loss_pct', 0)}% "
+            f"exposure={risk_guards.get('exposure_pct', 0)}% reasons={risk_guards.get('reasons', [])}"
+        )
+    if diag.get("skipped"):
+        lines.append("Bloqueos recientes: " + ", ".join(f"{k}:{v}" for k, v in diag.get("skipped", {}).items()))
+    if diag.get("hold_reasons"):
+        top_hold = list(diag.get("hold_reasons", {}).items())[:3]
+        lines.append("HOLD principales: " + " | ".join(f"{v}x {k}" for k, v in top_hold))
+    cooldowns = diag.get("ai_provider_cooldowns") or {}
+    if cooldowns:
+        lines.append(
+            "Cooldown IA: " + ", ".join(
+                f"{k}={v.get('cooldown_in', 0)}s" for k, v in cooldowns.items()
+            )
+        )
     return "\n".join(lines)
 
 
@@ -641,6 +667,10 @@ def _build_assistant_context(db, exchange):
         macro = json.loads(db.get_system_status('macro_context', '{}') or '{}')
     except Exception:
         macro = {}
+    try:
+        diag = json.loads(db.get_system_status("daemon_diagnostics", "{}") or "{}")
+    except Exception:
+        diag = {}
     macro_db = db.get_all_macro_data()
     macro_lines = []
     if macro:
@@ -656,6 +686,12 @@ def _build_assistant_context(db, exchange):
     logs = read_recent_log_summary(db=db, tail_lines=60, focus_lines=40)
     return f"""
 === CONTEXTO OPERATIVO COMPACTO INVERSORIA ===
+
+PRIORIDAD / ESTADO CRÍTICO:
+{_assistant_priority_context(db, exchange, positions, diag, diag.get('risk_guards', {}))}
+
+MEMORIA RECIENTE DE LA CONVERSACIÓN:
+{_compact_chat_context(db)}
 
 MODO / CONFIG:
 {_compact_settings_context(exchange)}
@@ -701,6 +737,7 @@ REGLAS DE SEGURIDAD:
 - Si el usuario pide cambiar configuración, puedes proponer un bloque [CONFIG_CHANGE] con JSON. La app solo creará una tarjeta pendiente y el usuario tendrá que confirmarla con botón.
 - Diferencia siempre entre posiciones del bot (open_positions) y saldos/retales del exchange.
 - Si hablas de comprar, considera macro, diagnóstico daemon, slippage, riesgo por trade, posiciones disponibles y noticias.
+- Prioriza primero riesgos/bloqueos actuales, después señales, después recomendaciones generales.
 """.strip()
 
 
