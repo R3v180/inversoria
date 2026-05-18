@@ -338,6 +338,23 @@ def render_wallet():
     m2.metric(_("WALLET_METRIC_TRACKED"), f"${tracked_usd:.2f}")
     m3.metric(_("WALLET_METRIC_UNTRACKED"), f"${untracked:.2f}")
 
+    if hasattr(db, "get_exchange_balance_watch"):
+        watch_rows = db.get_exchange_balance_watch(limit=200)
+        if watch_rows:
+            with st.expander("Vigilancia persistente de dust/inventario", expanded=False):
+                watch_table = []
+                for item in watch_rows:
+                    watch_table.append({
+                        "Par": item.get("symbol"),
+                        "Estado": item.get("status"),
+                        "Libre": f"{float(item.get('free') or 0):.8g}",
+                        "Valor libre USDT": _fmt_usd_val(item.get("usd_free") or 0),
+                        "Falta qty": f"{float(item.get('missing_qty') or 0):.8g}",
+                        "Precio objetivo": _fmt_usd_val(item.get("target_price") or 0),
+                        "En posición bot": "Sí" if item.get("in_open_position") else "No",
+                    })
+                st.dataframe(pd.DataFrame(watch_table), width="stretch", hide_index=True)
+
     st.markdown("---")
     st.subheader(_("WALLET_TABLE_TITLE"))
 

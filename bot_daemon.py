@@ -295,6 +295,74 @@ class BotDaemon:
             "validation": validation or {},
         }
 
+    def _dust_watch_payload(self, row, symbol, status, balance_state=None, in_open_position=False):
+        balance_state = balance_state or {}
+        validation = balance_state.get("validation") or {}
+        errors = validation.get("errors") or []
+        amount = self._safe_float(row.get("free"), 0.0)
+        total = self._safe_float(row.get("total"), amount)
+        usd_free = self._safe_float(row.get("usd_free"), balance_state.get("value", 0.0))
+        usd_total = self._safe_float(row.get("usd_total"), usd_free)
+        price = self._safe_float(balance_state.get("price"), 0.0)
+        min_amount = self._safe_float(validation.get("min_amount"), 0.0)
+        min_cost = self._safe_float(validation.get("min_cost"), 0.0)
+        missing_qty = 0.0
+        target_price = 0.0
+
+        for err in errors:
+            text = str(err)
+            if text.startswith("BELOW_MIN_AMOUNT:"):
+                min_amount = self._safe_float(text.split(":", 1)[1], min_amount)
+            elif text.startswith("BELOW_MIN_COST:"):
+                parts = text.split(":")
+                if len(parts) > 1:
+                    min_cost = self._safe_float(parts[1], min_cost)
+
+        if status == "DUST_BELOW_MIN_ORDER":
+            if min_amount > 0 and amount > 0:
+                missing_qty = max(0.0, min_amount - amount)
+            effective_min_notional = max(
+                self._safe_float(balance_state.get("min_notional"), 0.0),
+                min_cost,
+                self._safe_float(getattr(config, "DUST_SELL_MIN_USDT", 0.0), 0.0),
+            )
+            if amount > 0 and effective_min_notional > usd_free:
+                target_price = effective_min_notional / amount
+                if price > 0 and min_amount <= 0:
+                    missing_qty = max(0.0, (effective_min_notional / price) - amount)
+
+        return {
+            "symbol": symbol,
+            "coin": row.get("coin"),
+            "free": amount,
+            "total": total,
+            "usd_free": usd_free,
+            "usd_total": usd_total,
+            "status": status,
+            "min_amount": min_amount,
+            "min_cost": min_cost,
+            "missing_qty": missing_qty,
+            "target_price": target_price,
+            "in_open_position": in_open_position,
+            "details": {
+                "price": price,
+                "errors": errors,
+                "min_notional": balance_state.get("min_notional"),
+                "amount_after_precision": validation.get("amount_after_precision"),
+            },
+        }
+
+    def _record_balance_watch(self, row, symbol, status, balance_state=None, in_open_position=False):
+        if not getattr(config, "DUST_WATCH_ENABLED", True):
+            return None
+        try:
+            return self.db.upsert_exchange_balance_watch(
+                self._dust_watch_payload(row, symbol, status, balance_state, in_open_position)
+            )
+        except Exception as exc:
+            self.log_message(f"[WARN] Dust watch update failed | reason={self._short_reason(exc, 100)}")
+            return None
+
     def _position_extra(self, pos):
         raw = (pos or {}).get('extra_data')
         if not raw:
@@ -533,6 +601,8 @@ class BotDaemon:
         """Adopta saldos vendibles aunque no pertenezcan al universo de nuevas compras."""
         adopted = []
         skipped = {}
+        dust_rows = []
+        transitions = []
         ignored_coins = {"USDT", "USD", "EUR", "USDC", "DAI", "TUSD", "BUSD", "PYUSD"}
         try:
             rows = self.exchange.get_spot_inventory_rows()
@@ -543,9 +613,17 @@ class BotDaemon:
         for row in rows:
             coin = str(row.get("coin") or "").upper()
             symbol = row.get("symbol")
-            if not symbol or coin in ignored_coins:
+            if coin in ignored_coins:
+                continue
+            if not symbol:
+                watch = self._record_balance_watch(row, None, "UNROUTABLE_BALANCE")
+                if watch and watch.get("transitioned"):
+                    transitions.append(watch)
                 continue
             if symbol in open_positions:
+                watch = self._record_balance_watch(row, symbol, "IN_OPEN_POSITION", in_open_position=True)
+                if watch and watch.get("transitioned"):
+                    transitions.append(watch)
                 continue
 
             try:
@@ -557,6 +635,9 @@ class BotDaemon:
             price = (usd_free / free_amount) if free_amount > 0 else 0.0
             if free_amount <= 0 or price <= 0:
                 skipped["ADOPT_NO_VALUE"] = skipped.get("ADOPT_NO_VALUE", 0) + 1
+                watch = self._record_balance_watch(row, symbol, "NO_VALUE")
+                if watch and watch.get("transitioned"):
+                    transitions.append(watch)
                 continue
 
             balance_state = self._sellable_balance_snapshot(
@@ -569,10 +650,15 @@ class BotDaemon:
             notional_est = self._safe_float(balance_state.get("value"), usd_free)
             if balance_state.get("status") == "DUST_BELOW_MIN_ORDER":
                 skipped["ADOPT_DUST_BELOW_MIN_ORDER"] = skipped.get("ADOPT_DUST_BELOW_MIN_ORDER", 0) + 1
-                self.log_message(
-                    f"[SKIP] {symbol} adopt ignored | reason=DUST_BELOW_MIN_ORDER | "
-                    f"value={notional_est:.4f} < min={min_notional:.4f} | qty={free_amount:.8g}"
-                )
+                watch = self._record_balance_watch(row, symbol, "DUST_BELOW_MIN_ORDER", balance_state)
+                if watch and watch.get("transitioned"):
+                    transitions.append(watch)
+                dust_rows.append((symbol, notional_est, min_notional, free_amount))
+                if not getattr(config, "DUST_LOG_COMPACT_ENABLED", True):
+                    self.log_message(
+                        f"[SKIP] {symbol} adopt ignored | reason=DUST_BELOW_MIN_ORDER | "
+                        f"value={notional_est:.4f} < min={min_notional:.4f} | qty={free_amount:.8g}"
+                    )
                 continue
 
             if self.exchange.modo_simulacion:
@@ -583,6 +669,9 @@ class BotDaemon:
                 if not validation.get("ok"):
                     errors = ",".join(validation.get("errors") or ["UNKNOWN"])
                     skipped["ADOPT_UNSELLABLE"] = skipped.get("ADOPT_UNSELLABLE", 0) + 1
+                    watch = self._record_balance_watch(row, symbol, "ADOPT_UNSELLABLE", balance_state)
+                    if watch and watch.get("transitioned"):
+                        transitions.append(watch)
                     self.log_message(
                         f"[SKIP] {symbol} adopt ignored | reason=ADOPT_UNSELLABLE | "
                         f"errors={errors} | value={notional_est:.4f} | min={min_notional:.4f} | qty={free_amount:.8g}"
@@ -592,10 +681,37 @@ class BotDaemon:
                 notional = self._safe_float(validation.get("notional"), amount * price)
             if amount <= 0 or notional <= 0:
                 skipped["ADOPT_ZERO_AFTER_PRECISION"] = skipped.get("ADOPT_ZERO_AFTER_PRECISION", 0) + 1
+                watch = self._record_balance_watch(row, symbol, "ADOPT_ZERO_AFTER_PRECISION", balance_state)
+                if watch and watch.get("transitioned"):
+                    transitions.append(watch)
                 continue
 
+            watch = self._record_balance_watch(row, symbol, "SELLABLE_ADOPTABLE_BALANCE", balance_state)
+            if watch and watch.get("transitioned"):
+                transitions.append(watch)
             self._record_adopted_position(symbol, price, amount, notional, open_positions)
             adopted.append(symbol)
+
+        if dust_rows and getattr(config, "DUST_LOG_COMPACT_ENABLED", True):
+            top = ", ".join(
+                f"{sym}={value:.4f}/{minimum:.2f}"
+                for sym, value, minimum, _ in sorted(dust_rows, key=lambda item: item[1], reverse=True)[:8]
+            )
+            self.log_message(
+                f"[SKIP] dust watch compact | reason=DUST_BELOW_MIN_ORDER | "
+                f"count={len(dust_rows)} | top={top}"
+            )
+        if transitions and getattr(config, "DUST_ALERT_ON_RECOVERABLE", True):
+            interesting = [
+                t for t in transitions
+                if t.get("status") in {"SELLABLE_ADOPTABLE_BALANCE", "DUST_BELOW_MIN_ORDER", "UNROUTABLE_BALANCE"}
+            ][:8]
+            if interesting:
+                text = ", ".join(
+                    f"{t.get('symbol')}:{t.get('previous_status') or 'new'}->{t.get('status')}"
+                    for t in interesting
+                )
+                self.log_message(f"[DUST] watch transitions | {text}")
 
         return adopted, skipped
 
@@ -830,6 +946,10 @@ class BotDaemon:
         adopted_symbols, adoption_skipped = self.adopt_sellable_positions(open_positions)
         for reason, count in adoption_skipped.items():
             skipped[reason] = skipped.get(reason, 0) + count
+        try:
+            dust_watch_summary = self.db.get_exchange_balance_watch_summary()
+        except Exception:
+            dust_watch_summary = {}
         buy_candidates = []
         cycle_risk = self.evaluate_risk_guards(total_value, open_positions)
         if not cycle_risk["ok"]:
@@ -1435,6 +1555,7 @@ class BotDaemon:
             "execution_mode": getattr(config, "TRADING_EXECUTION_MODE", "auto"),
             "decision_mode": getattr(config, "DECISION_MODE", "hybrid"),
             "risk_guards": cycle_risk,
+            "dust_watch": dust_watch_summary,
             "top_buy_candidates": [
                 {
                     "symbol": c['symbol'],
