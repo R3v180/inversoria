@@ -192,6 +192,8 @@ def _daemon_diagnostics(db) -> str:
         "open_positions": diag.get("open_positions"),
         "dynamic_max": diag.get("dynamic_max"),
         "risk_guards": diag.get("risk_guards"),
+        "operational_guard": diag.get("operational_guard"),
+        "kill_switch": diag.get("kill_switch"),
         "dust_watch": diag.get("dust_watch"),
         "ai_usage_24h": diag.get("ai_usage_24h"),
         "top_buy_candidates": (diag.get("top_buy_candidates") or [])[:5],

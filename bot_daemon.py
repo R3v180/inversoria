@@ -147,6 +147,14 @@ class BotDaemon:
             payload["cycle_ts"] = payload["state_ts"]
         payload.update(extra)
         self.db.set_system_status("daemon_diagnostics", json.dumps(payload))
+        if getattr(config, "HEALTH_EXPORT_ENABLED", True):
+            try:
+                health_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "launcher_logs")
+                os.makedirs(health_dir, exist_ok=True)
+                with open(os.path.join(health_dir, "health.json"), "w", encoding="utf-8") as f:
+                    json.dump(payload, f, ensure_ascii=False, indent=2)
+            except Exception:
+                pass
 
     def is_consultive_mode(self):
         return getattr(config, "TRADING_EXECUTION_MODE", "auto") == "consultive"
@@ -162,6 +170,76 @@ class BotDaemon:
 
     def _status_float(self, key, default=0.0):
         return self._safe_float(self.db.get_system_status(key, default), default)
+
+    def _trigger_kill_switch(self, reason, details=None):
+        if not getattr(config, "KILL_SWITCH_ENABLED", True):
+            return False
+        payload = {
+            "reason": str(reason),
+            "details": details or {},
+            "timestamp": time.time(),
+        }
+        self.db.set_system_status("is_running", "false")
+        self.db.set_system_status("kill_switch_last", json.dumps(payload, ensure_ascii=False))
+        self.update_daemon_status("kill_switch", kill_switch=payload)
+        self.log_message(f"[KILL_SWITCH] Trading pausado | reason={reason} | details={details or {}}")
+        return True
+
+    def _position_balance_mismatches(self, open_positions):
+        mismatches = []
+        if self.exchange.modo_simulacion:
+            return mismatches
+        for symbol, pos in (open_positions or {}).items():
+            expected = self._safe_float(pos.get("amount"), 0.0)
+            if expected <= 0:
+                continue
+            try:
+                actual = self._safe_float(self.exchange.get_coin_balance(symbol), 0.0)
+            except Exception as exc:
+                mismatches.append({"symbol": symbol, "reason": f"BALANCE_ERROR:{exc}"})
+                continue
+            tolerance = max(1e-8, expected * 0.001)
+            if actual + tolerance < expected:
+                mismatches.append({
+                    "symbol": symbol,
+                    "db_amount": round(expected, 10),
+                    "exchange_amount": round(actual, 10),
+                })
+        return mismatches
+
+    def evaluate_operational_kill_switches(self, total_value, open_positions):
+        if not getattr(config, "KILL_SWITCH_ENABLED", True):
+            return {"ok": True, "reasons": []}
+        reasons = []
+        details = {}
+
+        if total_value <= 0:
+            reasons.append("NO_EQUITY")
+
+        if getattr(config, "AUTO_PAUSE_ON_DB_EXCHANGE_MISMATCH", True):
+            mismatches = self._position_balance_mismatches(open_positions)
+            if mismatches:
+                reasons.append("DB_EXCHANGE_MISMATCH")
+                details["mismatches"] = mismatches[:8]
+
+        try:
+            ai_day = self.db.get_ai_usage_summary(time.time() - 86400)
+            max_requests = int(getattr(config, "AI_MAX_REQUESTS_PER_DAY", 0) or 0)
+            max_tokens = int(getattr(config, "AI_MAX_EST_TOKENS_PER_DAY", 0) or 0)
+            ai_exhausted = (
+                (max_requests > 0 and ai_day.get("requests", 0) >= max_requests)
+                or (max_tokens > 0 and ai_day.get("estimated_tokens", 0) >= max_tokens)
+            )
+            if ai_exhausted and not getattr(config, "AI_RULES_ONLY_ON_BUDGET_EXHAUSTED", True):
+                reasons.append("AI_BUDGET_EXHAUSTED")
+                details["ai_usage_24h"] = ai_day
+        except Exception:
+            pass
+
+        if reasons:
+            self._trigger_kill_switch(";".join(reasons), details)
+            return {"ok": False, "reasons": reasons, "details": details}
+        return {"ok": True, "reasons": []}
 
     def _clamp(self, value, low, high):
         return max(low, min(high, value))
@@ -910,6 +988,7 @@ class BotDaemon:
 
                 if str(is_running).lower() == 'true':
                     self.bot_iteration()
+                    self.db.set_system_status("daemon_consecutive_errors", 0)
                     cycle_sleep = max(15, int(getattr(config, 'DAEMON_CYCLE_SECONDS', 60)))
                     self.update_daemon_status("sleeping", next_cycle_in=cycle_sleep)
                 else:
@@ -924,7 +1003,17 @@ class BotDaemon:
                 cycle_sleep = max(15, int(getattr(config, 'DAEMON_CYCLE_SECONDS', 60)))
                 time.sleep(cycle_sleep)
             except Exception as e:
-                self.update_daemon_status("error", error=str(e))
+                consecutive_errors = int(self._status_float("daemon_consecutive_errors", 0)) + 1
+                self.db.set_system_status("daemon_consecutive_errors", consecutive_errors)
+                if (
+                    getattr(config, "KILL_SWITCH_ENABLED", True)
+                    and consecutive_errors >= int(getattr(config, "MAX_EXCHANGE_ERRORS_PER_CYCLE", 3) or 3)
+                ):
+                    self._trigger_kill_switch(
+                        "DAEMON_ERRORS",
+                        {"consecutive_errors": consecutive_errors, "last_error": str(e)},
+                    )
+                self.update_daemon_status("error", error=str(e), consecutive_errors=consecutive_errors)
                 self.log_message(f"Error crítico en daemon: {e}")
                 time.sleep(30)
 
@@ -947,6 +1036,17 @@ class BotDaemon:
         
         # Para el cálculo de cuánto podemos comprar, necesitamos el cash (USDT) disponible
         open_positions = self.db.get_open_positions()
+        operational_guard = self.evaluate_operational_kill_switches(total_value, open_positions)
+        if not operational_guard.get("ok", True):
+            self.update_daemon_status(
+                "cycle_blocked",
+                scanned=scanned,
+                actions=action_counts,
+                skipped={"KILL_SWITCH": 1},
+                open_positions=len(open_positions),
+                operational_guard=operational_guard,
+            )
+            return
         adopted_symbols, adoption_skipped = self.adopt_sellable_positions(open_positions)
         for reason, count in adoption_skipped.items():
             skipped[reason] = skipped.get(reason, 0) + count
@@ -1559,6 +1659,7 @@ class BotDaemon:
             "execution_mode": getattr(config, "TRADING_EXECUTION_MODE", "auto"),
             "decision_mode": getattr(config, "DECISION_MODE", "hybrid"),
             "risk_guards": cycle_risk,
+            "operational_guard": operational_guard,
             "dust_watch": dust_watch_summary,
             "top_buy_candidates": [
                 {
