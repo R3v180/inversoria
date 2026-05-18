@@ -108,6 +108,8 @@ class ExchangeHelper:
     def _sync_exchange_clock(self, exchange):
         if not exchange:
             return
+        if getattr(exchange, "id", "") == "cryptocom":
+            return
         try:
             if hasattr(exchange, "load_time_difference"):
                 exchange.load_time_difference()
