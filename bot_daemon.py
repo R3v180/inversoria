@@ -234,8 +234,38 @@ class BotDaemon:
                 reason=(order_result or {}).get("reason", ""),
                 raw=order_result,
             )
+            if getattr(config, "AUDIT_EVENTS_ENABLED", True):
+                self.db.add_audit_event(
+                    "order_event",
+                    f"{symbol} {side} {((order_result or {}).get('status') or 'unknown')}",
+                    symbol=symbol,
+                    severity="info" if (order_result or {}).get("status") in ("closed", "simulated") else "warning",
+                    payload={
+                        "local_order_id": local_order_id,
+                        "side": side,
+                        "requested_amount": requested_amount,
+                        "requested_price": requested_price,
+                        "order": order_result,
+                    },
+                )
         except Exception as exc:
             self.log_message(f"[WARN] order audit failed | {symbol} {side} | reason={self._short_reason(exc, 100)}")
+
+    def _audit_event(self, event_type, message='', symbol='', severity='info', payload=None):
+        if not getattr(config, "AUDIT_EVENTS_ENABLED", True):
+            return None
+        try:
+            return self.db.add_audit_event(event_type, message, symbol=symbol, severity=severity, payload=payload or {})
+        except Exception:
+            return None
+
+    def _cycle_snapshot(self, cycle_id, phase, payload=None):
+        if not getattr(config, "AUDIT_EVENTS_ENABLED", True):
+            return None
+        try:
+            return self.db.add_cycle_replay_snapshot(cycle_id, phase, payload or {})
+        except Exception:
+            return None
 
     def _position_balance_mismatches(self, open_positions):
         mismatches = []
@@ -1071,7 +1101,9 @@ class BotDaemon:
 
     def bot_iteration(self):
         cycle_start = time.time()
-        self.update_daemon_status("scanning", cycle_started_at=cycle_start)
+        cycle_id = f"{int(cycle_start * 1000)}-{uuid.uuid4().hex[:8]}"
+        self.update_daemon_status("scanning", cycle_started_at=cycle_start, cycle_id=cycle_id)
+        self._audit_event("cycle_start", "Daemon cycle started", payload={"cycle_id": cycle_id})
         action_counts = {"BUY": 0, "SELL": 0, "HOLD": 0}
         providers = {}
         hold_reasons = {}
@@ -1088,10 +1120,29 @@ class BotDaemon:
         
         # Para el cálculo de cuánto podemos comprar, necesitamos el cash (USDT) disponible
         open_positions = self.db.get_open_positions()
+        self._cycle_snapshot(
+            cycle_id,
+            "start",
+            {
+                "equity": total_value,
+                "open_positions": list(open_positions.keys()),
+                "active_symbols": list(self.active_symbols or []),
+                "execution_mode": getattr(config, "TRADING_EXECUTION_MODE", "auto"),
+                "decision_mode": getattr(config, "DECISION_MODE", "hybrid"),
+            },
+        )
         operational_guard = self.evaluate_operational_kill_switches(total_value, open_positions)
         if not operational_guard.get("ok", True):
+            self._cycle_snapshot(cycle_id, "blocked", {"operational_guard": operational_guard})
+            self._audit_event(
+                "cycle_blocked",
+                "Cycle blocked by operational guard",
+                severity="warning",
+                payload={"cycle_id": cycle_id, "operational_guard": operational_guard},
+            )
             self.update_daemon_status(
                 "cycle_blocked",
+                cycle_id=cycle_id,
                 scanned=scanned,
                 actions=action_counts,
                 skipped={"KILL_SWITCH": 1},
@@ -1891,6 +1942,7 @@ class BotDaemon:
                 break
 
         diag = {
+            "cycle_id": cycle_id,
             "cycle_duration_s": round(time.time() - cycle_start, 2),
             "scanned": scanned,
             "actions": action_counts,
@@ -1917,6 +1969,12 @@ class BotDaemon:
             "dynamic_max": getattr(self, "dynamic_max", None),
         }
         self.update_daemon_status("cycle_done", **diag)
+        self._cycle_snapshot(cycle_id, "done", diag)
+        self._audit_event(
+            "cycle_done",
+            f"Cycle done: scanned={scanned}, candidates={len(buy_candidates)}",
+            payload=diag,
+        )
         top_summary = ", ".join(
             f"{c['symbol']} {c['score']:.3f}"
             for c in buy_candidates[:3]

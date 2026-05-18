@@ -280,6 +280,36 @@ class DatabaseManager:
                 cursor.execute(
                     f'CREATE INDEX IF NOT EXISTS {idx_name} ON exchange_order_events ({idx_cols})'
                 )
+
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS audit_events (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    timestamp REAL,
+                    event_type TEXT,
+                    symbol TEXT,
+                    severity TEXT,
+                    message TEXT,
+                    payload_json TEXT
+                )
+            ''')
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS cycle_replay_snapshots (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    cycle_id TEXT,
+                    timestamp REAL,
+                    phase TEXT,
+                    payload_json TEXT
+                )
+            ''')
+            for idx_name, idx_cols in {
+                'idx_audit_events_type_ts': 'event_type, timestamp',
+                'idx_audit_events_symbol_ts': 'symbol, timestamp',
+                'idx_cycle_replay_cycle_phase': 'cycle_id, phase',
+            }.items():
+                table = 'audit_events' if idx_name.startswith('idx_audit') else 'cycle_replay_snapshots'
+                cursor.execute(
+                    f'CREATE INDEX IF NOT EXISTS {idx_name} ON {table} ({idx_cols})'
+                )
             
             conn.commit()
 
@@ -635,6 +665,46 @@ class DatabaseManager:
                 ),
             )
             conn.commit()
+
+    def add_audit_event(self, event_type, message='', symbol='', severity='info', payload=None, timestamp=None):
+        ts = time.time() if timestamp is None else float(timestamp)
+        with self._get_connection() as conn:
+            cursor = conn.execute(
+                '''
+                INSERT INTO audit_events
+                    (timestamp, event_type, symbol, severity, message, payload_json)
+                VALUES (?, ?, ?, ?, ?, ?)
+                ''',
+                (
+                    ts,
+                    str(event_type or ''),
+                    str(symbol or ''),
+                    str(severity or 'info'),
+                    str(message or ''),
+                    self._json_or_none(payload or {}),
+                ),
+            )
+            conn.commit()
+            return cursor.lastrowid
+
+    def add_cycle_replay_snapshot(self, cycle_id, phase, payload=None, timestamp=None):
+        ts = time.time() if timestamp is None else float(timestamp)
+        with self._get_connection() as conn:
+            cursor = conn.execute(
+                '''
+                INSERT INTO cycle_replay_snapshots
+                    (cycle_id, timestamp, phase, payload_json)
+                VALUES (?, ?, ?, ?)
+                ''',
+                (
+                    str(cycle_id or ''),
+                    ts,
+                    str(phase or ''),
+                    self._json_or_none(payload or {}),
+                ),
+            )
+            conn.commit()
+            return cursor.lastrowid
 
     def update_highest_price(self, symbol, highest_price):
         with self._get_connection() as conn:
