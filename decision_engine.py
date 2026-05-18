@@ -2,12 +2,14 @@ import json
 import time
 import re
 import ast
+import hashlib
 from sentiment_engine import SentimentEngine
 import pandas as pd
 import config # Importar el módulo completo para hot-reload
 from market_context import MarketContext
 from multi_timeframe import MultiTimeframeAnalyzer
 from backtest_engine import BacktestEngine
+from database_manager import DatabaseManager
 from i18n import _
 
 
@@ -154,6 +156,7 @@ class DecisionEngine:
         self.current_lang = lang
         self.last_analysis = {}
         self.decision_cache = {}
+        self.db = DatabaseManager()
 
         # Nuevas capas de inteligencia
         self.market_context = MarketContext(lang=self.current_lang)
@@ -167,6 +170,67 @@ class DecisionEngine:
         self._adaptive_cache = None
         self._adaptive_cache_ts = 0
         self.ADAPTIVE_CACHE_TTL = 900  # 15 minutos
+
+    def _decision_cache_signature(self):
+        keys = {
+            'decision_mode': getattr(config, 'DECISION_MODE', 'hybrid'),
+            'min_score': getattr(config, 'MIN_AUTO_DECISION_SCORE', 0.62),
+            'min_conf': getattr(config, 'MIN_CONFIDENCE_ENTRY', 0.52),
+            'aggressive': getattr(config, 'AGGRESSIVE_TRADING_PROFILE', False),
+            'macro_veto': getattr(config, 'MACRO_VETO_ALTS_IN_RISK_OFF', True),
+            'mtf_counter': getattr(config, 'MTF_ALLOW_COUNTER_TREND', False),
+            'prompt': getattr(config, 'PROMPT_DECISION', ''),
+            'lang': self.current_lang,
+        }
+        raw = json.dumps(keys, sort_keys=True, ensure_ascii=False)
+        return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:16]
+
+    def _decision_cache_key(self, symbol):
+        safe_symbol = str(symbol or '').replace('/', '_').replace(':', '_')
+        return f"ai_decision_cache_{safe_symbol}"
+
+    def _load_persistent_decision(self, symbol, now):
+        raw = self.db.get_system_status(self._decision_cache_key(symbol))
+        if not raw:
+            return None
+        try:
+            payload = json.loads(raw)
+        except Exception:
+            return None
+        if payload.get('signature') != self._decision_cache_signature():
+            return None
+        ts = _safe_float(payload.get('timestamp'), 0.0)
+        if now - ts >= getattr(config, 'AI_ANALYSIS_INTERVAL', 1200):
+            return None
+        decision = payload.get('decision')
+        if not isinstance(decision, dict):
+            return None
+        decision = dict(decision)
+        decision['cache_hit'] = 'persistent'
+        return decision
+
+    def _store_persistent_decision(self, symbol, decision, now):
+        if not decision:
+            return
+        payload = {
+            'timestamp': now,
+            'signature': self._decision_cache_signature(),
+            'decision': decision,
+        }
+        try:
+            self.db.set_system_status(
+                self._decision_cache_key(symbol),
+                json.dumps(payload, ensure_ascii=False),
+            )
+        except Exception:
+            pass
+
+    def _remember_decision(self, symbol, decision, now, persist=True):
+        self.last_analysis[symbol] = now
+        self.decision_cache[symbol] = decision
+        if persist:
+            self._store_persistent_decision(symbol, decision, now)
+        return decision
 
     def _dynamic_score_weights(self, indicators, macro_regime):
         regime = str(indicators.get('trend_regime') or indicators.get('trend') or '').upper()
@@ -436,6 +500,11 @@ class DecisionEngine:
         # Respetar intervalo de análisis por símbolo
         if symbol in self.last_analysis and now - self.last_analysis[symbol] < config.AI_ANALYSIS_INTERVAL:
             return self.decision_cache.get(symbol)
+        persisted = self._load_persistent_decision(symbol, now)
+        if persisted:
+            self.last_analysis[symbol] = now
+            self.decision_cache[symbol] = persisted
+            return persisted
 
         # ─── CAPA 1: Contexto Macro (caché 6h) ───
         macro_text = ""
@@ -468,9 +537,7 @@ class DecisionEngine:
                 "reasoning": f"[{ _('MACRO_VETO_LABEL', lang=self.current_lang) }] {no_trade_reason}",
                 "provider": "MacroFilter"
             }
-            self.last_analysis[symbol] = now
-            self.decision_cache[symbol] = hold_decision
-            return hold_decision
+            return self._remember_decision(symbol, hold_decision, now, persist=False)
 
         # ─── CAPA 2: Multi-Timeframe ───
         mtf_text = ""
@@ -503,9 +570,7 @@ class DecisionEngine:
                 "reasoning": "[MTF VETO] Confluencia multi-timeframe bajista: 1D y 4H en tendencia descendente",
                 "provider": "MTFFilter"
             }
-            self.last_analysis[symbol] = now
-            self.decision_cache[symbol] = hold_decision
-            return hold_decision
+            return self._remember_decision(symbol, hold_decision, now, persist=False)
         if not allow_long and allow_counter:
             confluence_score = min(confluence_score, 0.38)
             mtf_text = (mtf_text or "") + "\n[MTF] Counter-trend permitido (perfil agresivo); confluencia reducida."
@@ -563,9 +628,7 @@ class DecisionEngine:
                 "reasoning": veto_reason,
                 "provider": "BacktestVeto"
             }
-            self.last_analysis[symbol] = now
-            self.decision_cache[symbol] = hold_decision
-            return hold_decision
+            return self._remember_decision(symbol, hold_decision, now, persist=False)
 
         decision_score, score_components = self.build_decision_score(
             indicators=indicators,
@@ -585,9 +648,7 @@ class DecisionEngine:
                 mtf_recommended_strategy,
                 macro_regime,
             )
-            self.last_analysis[symbol] = now
-            self.decision_cache[symbol] = rules_decision
-            return rules_decision
+            return self._remember_decision(symbol, rules_decision, now, persist=False)
 
         # ─── CONSTRUIR PROMPT ENRIQUECIDO ───
         df = pd.DataFrame(ohlcv[-100:], columns=['ts', 'open', 'high', 'low', 'close', 'volume'])
@@ -722,9 +783,7 @@ Si la confluencia MTF es fuerte ({confluence_score:.0%}), puedes aumentar positi
                         ai_conf = _safe_float(result.get('confidence'), 0.0)
                         result['confidence'] = round(_clamp((ai_conf * 0.70) + (effective_score * 0.30)), 3)
 
-                self.last_analysis[symbol] = now
-                self.decision_cache[symbol] = result
-                return result
+                return self._remember_decision(symbol, result, now, persist=True)
             except Exception as e:
                 print(f"[DecisionEngine] Error parseando respuesta IA para {symbol}: {e}")
 

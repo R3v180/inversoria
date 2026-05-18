@@ -1063,6 +1063,7 @@ class BotDaemon:
                 'decision_mode': decision.get('decision_mode', getattr(config, 'DECISION_MODE', 'hybrid')),
                 'execution_mode': getattr(config, 'TRADING_EXECUTION_MODE', 'auto'),
                 'provider': provider,
+                'cache_hit': decision.get('cache_hit', ''),
             })
             self.db.set_system_status('last_ia_decision', decision_json)
             self.db.set_system_status(f'decision_{symbol}', decision_json)
