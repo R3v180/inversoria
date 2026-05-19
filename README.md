@@ -22,8 +22,9 @@ Maintained by Olivier Hottelet, trading as OHCodex: https://ohcodex.com
 - **Simulation-first workflow**: isolated paper-trading profiles let you test different risk settings without contaminating real data.
 - **Auditable decisions**: every signal, block, execution, size, risk reason and realized outcome can be written to `decision_journal`.
 - **Risk controls before execution**: portfolio, symbol, alt and bucket exposure guards can cap size or block unsafe buys.
+- **Autopilot hardening**: operational kill-switches, AI budgets, order reconciliation, ATR exits, backtest reliability and advanced-edge gates are configurable instead of hardcoded.
 - **Real balances are protected**: existing sellable balances can be adopted into active management even if they are outside the new-buy watchlist.
-- **Local-first architecture**: Streamlit UI, daemon and SQLite run locally; API keys stay on your machine.
+- **Local-first architecture**: Streamlit UI, daemon and SQLite run locally; API keys stay in `.env`/environment variables instead of `user_settings.json`.
 
 ### Quick Start
 
@@ -85,8 +86,9 @@ InversorIA.exe
 - **Primero simulación**: los perfiles aislados permiten probar configuraciones de riesgo sin contaminar datos reales.
 - **Decisiones auditables**: cada señal, bloqueo, ejecución, tamaño, motivo de riesgo y resultado puede quedar en `decision_journal`.
 - **Riesgo antes que ejecución**: los guardrails de cartera, símbolo, alts y buckets pueden recortar tamaño o bloquear compras inseguras.
+- **Autopilot endurecido**: kill-switches operativos, presupuesto IA, reconciliación de órdenes, salidas ATR, fiabilidad de backtest y gates de edge avanzado son configurables.
 - **Protección de saldos existentes**: los saldos vendibles pueden adoptarse para gestión activa aunque estén fuera de la watchlist de nuevas compras.
-- **Arquitectura local-first**: UI Streamlit, daemon y SQLite corren en local; las claves API se quedan en tu máquina.
+- **Arquitectura local-first**: UI Streamlit, daemon y SQLite corren en local; las claves API se leen de `.env`/variables de entorno y no de `user_settings.json`.
 
 ### Inicio Rápido
 
@@ -231,6 +233,7 @@ Available today:
 - Historical backtesting engine with SQLite priors.
 - Incremental global macro refresh with Alpha Vantage, persistent cache and provider cooldowns to avoid wasting free-tier requests after restarts or rate limits.
 - Daemon telemetry in the dashboard, with structured `[SKIP]`, `[BLOCK]`, `[ROTATION]` and `[CYCLE]` logs for executions, skipped actions and blocked BUY/SELL/rotation decisions.
+- Autopilot audit hardening stack: persistent dust watch, AI usage budgets, operational kill-switches, local order audit events, cycle replay snapshots, order state reconciliation, ATR-based protective exits, richer indicators, MTF divergence guards, backtest reliability scoring, optional webhook alerts, AI schema guards and gated advanced-edge behavior.
 
 ---
 
@@ -769,12 +772,17 @@ Daemon console logs are structured for quick triage:
 | `TRADING_EXECUTION_MODE`        | `auto` executes, `consultive` only recommends       | `auto`         |
 | `DECISION_MODE`                 | `ai_aggressive`, `hybrid`, or `rules`               | `hybrid`       |
 | `MIN_AUTO_DECISION_SCORE`       | Minimum deterministic score for auto-buys           | `0.62`         |
-| `RISK_PER_TRADE`                | % of free USDT used per buy                        | `0.10`         |
+| `RISK_PER_TRADE`                | % of free USDT used per buy                        | `0.02`         |
 | `MAX_OPEN_POSITIONS`            | Manual max slots                                   | `5`            |
 | `MANUAL_MAX_POSITIONS_PRIORITY` | Use manual max instead of dynamic scaling          | `False`        |
-| `MIN_PROFIT_NET`                | Normal profit target                               | `1.0`          |
-| `STOP_LOSS_PERCENT`             | Base stop-loss                                     | `3.0`          |
+| `MIN_PROFIT_NET`                | Normal profit target                               | `3.0`          |
+| `STOP_LOSS_PERCENT`             | Base fallback stop-loss                            | `2.0`          |
+| `ATR_STOP_ENABLED`              | Prefer ATR stop when entry ATR is available         | `True`         |
+| `STOP_LOSS_ATR_MULT`            | ATR multiple for initial protective stop            | `1.5`          |
+| `ATR_TRAILING_ENABLED`          | Use ATR-based trailing stop                         | `True`         |
+| `BREAK_EVEN_ACTIVATION_PCT`     | Profit required before break-even stop              | `1.5`          |
 | `MAX_DAILY_LOSS_PCT`            | Blocks new auto-buys after this 24h equity loss     | `5.0`          |
+| `MAX_PORTFOLIO_DRAWDOWN_PCT`    | Pauses trading after peak-to-equity drawdown         | `15.0`         |
 | `MAX_PORTFOLIO_EXPOSURE_PCT`    | Blocks new auto-buys above this exposure            | `85.0`         |
 | `VOLATILITY_SIZING_ENABLED`     | Use ATR stop distance for position sizing            | `True`         |
 | `MAX_POSITION_RISK_PCT`         | Max equity risk estimated per position               | `1.0`          |
@@ -793,6 +801,10 @@ Daemon console logs are structured for quick triage:
 | `ROTATION_CONFIDENCE_GAP`       | New signal must exceed old confidence by this much | `0.20`         |
 | `ROTATION_MIN_NEW_CONFIDENCE`   | Minimum confidence for new rotation target         | `0.85`         |
 | `AI_ANALYSIS_INTERVAL`          | Deep AI interval per symbol                        | `1200` seconds |
+| `AI_MAX_REQUESTS_PER_CYCLE`     | AI request budget per daemon cycle                  | `2`            |
+| `AI_MAX_REQUESTS_PER_DAY`       | AI request budget per 24h                           | `80`           |
+| `AI_PROVIDER_TIMEOUT_SECONDS`   | Timeout for external AI provider calls              | `15`           |
+| `ADVANCED_EDGE_ENABLED`         | Global gate for add-to-winner/future advanced edge   | `False`        |
 | `TRADING_FEE_RATE`              | Estimated fee per side                             | `0.001`        |
 | `BUY_SLIPPAGE_LIMIT`            | Max buy slippage                                   | `0.005`        |
 | `SELL_SLIPPAGE_LIMIT`           | Max automatic sell slippage                        | `0.010`        |
@@ -967,7 +979,7 @@ Recommended workflow:
 | File                             | Description                           | Git     |
 | -------------------------------- | ------------------------------------- | ------- |
 | `.env`                           | Real secrets                          | Ignored |
-| `user_settings.json`             | UI settings and possibly keys         | Ignored |
+| `user_settings.json`             | Local non-secret UI/settings overrides | Ignored |
 | `simulation_profiles.json`       | Local simulation profile registry     | Ignored |
 | `simulations/`                   | Isolated simulation DB/account folders | Ignored |
 | `iversoria.db`                   | Local SQLite DB                       | Ignored |
@@ -1000,6 +1012,11 @@ Main tables:
 | `backtest_runs`       | Backtest summaries.                                      |
 | `backtest_conditions` | Historical priors by condition.                          |
 | `decision_journal`    | Auditable decisions, sizing, risk blocks and outcomes.   |
+| `exchange_balance_watch` | Persistent dust/inventory watch state.                |
+| `exchange_order_events` | Local order state audit and reconciliation trail.       |
+| `ai_usage_events`    | AI request/token budget accounting.                       |
+| `audit_events`       | Immutable operational audit events.                       |
+| `cycle_replay_snapshots` | Cycle snapshots for later replay/debugging.          |
 
 
 ---
@@ -1138,14 +1155,14 @@ Filters:
 Possible future improvements:
 
 1. Configurable auto-sell for recoverable dust.
-2. Slippage settings in the UI.
-3. Order audit log.
+2. Reconcile stale open exchange orders at daemon startup.
+3. Add idempotency/client-order-id support if Crypto.com exposes it reliably through CCXT.
 4. Macro worker thread/process.
 5. Web search for the assistant with a controlled API.
 6. Configurable local AI provider through Ollama or another OpenAI-compatible local endpoint ([issue #12](https://github.com/R3v180/inversoria/issues/12)).
-7. Bot-quality metrics by provider, regime and strategy.
-8. Backtest improvements: fees, slippage, walk-forward, out-of-sample.
-9. Next risk controls: max drawdown kill-switch, correlation and sector exposure caps.
+7. Backtest improvements still pending: walk-forward, out-of-sample, confidence intervals and Monte Carlo.
+8. Correlation-adjusted portfolio scoring and market breadth once enough live data exists.
+9. Exchange-native stops/OCO or limit-order workflows if Crypto.com support is reliable.
 
 ---
 
@@ -1230,6 +1247,7 @@ Modos disponibles:
 - Backtesting histórico guardado en SQLite.
 - Macro global incremental con Alpha Vantage, caché persistente y cooldowns de proveedor para no gastar llamadas del free tier tras reinicios o rate limits.
 - Diagnóstico del daemon en UI, con logs estructurados `[SKIP]`, `[BLOCK]`, `[ROTATION]` y `[CYCLE]` para ejecuciones, skips y bloqueos de BUY/SELL/rotación.
+- Stack de hardening autopilot: vigilancia persistente de dust, presupuestos IA, kill-switches operativos, auditoría local de órdenes, snapshots de ciclo, reconciliación de estados de orden, salidas protectoras ATR, indicadores ampliados, divergencias MTF, fiabilidad de backtest, alertas webhook opcionales, validación de schema IA y gates para edge avanzado.
 
 ---
 
@@ -1546,12 +1564,17 @@ Los logs de consola del daemon usan formato compacto:
 | `TRADING_EXECUTION_MODE`        | `auto` ejecuta, `consultive` recomienda | `auto` |
 | `DECISION_MODE`                 | `ai_aggressive`, `hybrid` o `rules` | `hybrid` |
 | `MIN_AUTO_DECISION_SCORE`       | Score mínimo para auto-compra | `0.62` |
-| `RISK_PER_TRADE`                | % de USDT libre por compra | `0.10`  |
+| `RISK_PER_TRADE`                | % de USDT libre por compra | `0.02`  |
 | `MAX_OPEN_POSITIONS`            | Máximo manual              | `5`     |
 | `MANUAL_MAX_POSITIONS_PRIORITY` | Prioriza máximo manual     | `False` |
-| `MIN_PROFIT_NET`                | Profit objetivo            | `1.0`   |
-| `STOP_LOSS_PERCENT`             | Stop loss base             | `3.0`   |
+| `MIN_PROFIT_NET`                | Profit objetivo            | `3.0`   |
+| `STOP_LOSS_PERCENT`             | Stop loss base de fallback | `2.0`   |
+| `ATR_STOP_ENABLED`              | Prioriza stop ATR si existe ATR de entrada | `True` |
+| `STOP_LOSS_ATR_MULT`            | Multiplicador ATR para stop inicial | `1.5` |
+| `ATR_TRAILING_ENABLED`          | Trailing stop basado en ATR | `True` |
+| `BREAK_EVEN_ACTIVATION_PCT`     | Profit necesario para break-even | `1.5` |
 | `MAX_DAILY_LOSS_PCT`            | Bloquea compras tras esta pérdida 24h | `5.0` |
+| `MAX_PORTFOLIO_DRAWDOWN_PCT`    | Pausa trading por drawdown acumulado | `15.0` |
 | `MAX_PORTFOLIO_EXPOSURE_PCT`    | Bloquea compras sobre esta exposición | `85.0` |
 | `VOLATILITY_SIZING_ENABLED`     | Usa ATR para calcular tamaño de posición | `True` |
 | `MAX_POSITION_RISK_PCT`         | Riesgo estimado máximo por posición | `1.0` |
@@ -1570,6 +1593,10 @@ Los logs de consola del daemon usan formato compacto:
 | `ROTATION_CONFIDENCE_GAP`       | Gap de confianza           | `0.20`  |
 | `ROTATION_MIN_NEW_CONFIDENCE`   | Confianza mínima nueva     | `0.85`  |
 | `AI_ANALYSIS_INTERVAL`          | Frecuencia IA              | `1200`  |
+| `AI_MAX_REQUESTS_PER_CYCLE`     | Presupuesto IA por ciclo   | `2`     |
+| `AI_MAX_REQUESTS_PER_DAY`       | Presupuesto IA por 24h     | `80`    |
+| `AI_PROVIDER_TIMEOUT_SECONDS`   | Timeout proveedores IA     | `15`    |
+| `ADVANCED_EDGE_ENABLED`         | Gate global para edge avanzado | `False` |
 | `TRADING_FEE_RATE`              | Fee estimada               | `0.001` |
 | `BUY_SLIPPAGE_LIMIT`            | Slippage compra            | `0.005` |
 | `SELL_SLIPPAGE_LIMIT`           | Slippage venta automática  | `0.010` |
@@ -1697,7 +1724,7 @@ python bot_daemon.py
 | Archivo                          | Descripción                                  | Git        |
 | -------------------------------- | -------------------------------------------- | ---------- |
 | `.env`                           | Secretos                                     | Ignorado   |
-| `user_settings.json`             | Config UI                                    | Ignorado   |
+| `user_settings.json`             | Overrides locales no secretos de configuración | Ignorado |
 | `simulation_profiles.json`       | Registro local de perfiles de simulación     | Ignorado   |
 | `simulations/`                   | Carpetas aisladas de DB/cuenta por simulación | Ignorado   |
 | `iversoria.db`                   | SQLite                                       | Ignorado   |
@@ -1727,6 +1754,11 @@ Tablas:
 - `backtest_runs`
 - `backtest_conditions`
 - `decision_journal`
+- `exchange_balance_watch`
+- `exchange_order_events`
+- `ai_usage_events`
+- `audit_events`
+- `cycle_replay_snapshots`
 
 ---
 
@@ -1816,15 +1848,15 @@ pip install pandas-ta
 
 ## Roadmap Sugerido
 
-1. Auto-venta configurable de retales.
-2. Slippage configurable desde UI.
-3. Auditoría de órdenes.
+1. Auto-venta configurable de retales recuperables.
+2. Reconciliar órdenes abiertas antiguas al arrancar el daemon.
+3. Añadir idempotencia/client-order-id si Crypto.com lo soporta de forma fiable vía CCXT.
 4. Macro worker dedicado.
 5. Búsqueda web controlada para asistente.
 6. Proveedor IA local configurable mediante Ollama u otro endpoint local compatible con OpenAI ([issue #12](https://github.com/R3v180/inversoria/issues/12)).
-7. Métricas por provider/régimen/estrategia.
-8. Backtest con slippage, fees reales y walk-forward.
-9. Próximos controles: kill-switch por drawdown, correlación y exposición por sector.
+7. Backtesting pendiente: walk-forward, out-of-sample, intervalos de confianza y Monte Carlo.
+8. Scoring de cartera ajustado por correlación y market breadth cuando haya datos suficientes.
+9. Stops/OCO nativos o flujos con órdenes limitadas si Crypto.com lo permite con fiabilidad.
 
 ---
 
