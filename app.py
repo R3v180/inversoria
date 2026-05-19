@@ -208,6 +208,7 @@ with st.sidebar:
         ("terminal", f"⚡ {_('NAV_TERMINAL')}"),
         ("assistant", f"💬 {_('NAV_ASSISTANT')}"),
         ("history", f"🧾 {_('NAV_HISTORY')}"),
+        ("webhooks", f"📡 {_('NAV_WEBHOOKS')}"),
         ("settings", f"⚙️ {_('NAV_SETTINGS')}"),
     ]
     nav_routes = [route for route, _ in nav_items]
@@ -363,6 +364,9 @@ elif selected_route == "assistant":
 elif selected_route == "history":
     from ui_history import render_history_page
     render_history_page()
+elif selected_route == "webhooks":
+    from ui_webhooks import render_webhooks_page
+    render_webhooks_page()
 elif selected_route == "settings":
     from ui_settings import render_settings
     render_settings()

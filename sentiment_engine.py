@@ -362,6 +362,23 @@ class SentimentEngine:
                 self._set_ai_cooldown('Groq', time.time() + 300, safe)
                 print(f"[HYBRID] Groq falló: {safe}")
 
+        if bool(getattr(config, "OLLAMA_ENABLED", False)):
+            try:
+                from decision_runtime.ollama_provider import call_ollama
+                text, provider = call_ollama(prompt, system_instruction)
+                if text:
+                    self.db.record_ai_usage(
+                        provider=provider or "Ollama",
+                        feature=feature,
+                        prompt_hash=prompt_hash,
+                        estimated_input_tokens=input_tokens,
+                        estimated_output_tokens=self._estimate_tokens(text),
+                        success=True,
+                    )
+                    return text, provider or "Ollama"
+            except Exception as e:
+                print(f"[HYBRID] Ollama falló: {self._safe_error_message(e)}")
+
         return None, None
 
     def analyze_sentiment(self, symbol, titles, market_stats=None):

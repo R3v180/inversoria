@@ -448,6 +448,118 @@ TRANSLATIONS = {
     'FILTER_SIDEWAYS': {'es': 'Mercado lateral', 'en': 'Sideways market'},
     'FILTER_SIN_DATOS': {'es': 'Sin datos técnicos suficientes', 'en': 'Insufficient technical data'},
     'FILTER_POS_LIMIT': {'es': 'Límite de posiciones alcanzado', 'en': 'Position limit reached'},
+
+    # --- UI cache / refresh ---
+    'UI_AUTO_REFRESH_TAB': {
+        'es': 'Auto-actualización cada {0} segundos mientras permaneces en esta pestaña.',
+        'en': 'Auto-refresh every {0} seconds while you stay on this tab.',
+    },
+    'UI_CACHE_STALE': {
+        'es': 'Datos de hace {0}s (vista en caché). Actualización automática en ~{1}s.',
+        'en': 'Data from {0}s ago (cached view). Auto-refresh in ~{1}s.',
+    },
+    'UI_CACHE_FRESH': {
+        'es': 'Datos actualizados hace {0}s · auto-refresh cada {1}s.',
+        'en': 'Data updated {0}s ago · auto-refresh every {1}s.',
+    },
+    'UI_CACHE_UPDATING': {
+        'es': 'Actualizando datos en segundo plano…',
+        'en': 'Refreshing data in the background…',
+    },
+    'UI_TERMINAL_AUTO_REFRESH': {'es': 'Auto-Refresh', 'en': 'Auto-Refresh'},
+    'UI_TERMINAL_REFRESH_ON': {
+        'es': 'Auto-actualización cada {0} segundos (toggle activado).',
+        'en': 'Auto-refresh every {0} seconds (toggle on).',
+    },
+    'UI_TERMINAL_REFRESH_OFF': {
+        'es': 'Auto-actualización desactivada. Activa el toggle para refresco cada 30s.',
+        'en': 'Auto-refresh disabled. Enable the toggle for 30s refresh.',
+    },
+    'ASSISTANT_THINKING': {'es': 'Pensando e investigando…', 'en': 'Thinking and researching…'},
+
+    # --- History period / audit ---
+    'HISTORY_PERIOD_TITLE': {'es': 'Rendimiento por periodo', 'en': 'Performance by period'},
+    'HISTORY_PERIOD_CAPTION': {
+        'es': 'Calcula equity flotante desde una fecha/hora sin borrar ni alterar el histórico.',
+        'en': 'Computes floating equity from a date/time without deleting or altering history.',
+    },
+    'HISTORY_PERIOD_LABEL': {'es': 'Periodo', 'en': 'Period'},
+    'HISTORY_PERIOD_FROM_DATE': {'es': 'Desde fecha', 'en': 'From date'},
+    'HISTORY_PERIOD_FROM_TIME': {'es': 'Desde hora', 'en': 'From time'},
+    'HISTORY_EXCHANGE_NOT_READY': {
+        'es': 'Exchange no inicializado; el rendimiento por periodo se mostrará cuando la sesión esté lista.',
+        'en': 'Exchange not initialized; period performance will show when the session is ready.',
+    },
+    'HISTORY_JOURNAL_BT_TITLE': {
+        'es': 'Journal vs backtest (expectativa por símbolo)',
+        'en': 'Journal vs backtest (per-symbol expectancy)',
+    },
+    'HISTORY_JOURNAL_BT_CAPTION': {
+        'es': 'Compara win rate y expectativa del journal cerrado con priors del último backtest. Gap positivo = live mejor que backtest.',
+        'en': 'Compares closed journal win rate and expectancy with latest backtest priors. Positive gap = live outperforming backtest.',
+    },
+    'HISTORY_JOURNAL_BT_EMPTY': {
+        'es': 'Sin cierres en el journal o sin datos de backtest para comparar.',
+        'en': 'No closed journal rows or backtest data to compare.',
+    },
+    'HISTORY_AUDIT_TITLE': {
+        'es': 'Auditoría operativa y replay de ciclos',
+        'en': 'Operational audit and cycle replay',
+    },
+    'HISTORY_AUDIT_EVENTS': {'es': 'Eventos de auditoría', 'en': 'Audit events'},
+    'HISTORY_CYCLE_REPLAY': {'es': 'Replay de ciclos', 'en': 'Cycle replay'},
+    'HISTORY_AUDIT_EMPTY': {'es': 'Sin audit events para esos filtros.', 'en': 'No audit events for those filters.'},
+    'HISTORY_REPLAY_EMPTY': {'es': 'Sin snapshots de ciclo para esos filtros.', 'en': 'No cycle snapshots for those filters.'},
+    'HISTORY_AUDIT_LOAD_FAIL': {'es': 'No se pudieron cargar audit events: {0}', 'en': 'Could not load audit events: {0}'},
+    'HISTORY_REPLAY_LOAD_FAIL': {'es': 'No se pudieron cargar snapshots: {0}', 'en': 'Could not load snapshots: {0}'},
+
+    # --- Wallet ---
+    'WALLET_DUST_WATCH': {
+        'es': 'Vigilancia persistente de dust/inventario',
+        'en': 'Persistent dust/inventory watch',
+    },
+
+    # --- Dashboard captions ---
+    'DASH_AUTO_REFRESH_NOTE': {
+        'es': 'Para analizar rendimiento desde hoy, última hora o una fecha concreta usa Historial y Analítica.',
+        'en': 'For performance from today, last hour, or a custom date use History & Analytics.',
+    },
+    'DASH_EQUITY_BREAKDOWN': {
+        'es': 'Desglose equity: disponible ${0:.2f} + posiciones bot ${1:.2f} + otros saldos/dust ${2:.2f}. PnL calculado contra baseline {3}: ${4:.2f}.',
+        'en': 'Equity breakdown: available ${0:.2f} + bot positions ${1:.2f} + other balances/dust ${2:.2f}. PnL vs baseline {3}: ${4:.2f}.',
+    },
+    'BASELINE_REAL_START': {'es': 'inicio real', 'en': 'real start'},
+    'BASELINE_INITIAL': {'es': 'capital inicial', 'en': 'initial capital'},
+    'NAV_WEBHOOKS': {'es': 'Señales TV', 'en': 'TV signals'},
+    'WEBHOOK_PAGE_TITLE': {'es': 'Cola de señales externas', 'en': 'External signal queue'},
+    'WEBHOOK_PAGE_CAPTION': {
+        'es': 'Webhook TradingView en puerto {0}. Aprueba señales antes de que el daemon las consuma.',
+        'en': 'TradingView webhook on port {0}. Approve signals before the daemon consumes them.',
+    },
+    'WEBHOOK_EMPTY': {'es': 'No hay señales pendientes.', 'en': 'No pending signals.'},
+    'WEBHOOK_APPROVE': {'es': 'Aprobar', 'en': 'Approve'},
+    'WEBHOOK_REJECT': {'es': 'Rechazar', 'en': 'Reject'},
+    'WEBHOOK_HISTORY': {'es': 'Historial reciente', 'en': 'Recent history'},
+    'HISTORY_CYCLE_REPLAY_VIZ': {'es': 'Replay visual de ciclos', 'en': 'Visual cycle replay'},
+    'SETTINGS_TAB_ADVANCED': {'es': 'Avanzado', 'en': 'Advanced'},
+    'SETTINGS_KEYS_SECURITY': {
+        'es': 'Por seguridad, las API keys se leen desde `.env`/variables de entorno y no se guardan en user_settings.json.',
+        'en': 'For security, API keys are read from `.env`/environment variables and are not stored in user_settings.json.',
+    },
+    'SETTINGS_GOV_TITLE': {'es': 'Gobierno operativo', 'en': 'Operational governance'},
+    'SETTINGS_GOV_CAPTION': {
+        'es': 'Parámetros de dust, órdenes, kill-switches, IA, webhooks y edge avanzado.',
+        'en': 'Dust, orders, kill-switches, AI, webhooks and advanced edge parameters.',
+    },
+    'SETTINGS_SECTION_CYCLE': {'es': 'Ciclo y radar', 'en': 'Cycle and radar'},
+    'SETTINGS_SECTION_DUST': {'es': 'Dust e inventario', 'en': 'Dust and inventory'},
+    'SETTINGS_SECTION_ORDERS': {'es': 'Órdenes y reconciliación', 'en': 'Orders and reconciliation'},
+    'SETTINGS_SECTION_KILL': {'es': 'Kill-switches', 'en': 'Kill-switches'},
+    'SETTINGS_SECTION_MACRO': {'es': 'Macro y backtest', 'en': 'Macro and backtest'},
+    'SETTINGS_SECTION_AI': {'es': 'Presupuesto IA', 'en': 'AI budget'},
+    'SETTINGS_SECTION_POSITION': {'es': 'Gestión avanzada de posiciones', 'en': 'Advanced position management'},
+    'SETTINGS_SECTION_OBS': {'es': 'Observabilidad y alertas', 'en': 'Observability and alerts'},
+    'SETTINGS_SECTION_EDGE': {'es': 'Edge GH-P2/P3', 'en': 'GH-P2/P3 edge'},
 }
 
 def _(key, lang=None):

@@ -12,6 +12,7 @@ from backtest_engine import BacktestEngine
 from database_manager import DatabaseManager
 from i18n import _
 from decision_runtime.ai_fallback import build_invalid_ai_fallback_decision as build_invalid_ai_fallback_payload
+from bot_runtime.rule_significance import strategy_significance_adjustment
 
 
 def _safe_float(value, default=0.0):
@@ -172,6 +173,15 @@ def _repair_common_json_issues(text):
 
 
 class DecisionEngine:
+    @staticmethod
+    def _hybrid_confidence_weights(macro_regime):
+        regime = str(macro_regime or 'NEUTRAL').upper()
+        if regime in ('CAUTION', 'RISK_OFF'):
+            return 0.40, 0.60
+        if regime in ('RISK_ON', 'ALTSEASON'):
+            return 0.70, 0.30
+        return 0.55, 0.45
+
     def __init__(self, sentiment=None, exchange=None, lang='es'):
         self.sentiment = sentiment if sentiment else SentimentEngine()
         self.current_lang = lang
@@ -422,7 +432,8 @@ class DecisionEngine:
         """Score determinista y auditable. La IA puede opinar, pero esta capa deja rastro cuantitativo."""
         rsi = _safe_float(indicators.get('rsi'), 50.0)
         adx = _safe_float(indicators.get('adx'), 0.0)
-        trend = indicators.get('trend', 'BEAR')
+        trend = str(indicators.get('trend', 'BEAR')).upper()
+        trend_regime = str(indicators.get('trend_regime', trend or 'RANGING')).upper()
         volume_ratio = _safe_float(indicators.get('volume_ratio'), 1.0)
         macd_hist = _safe_float(indicators.get('macd_hist'), 0.0)
         macd = _safe_float(indicators.get('macd'), 0.0)
@@ -431,7 +442,18 @@ class DecisionEngine:
         stoch_k = _safe_float(indicators.get('stochrsi_k'), 50.0)
         obv_slope = _safe_float(indicators.get('obv_slope'), 0.0)
 
-        trend_score = 1.0 if trend == 'BULL' else 0.25
+        _trend_score_map = {
+            'BULL': 1.0,
+            'TRENDING_UP': 0.90,
+            'RANGING': 0.45,
+            'HIGH_VOLATILITY': 0.35,
+            'BEAR': 0.15,
+            'TRENDING_DOWN': 0.20,
+        }
+        trend_score = _trend_score_map.get(
+            trend_regime,
+            _trend_score_map.get(trend, 0.40),
+        )
         if 45 <= rsi <= 62:
             rsi_score = 0.85
         elif 35 <= rsi < 45:
@@ -517,6 +539,15 @@ class DecisionEngine:
             + macro_score * weights['macro']
             + adaptive_score * weights['adaptive']
         )
+        sig_adj, sig_evidence = (0.0, {})
+        if getattr(self, "db", None) is not None:
+            sig_adj, sig_evidence = strategy_significance_adjustment(
+                self.db,
+                strategy,
+                indicators.get('trend_regime', indicators.get('trend', macro_regime)),
+                config,
+            )
+        final_score = _clamp(final_score + sig_adj)
         components = {
             'technical': round(technical_score, 3),
             'mtf': round(mtf_score, 3),
@@ -530,6 +561,8 @@ class DecisionEngine:
             'adaptive_adjustment': round(adaptive_adjustment, 4),
             'weights': {key: round(value, 3) for key, value in weights.items()},
             'adaptive_evidence': adaptive_evidence,
+            'rule_significance': sig_evidence,
+            'rule_significance_adjustment': round(sig_adj, 4),
         }
         return round(final_score, 3), components
 
@@ -851,33 +884,26 @@ Si la confluencia MTF es fuerte ({confluence_score:.0%}), puedes aumentar positi
 
                 snapshot = self._adaptive_snapshot()
                 provider_stats = (snapshot.get('by_provider') or {}).get(str(provider)) if snapshot else None
-                provider_adjustment = 0.0
-                provider_evidence = {}
                 if provider_stats:
                     max_adj = abs(_safe_float(getattr(config, 'ADAPTIVE_MAX_SCORE_ADJUSTMENT', 0.12), 0.12))
-                    provider_adjustment = _clamp(_safe_float(provider_stats.get('adjustment')), -max_adj, max_adj)
-                    provider_evidence = {
-                        'adjustment': round(provider_adjustment, 4),
-                        'max_adjustment': round(max_adj, 4),
-                        'sources': [{
-                            'type': 'by_provider',
-                            'key': str(provider),
-                            'weight': 1.0,
-                            'trades': provider_stats.get('trades'),
-                            'expectancy_pct': provider_stats.get('expectancy_pct'),
-                            'profit_factor': provider_stats.get('profit_factor'),
-                            'win_rate': provider_stats.get('win_rate'),
-                            'source_adjustment': provider_stats.get('adjustment'),
-                        }],
-                    }
-                if provider_evidence:
-                    result['decision_score'], result['score_components'] = self._apply_adaptive_adjustment(
-                        result['decision_score'],
-                        result['score_components'],
-                        provider_evidence,
-                    )
-                    result['adaptive_adjustment'] = result['score_components'].get('adaptive_adjustment', provider_adjustment)
-                    result['adaptive_evidence'] = provider_evidence
+                    provider_adj = _clamp(_safe_float(provider_stats.get('adjustment')), -max_adj, max_adj)
+                    evidence = dict(score_components.get('adaptive_evidence') or {})
+                    sources = list(evidence.get('sources') or [])
+                    sources.append({
+                        'type': 'by_provider_post_ai',
+                        'key': str(provider),
+                        'weight': 0.0,
+                        'trades': provider_stats.get('trades'),
+                        'expectancy_pct': provider_stats.get('expectancy_pct'),
+                        'profit_factor': provider_stats.get('profit_factor'),
+                        'win_rate': provider_stats.get('win_rate'),
+                        'source_adjustment': provider_stats.get('adjustment'),
+                        'note': 'metadata_only_no_second_score_adjustment',
+                    })
+                    evidence['provider_post_ai'] = round(provider_adj, 4)
+                    evidence['sources'] = sources
+                    result['score_components'] = dict(score_components or {})
+                    result['score_components']['adaptive_evidence'] = evidence
 
                 # Ajuste de confianza por confluencia: si MTF es muy fuerte, boosteamos
                 if confluence_score >= 0.80 and result.get('action') == 'BUY':
@@ -894,7 +920,8 @@ Si la confluencia MTF es fuerte ({confluence_score:.0%}), puedes aumentar positi
                         )
                     else:
                         ai_conf = _safe_float(result.get('confidence'), 0.0)
-                        result['confidence'] = round(_clamp((ai_conf * 0.70) + (effective_score * 0.30)), 3)
+                        ai_w, score_w = self._hybrid_confidence_weights(macro_regime)
+                        result['confidence'] = round(_clamp((ai_conf * ai_w) + (effective_score * score_w)), 3)
 
                 return self._remember_decision(symbol, result, now, persist=True)
             except Exception as e:

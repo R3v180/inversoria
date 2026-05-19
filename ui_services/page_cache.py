@@ -99,8 +99,11 @@ def render_stale_while_revalidate(
         return
 
     if entry and pending:
+        from ui_services.ui_status import render_cache_status
+
         render_fn(entry["data"], stale=True, age_sec=age or 0.0)
-        st.caption("Actualizando datos en segundo plano…")
+        refresh_hint = int((PAGE_LIVE_REFRESH.get(page_id) or {}).get("interval", ttl_sec))
+        render_cache_status(stale=True, age_sec=age or 0.0, refresh_sec=refresh_hint, updating=True)
 
     data = build_fn()
     store[page_id] = {"data": data, "ts": time.time()}

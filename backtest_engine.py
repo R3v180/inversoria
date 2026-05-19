@@ -15,6 +15,7 @@ import config
 from database_manager import DatabaseManager
 from i18n import _
 from trading_logic import TradingLogic
+from bot_runtime.slippage import dynamic_slippage_pair
 
 
 class BacktestEngine:
@@ -232,12 +233,13 @@ class BacktestEngine:
         position = None  # Dict con datos de posición abierta
         live_logic = TradingLogic()
         fee_rate = float(getattr(config, "TRADING_FEE_RATE", 0.001) or 0.0)
-        buy_slippage = float(getattr(config, "BUY_SLIPPAGE_LIMIT", 0.0) or 0.0)
-        sell_slippage = float(getattr(config, "SELL_SLIPPAGE_LIMIT", 0.0) or 0.0)
 
         for i in range(200, len(df)):  # Empezar en 200 para tener indicadores calculados
             row = df.iloc[i]
             price = row['close']
+            vol_ratio = float(row.get('volume_ratio', 1.0) or 1.0)
+            buy_slippage = dynamic_slippage_pair(vol_ratio, config, side="buy")
+            sell_slippage = dynamic_slippage_pair(vol_ratio, config, side="sell")
 
             # ─── Gestión de posición abierta ───
             if position:

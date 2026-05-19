@@ -116,7 +116,7 @@ Objetivo: que el bot vivo y el backtest midan la misma estrategia.
 - [x] Mantener fallback porcentual solo si no hay ATR valido. Cubierto en PR #46.
 - [x] Backtest debe usar `check_sell_conditions()` o una fuente compartida equivalente. Cubierto con `protective_levels()` compartido en PR #46.
 - [x] Aplicar fees en entrada y salida en backtest. Cubierto previamente y mantenido en PR #46.
-- [ ] Modelar slippage dinamico por liquidez/orderbook.
+- [x] Modelar slippage dinamico por liquidez/orderbook. Cubierto en `bot_runtime/slippage.py` + `backtest_engine.py`.
 - [x] Implementar salida por edad maxima de posicion por regimen. Cubierto como edad maxima configurable en PR #46.
 - [x] Cooldown por simbolo tras stop-loss. Cubierto en PR #55.
 - [x] Cooldown menor tras take-profit. Cubierto en PR #55.

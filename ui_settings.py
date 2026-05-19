@@ -151,11 +151,11 @@ def render_settings():
             st.rerun()
 
     with st.form("settings_form"):
-        tab1, tab2, tab3, tab4 = st.tabs([_('TAB_CONNECTIONS'), _('TAB_RISK'), _('TAB_AI'), "Avanzado"])
+        tab1, tab2, tab3, tab4 = st.tabs([_('TAB_CONNECTIONS'), _('TAB_RISK'), _('TAB_AI'), _('SETTINGS_TAB_ADVANCED')])
         
         with tab1:
             st.subheader(_('API_CREDENTIALS'))
-            st.caption("Por seguridad, las API keys se leen desde `.env`/variables de entorno y no se guardan en user_settings.json.")
+            st.caption(_('SETTINGS_KEYS_SECURITY'))
             crypto_api = st.text_input("Crypto.com API Key", value=get_setting('CRYPTO_API_KEY', ''), type="password")
             crypto_sec = st.text_input("Crypto.com API Secret", value=get_setting('CRYPTO_API_SECRET', ''), type="password")
             groq_api = st.text_input("Groq API Key", value=get_setting('GROQ_API_KEY', ''), type="password")
@@ -266,17 +266,69 @@ def render_settings():
             p_cur = st.text_area(_('PROMPT_CURATION_LABEL'), value=get_setting('PROMPT_CURATION', DEFAULT_SETTINGS['PROMPT_CURATION']), height=100)
 
         with tab4:
-            st.subheader("Gobierno operativo")
-            st.caption("Parámetros base para dust, órdenes, kill-switches, presupuesto IA y futuras reglas de posición. Algunos preparan funciones que se implementan en issues separadas.")
+            st.subheader(_('SETTINGS_GOV_TITLE'))
+            st.caption(_('SETTINGS_GOV_CAPTION'))
 
-            st.markdown("##### Ciclo y radar")
+            st.markdown(f"##### {_('SETTINGS_SECTION_EDGE')}")
+            e1, e2 = st.columns(2)
+            with e1:
+                webhook_tv_enabled = st.checkbox(
+                    "TradingView webhook",
+                    value=get_setting('WEBHOOK_TRADINGVIEW_ENABLED', False, bool),
+                )
+                webhook_port = st.number_input(
+                    "Puerto webhook",
+                    min_value=1024,
+                    max_value=65535,
+                    value=get_setting('WEBHOOK_SERVER_PORT', 8765, int),
+                )
+                webhook_secret = st.text_input(
+                    "Secreto webhook",
+                    value=get_setting('WEBHOOK_TRADINGVIEW_SECRET', ''),
+                    type="password",
+                )
+                webhook_auto = st.checkbox(
+                    "Auto-aprobar señales TV",
+                    value=get_setting('WEBHOOK_AUTO_APPROVE', False, bool),
+                )
+                inventory_skew = st.checkbox(
+                    "Inventory skew sizing",
+                    value=get_setting('INVENTORY_SKEW_ENABLED', False, bool),
+                )
+                monitor_sells = st.checkbox(
+                    "Ventas en sub-ciclo",
+                    value=get_setting('POSITION_MONITOR_SELLS_ENABLED', True, bool),
+                )
+            with e2:
+                hyperopt_enabled = st.checkbox(
+                    "Hyperopt-lite riesgo",
+                    value=get_setting('HYPEROPT_LITE_ENABLED', False, bool),
+                )
+                rule_sig_enabled = st.checkbox(
+                    "Significancia de reglas (Jesse)",
+                    value=get_setting('RULE_SIGNIFICANCE_ENABLED', True, bool),
+                )
+                ollama_enabled = st.checkbox(
+                    "Ollama fallback local",
+                    value=get_setting('OLLAMA_ENABLED', False, bool),
+                )
+                ollama_url = st.text_input(
+                    "Ollama URL",
+                    value=get_setting('OLLAMA_BASE_URL', 'http://127.0.0.1:11434'),
+                )
+                dca_grid_enabled = st.checkbox(
+                    "Modo DCA/grid aislado",
+                    value=get_setting('DCA_GRID_ENABLED', False, bool),
+                )
+
+            st.markdown(f"##### {_('SETTINGS_SECTION_CYCLE')}")
             col_a, col_b = st.columns(2)
             with col_a:
                 daemon_cycle_seconds = st.number_input("Segundos entre ciclos daemon", min_value=15, max_value=600, value=get_setting('DAEMON_CYCLE_SECONDS', 60, int), step=5)
             with col_b:
                 watchlist_update_seconds = st.number_input("Segundos entre refrescos radar", min_value=900, max_value=86400, value=get_setting('WATCHLIST_UPDATE_SECONDS', 14400, int), step=300)
 
-            st.markdown("##### Dust e inventario")
+            st.markdown(f"##### {_('SETTINGS_SECTION_DUST')}")
             col_d1, col_d2 = st.columns(2)
             with col_d1:
                 dust_watch_enabled = st.checkbox("Vigilar dust/inventario", value=get_setting('DUST_WATCH_ENABLED', True, bool))
@@ -286,7 +338,7 @@ def render_settings():
                 dust_sell_min_usdt = st.number_input("Mínimo USDT para dust sell", min_value=0.1, max_value=10000.0, value=get_setting('DUST_SELL_MIN_USDT', 5.0, float), step=0.5)
                 dust_log_compact_enabled = st.checkbox("Compactar logs repetidos de dust", value=get_setting('DUST_LOG_COMPACT_ENABLED', True, bool))
 
-            st.markdown("##### Órdenes y reconciliación")
+            st.markdown(f"##### {_('SETTINGS_SECTION_ORDERS')}")
             col_o1, col_o2 = st.columns(2)
             with col_o1:
                 order_reconcile_enabled = st.checkbox("Reconciliar órdenes reales", value=get_setting('ORDER_RECONCILE_ENABLED', True, bool))
@@ -298,7 +350,7 @@ def render_settings():
                 buy_fee_buffer_pct = st.number_input("Buffer fee compra (%)", min_value=0.0, max_value=5.0, value=get_setting('BUY_FEE_BUFFER_PCT', 0.5, float), step=0.1)
                 orderbook_depth_levels = st.number_input("Niveles orderbook para validar", min_value=1, max_value=50, value=get_setting('ORDERBOOK_DEPTH_LEVELS', 5, int), step=1)
 
-            st.markdown("##### Kill-switches")
+            st.markdown(f"##### {_('SETTINGS_SECTION_KILL')}")
             col_k1, col_k2 = st.columns(2)
             with col_k1:
                 kill_switch_enabled = st.checkbox("Activar kill-switches", value=get_setting('KILL_SWITCH_ENABLED', True, bool))
@@ -312,7 +364,7 @@ def render_settings():
                 max_unreconciled_orders = st.number_input("Órdenes sin reconciliar máximas", min_value=0, max_value=100, value=get_setting('MAX_UNRECONCILED_ORDERS', 0, int), step=1)
                 drawdown_cooldown_hours = st.number_input("Cooldown por drawdown (h)", min_value=1, max_value=720, value=get_setting('DRAWDOWN_COOLDOWN_HOURS', 24, int), step=1)
 
-            st.markdown("##### Macro y backtest")
+            st.markdown(f"##### {_('SETTINGS_SECTION_MACRO')}")
             col_m1, col_m2 = st.columns(2)
             with col_m1:
                 macro_altseason_btc_dom = st.number_input("BTC dominance ALTSEASON máx. (%)", min_value=35.0, max_value=60.0, value=get_setting('MACRO_ALTSEASON_BTC_DOM', 48.0, float), step=0.5)
@@ -330,7 +382,7 @@ def render_settings():
                 backtest_bootstrap_samples = st.number_input("Muestras bootstrap backtest", min_value=0, max_value=10000, value=get_setting('BACKTEST_BOOTSTRAP_SAMPLES', 300, int), step=50)
                 backtest_oos_fraction = st.slider("Fracción out-of-sample", 0.05, 0.80, get_setting('BACKTEST_OOS_FRACTION', 0.30, float), step=0.05)
 
-            st.markdown("##### Presupuesto IA")
+            st.markdown(f"##### {_('SETTINGS_SECTION_AI')}")
             col_i1, col_i2 = st.columns(2)
             with col_i1:
                 ai_batch_decisions_enabled = st.checkbox("Batch IA de decisiones", value=get_setting('AI_BATCH_DECISIONS_ENABLED', True, bool))
@@ -344,7 +396,7 @@ def render_settings():
                 ai_provider_timeout_seconds = st.number_input("Timeout proveedor IA (s)", min_value=3, max_value=120, value=get_setting('AI_PROVIDER_TIMEOUT_SECONDS', 15, int), step=1)
                 ai_max_position_size_multiplier = st.slider("Máx. multiplicador tamaño IA", 0.1, 3.0, get_setting('AI_MAX_POSITION_SIZE_MULTIPLIER', 1.5, float), step=0.1)
 
-            st.markdown("##### Gestión avanzada de posiciones")
+            st.markdown(f"##### {_('SETTINGS_SECTION_POSITION')}")
             col_p1, col_p2 = st.columns(2)
             with col_p1:
                 advanced_edge_enabled = st.checkbox("Permitir edge avanzado", value=get_setting('ADVANCED_EDGE_ENABLED', False, bool), help="Gate global para piramidación y futuras ventajas avanzadas.")
@@ -361,7 +413,7 @@ def render_settings():
                 partial_tp_enabled = st.checkbox("Take-profit parcial", value=get_setting('PARTIAL_TAKE_PROFIT_ENABLED', True, bool))
                 partial_tp_pct = st.slider("Porcentaje a vender en TP parcial", 1.0, 100.0, get_setting('PARTIAL_TAKE_PROFIT_PCT', 50.0, float), step=1.0)
 
-            st.markdown("##### Observabilidad y alertas")
+            st.markdown(f"##### {_('SETTINGS_SECTION_OBS')}")
             col_obs1, col_obs2 = st.columns(2)
             with col_obs1:
                 alerts_enabled = st.checkbox("Alertas externas", value=get_setting('ALERTS_ENABLED', False, bool))
@@ -487,6 +539,17 @@ def render_settings():
                 "HEALTH_EXPORT_ENABLED": bool(health_export_enabled),
                 "STRUCTURED_LOGS_ENABLED": bool(structured_logs_enabled),
                 "AUDIT_EVENTS_ENABLED": bool(audit_events_enabled),
+                "WEBHOOK_TRADINGVIEW_ENABLED": bool(webhook_tv_enabled),
+                "WEBHOOK_SERVER_PORT": int(webhook_port),
+                "WEBHOOK_TRADINGVIEW_SECRET": webhook_secret,
+                "WEBHOOK_AUTO_APPROVE": bool(webhook_auto),
+                "INVENTORY_SKEW_ENABLED": bool(inventory_skew),
+                "POSITION_MONITOR_SELLS_ENABLED": bool(monitor_sells),
+                "HYPEROPT_LITE_ENABLED": bool(hyperopt_enabled),
+                "RULE_SIGNIFICANCE_ENABLED": bool(rule_sig_enabled),
+                "OLLAMA_ENABLED": bool(ollama_enabled),
+                "OLLAMA_BASE_URL": ollama_url,
+                "DCA_GRID_ENABLED": bool(dca_grid_enabled),
                 "PROMPT_SENTIMENT": p_sent,
                 "PROMPT_DECISION": p_dec,
                 "PROMPT_CURATION": p_cur

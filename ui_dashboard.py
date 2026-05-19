@@ -18,6 +18,7 @@ from ui_services.page_cache import (
     page_cache_ttl,
     render_stale_while_revalidate,
 )
+from ui_services.ui_status import render_cache_status, render_page_refresh_intro
 
 
 def _execute_dashboard_manual_sell(db, exchange, sym: str, qty: float, current_price: float):
@@ -153,19 +154,11 @@ def render_dashboard(snapshot=None, *, stale=False, age_sec=0):
     """, unsafe_allow_html=True)
 
     st.title(f"🏛️ { _('DASHBOARD_TITLE') }")
-    st.caption(f"Auto-actualización cada {int(DASHBOARD_AUTO_REFRESH_SEC)} segundos mientras permaneces en esta pestaña.")
+    render_page_refresh_intro(DASHBOARD_AUTO_REFRESH_SEC)
+    render_cache_status(stale=stale, age_sec=age_sec, refresh_sec=DASHBOARD_AUTO_REFRESH_SEC)
 
     db = st.session_state.db
     exchange = st.session_state.exchange
-
-    if stale and age_sec is not None:
-        remaining = max(0, int(DASHBOARD_AUTO_REFRESH_SEC - age_sec))
-        st.caption(
-            f"Datos de hace {int(age_sec)}s (vista en caché). "
-            f"Actualización automática en ~{remaining}s o antes si cambias de pestaña."
-        )
-    elif age_sec is not None and age_sec > 0:
-        st.caption(f"Datos actualizados hace {int(age_sec)}s · auto-refresh cada {int(DASHBOARD_AUTO_REFRESH_SEC)}s.")
 
     if snapshot is None:
         snapshot = build_dashboard_snapshot(
@@ -208,14 +201,19 @@ def render_dashboard(snapshot=None, *, stale=False, age_sec=0):
     m5.metric(_("DASH_MODE"), mode_label)
     m6.metric(_("DAEMON_STATE"), state_label, f"{decision_mode} · {diag_top.get('scanned', 0)} scan")
     baseline_text = {
-        "real_start": "inicio real",
-        "initial": "capital inicial",
+        "real_start": _("BASELINE_REAL_START"),
+        "initial": _("BASELINE_INITIAL"),
     }.get(baseline_label, baseline_label)
     st.caption(
-        f"Desglose equity: disponible ${available_usdt:.2f} + posiciones bot ${managed_positions_value:.2f} "
-        f"+ otros saldos/dust ${other_balances_value:.2f}. PnL calculado contra baseline {baseline_text}: ${baseline:.2f}."
+        _("DASH_EQUITY_BREAKDOWN").format(
+            available_usdt,
+            managed_positions_value,
+            other_balances_value,
+            baseline_text,
+            baseline,
+        )
     )
-    st.caption("Para analizar rendimiento desde hoy, última hora o una fecha concreta usa Historial y Analítica.")
+    st.caption(_("DASH_AUTO_REFRESH_NOTE"))
 
     # --- POSITIONS + LIVE EVENTS FIRST ---
     col_left, col_right = st.columns([1.5, 1])

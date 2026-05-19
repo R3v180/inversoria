@@ -2,6 +2,7 @@ import streamlit as st
 from i18n import _
 import json
 from ui_services.page_cache import install_page_autorefresh, page_cache_ttl, render_stale_while_revalidate
+from ui_services.ui_status import render_cache_status
 from ui_services.technical_chart import build_technical_chart
 from ui_services.terminal_data import build_terminal_snapshot
 
@@ -12,7 +13,7 @@ def render_terminal_page():
     col_t1, col_t2 = st.columns([4, 1])
     with col_t2:
         terminal_refresh = st.toggle(
-            "Auto-Refresh",
+            _("UI_TERMINAL_AUTO_REFRESH"),
             value=st.session_state.get("terminal_refresh", True),
             key="terminal_refresh_toggle",
         )
@@ -55,13 +56,10 @@ def render_terminal(snapshot=None, *, stale=False, age_sec=0, refresh_sec=TERMIN
     st.title(f"⚡ { _('NAV_TERMINAL') }")
 
     if st.session_state.get("terminal_refresh", True):
-        st.caption(f"Auto-actualización cada {int(refresh_sec)} segundos (toggle activado).")
+        st.caption(_("UI_TERMINAL_REFRESH_ON").format(int(refresh_sec)))
     else:
-        st.caption("Auto-actualización desactivada. Activa el toggle para refresco cada 30s.")
-
-    if stale and age_sec is not None:
-        remaining = max(0, int(refresh_sec - age_sec))
-        st.caption(f"Datos de hace {int(age_sec)}s (caché). Próxima actualización en ~{remaining}s.")
+        st.caption(_("UI_TERMINAL_REFRESH_OFF"))
+    render_cache_status(stale=stale, age_sec=age_sec, refresh_sec=int(refresh_sec))
 
     if "exchange" not in st.session_state:
         st.warning(_("TERMINAL_NOT_INITIALIZED"))

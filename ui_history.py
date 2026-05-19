@@ -11,6 +11,9 @@ from ui_services.performance_period import (
     preset_start_datetime,
 )
 from ui_services.page_cache import install_page_autorefresh, page_cache_ttl, render_stale_while_revalidate
+from ui_services.ui_status import render_cache_status, render_page_refresh_intro
+from ui_services.journal_backtest_compare import build_journal_vs_backtest_rows
+from ui_services.cycle_replay_viz import render_cycle_replay_chart
 
 
 def _fmt_trade_price(value):
@@ -75,8 +78,8 @@ def _audit_rows_to_df(rows):
 
 
 def _render_audit_replay(db):
-    with st.expander("Auditoría operativa y replay de ciclos", expanded=False):
-        tab_events, tab_snapshots = st.tabs(["Audit events", "Cycle replay"])
+    with st.expander(_("HISTORY_AUDIT_TITLE"), expanded=False):
+        tab_events, tab_snapshots = st.tabs([_("HISTORY_AUDIT_EVENTS"), _("HISTORY_CYCLE_REPLAY")])
         with tab_events:
             c1, c2, c3 = st.columns([1, 1, 2])
             limit = int(c1.selectbox("Eventos", [50, 100, 200, 500, 1000], index=2, key="audit_limit"))
@@ -86,12 +89,12 @@ def _render_audit_replay(db):
                 rows = db.get_audit_events(limit=limit, event_type=event_type or None, symbol=symbol or None)
                 df = _audit_rows_to_df(rows)
                 if df.empty:
-                    st.info("Sin audit events para esos filtros.")
+                    st.info(_("HISTORY_AUDIT_EMPTY"))
                 else:
                     cols = [c for c in ("date", "event_type", "symbol", "severity", "message", "payload_json") if c in df.columns]
                     st.dataframe(df[cols], width="stretch", hide_index=True)
             except Exception as exc:
-                st.warning(f"No se pudieron cargar audit events: {exc}")
+                st.warning(_("HISTORY_AUDIT_LOAD_FAIL").format(exc))
 
         with tab_snapshots:
             c1, c2 = st.columns([1, 3])
@@ -101,23 +104,23 @@ def _render_audit_replay(db):
                 rows = db.get_cycle_replay_snapshots(limit=limit, cycle_id=cycle_id or None)
                 df = _audit_rows_to_df(rows)
                 if df.empty:
-                    st.info("Sin snapshots de ciclo para esos filtros.")
+                    st.info(_("HISTORY_REPLAY_EMPTY"))
                 else:
                     cols = [c for c in ("date", "cycle_id", "phase", "payload_json") if c in df.columns]
                     st.dataframe(df[cols], width="stretch", hide_index=True)
             except Exception as exc:
-                st.warning(f"No se pudieron cargar snapshots: {exc}")
+                st.warning(_("HISTORY_REPLAY_LOAD_FAIL").format(exc))
 
 
 def _render_period_performance(db, exchange):
-    st.markdown("### Rendimiento por periodo")
-    st.caption("Calcula equity flotante desde una fecha/hora sin borrar ni alterar el histórico.")
+    st.markdown(f"### {_('HISTORY_PERIOD_TITLE')}")
+    st.caption(_("HISTORY_PERIOD_CAPTION"))
     p1, p2, p3 = st.columns([1, 1, 2])
-    preset = p1.selectbox("Periodo", PERFORMANCE_PRESETS, key="perf_period_preset")
+    preset = p1.selectbox(_("HISTORY_PERIOD_LABEL"), PERFORMANCE_PRESETS, key="perf_period_preset")
     start_dt = preset_start_datetime(preset)
     if preset == "Personalizado":
-        selected_date = p2.date_input("Desde fecha", value=datetime.now().date(), key="perf_period_date")
-        selected_time = p3.time_input("Desde hora", value=datetime.min.time(), key="perf_period_time")
+        selected_date = p2.date_input(_("HISTORY_PERIOD_FROM_DATE"), value=datetime.now().date(), key="perf_period_date")
+        selected_time = p3.time_input(_("HISTORY_PERIOD_FROM_TIME"), value=datetime.min.time(), key="perf_period_time")
         start_dt = datetime.combine(selected_date, selected_time)
     else:
         p2.caption("Inicio")
@@ -237,6 +240,20 @@ def _display_reason(row, context):
     return f"{prefix} | {reason}" if prefix and reason else reason or str(row.get("Reason", ""))
 
 
+def _render_journal_vs_backtest(db):
+    rows = build_journal_vs_backtest_rows(db)
+    with st.expander(_("HISTORY_JOURNAL_BT_TITLE"), expanded=False):
+        if not rows:
+            st.caption(_("HISTORY_JOURNAL_BT_EMPTY"))
+            return
+        st.caption(_("HISTORY_JOURNAL_BT_CAPTION"))
+        st.dataframe(
+            pd.DataFrame(rows),
+            use_container_width=True,
+            hide_index=True,
+        )
+
+
 HISTORY_AUTO_REFRESH_SEC = 45
 
 
@@ -264,20 +281,18 @@ def render_history(trades_df=None, *, stale=False, age_sec=0):
         st.warning(_('DB_NOT_INIT'))
         return
 
-    st.caption(
-        f"Auto-actualización cada {int(HISTORY_AUTO_REFRESH_SEC)}s "
-        f"(trades/journal desde BD; rendimiento por periodo usa equity del exchange)."
-    )
-    if stale and age_sec is not None:
-        remaining = max(0, int(HISTORY_AUTO_REFRESH_SEC - age_sec))
-        st.caption(f"Datos de hace {int(age_sec)}s (caché). Actualización automática en ~{remaining}s.")
+    render_page_refresh_intro(HISTORY_AUTO_REFRESH_SEC)
+    render_cache_status(stale=stale, age_sec=age_sec, refresh_sec=HISTORY_AUTO_REFRESH_SEC)
 
     if "exchange" in st.session_state:
         _render_period_performance(st.session_state.db, st.session_state.exchange)
     else:
-        st.info("Exchange no inicializado; el rendimiento por periodo se mostrará cuando la sesión esté lista.")
+        st.info(_("HISTORY_EXCHANGE_NOT_READY"))
 
     _render_audit_replay(st.session_state.db)
+    with st.expander(_("HISTORY_CYCLE_REPLAY_VIZ"), expanded=False):
+        render_cycle_replay_chart(st.session_state.db)
+    _render_journal_vs_backtest(st.session_state.db)
 
     df = trades_df if trades_df is not None else st.session_state.db.get_trades_history()
     if df.empty:

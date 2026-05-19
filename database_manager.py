@@ -7,6 +7,8 @@ import pandas as pd
 from simulation_profiles import get_database_path_for_current_mode
 from database_services.audit import get_audit_events as fetch_audit_events
 from database_services.audit import get_cycle_replay_snapshots as fetch_cycle_replay_snapshots
+from database_services import webhook_signals as webhook_db
+from database_services.decision_journal_queries import count_recent_exit_reasons as _count_recent_exit_reasons
 
 class DatabaseManager:
     def __init__(self, db_path=None):
@@ -303,6 +305,7 @@ class DatabaseManager:
                     payload_json TEXT
                 )
             ''')
+            webhook_db.ensure_webhook_table(conn)
             for idx_name, idx_cols in {
                 'idx_audit_events_type_ts': 'event_type, timestamp',
                 'idx_audit_events_symbol_ts': 'symbol, timestamp',
@@ -733,6 +736,24 @@ class DatabaseManager:
     def get_cycle_replay_snapshots(self, limit=100, cycle_id=None):
         return fetch_cycle_replay_snapshots(self._get_connection, limit=limit, cycle_id=cycle_id)
 
+    def enqueue_external_signal(self, source, symbol, action, raw_payload, status="pending"):
+        return webhook_db.enqueue_signal(
+            self._get_connection,
+            source=source,
+            symbol=symbol,
+            action=action,
+            raw_payload=raw_payload,
+            status=status,
+        )
+
+    def list_external_signals(self, status=None, limit=50):
+        return webhook_db.list_signals(self._get_connection, status=status, limit=limit)
+
+    def update_external_signal(self, signal_id, status, notes=""):
+        return webhook_db.update_signal_status(
+            self._get_connection, signal_id, status, notes=notes
+        )
+
     def update_highest_price(self, symbol, highest_price):
         with self._get_connection() as conn:
             conn.execute('UPDATE open_positions SET highest_price = ? WHERE symbol = ?', (highest_price, symbol))
@@ -1047,6 +1068,26 @@ class DatabaseManager:
             'provider_stats': grouped_stats('provider'),
             'regime_stats': grouped_stats('regime'),
         }
+
+    def count_recent_exit_reasons(self, symbol, reason_substrings=(), hours=24.0):
+        return _count_recent_exit_reasons(
+            self._get_connection, symbol, reason_substrings, hours
+        )
+
+    def get_symbol_journal_expectancy(self, symbol, limit=200):
+        sym = str(symbol or "").upper()
+        df = self.get_decision_journal(limit=limit)
+        if df.empty or "symbol" not in df.columns:
+            return {"trades": 0, "expectancy_pct": 0.0}
+        df = df[df["symbol"].astype(str).str.upper() == sym]
+        realized = pd.to_numeric(
+            df["realized_pnl_pct"] if "realized_pnl_pct" in df.columns else pd.Series([None] * len(df)),
+            errors="coerce",
+        )
+        closed = realized.dropna()
+        if closed.empty:
+            return {"trades": 0, "expectancy_pct": 0.0}
+        return {"trades": int(len(closed)), "expectancy_pct": round(float(closed.mean()), 4)}
 
     def get_adaptive_edge_snapshot(self, limit=1000, min_trades=5):
         """
