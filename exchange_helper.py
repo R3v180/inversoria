@@ -293,13 +293,32 @@ class ExchangeHelper:
             except Exception as e:
                 self._log_exchange_warning("Aviso: no se pudo reconciliar orden recién creada", e)
                 break
-        status = str(order.get('status') or '').lower()
-        filled = float(order.get('filled') or 0)
+        return self._normalize_order_status(order)
+
+    def _normalize_order_status(self, order):
+        status = str((order or {}).get('status') or '').lower()
+        filled = float((order or {}).get('filled') or 0)
         if status == 'open' and filled > 0:
             order['status'] = 'partial'
         elif not status:
             order['status'] = 'partial' if filled > 0 else 'open'
         return order
+
+    def reconcile_existing_order(self, symbol, exchange_order_id):
+        if self.modo_simulacion:
+            return {"status": "failed", "reason": "No reconciliation needed in simulation"}
+        if not exchange_order_id:
+            return {"status": "failed", "reason": "Missing exchange_order_id"}
+        with self._order_lock:
+            try:
+                exchange = self._get_private_exchange()
+                self._copy_public_markets_to_private()
+                order = exchange.fetch_order(str(exchange_order_id), symbol)
+                if not order:
+                    return {"status": "failed", "reason": "Order not found"}
+                return self._normalize_order_status(order)
+            except Exception as e:
+                return {"status": "failed", "reason": self._sanitize_error(e)}
 
     def _execute_order_inner(self, symbol, side, amount, price=None, force_market=False):
         """

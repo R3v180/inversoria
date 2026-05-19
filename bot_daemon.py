@@ -308,6 +308,102 @@ class BotDaemon:
         except Exception as exc:
             self.log_message(f"[WARN] order audit failed | {symbol} {side} | reason={self._short_reason(exc, 100)}")
 
+    def _apply_reconciled_order_delta(self, row, order_result):
+        symbol = str(row.get("symbol") or "")
+        side = str(row.get("side") or "").lower()
+        if not symbol or not side:
+            return {"applied": False, "reason": "MISSING_SYMBOL_OR_SIDE"}
+
+        old_filled = self._safe_float(row.get("executed_amount"), 0.0)
+        requested_amount = self._safe_float(row.get("requested_amount"), 0.0)
+        requested_price = self._safe_float(row.get("requested_price"), 0.0)
+        total_filled, executed_price = self._order_execution_details(order_result, requested_amount, requested_price)
+        delta = max(0.0, total_filled - old_filled)
+        if delta <= 0:
+            return {"applied": False, "reason": "NO_NEW_FILL", "filled": total_filled}
+        if executed_price <= 0:
+            return {"applied": False, "reason": "NO_EXECUTED_PRICE", "filled": total_filled}
+
+        if side in {"buy", "buy_add", "add"}:
+            current = self.db.get_open_positions().get(symbol)
+            extra = json.dumps(
+                {
+                    "reconciled_order_id": row.get("local_order_id"),
+                    "exchange_order_id": row.get("exchange_order_id"),
+                    "reconciled_at": time.time(),
+                },
+                ensure_ascii=False,
+            )
+            if current:
+                self.db.add_to_open_position_with_trade(
+                    symbol,
+                    executed_price,
+                    delta,
+                    "RECONCILED_ORDER_FILL",
+                    extra_data=extra,
+                )
+            else:
+                self.db.add_open_position_with_trade(
+                    symbol,
+                    executed_price,
+                    executed_price,
+                    delta,
+                    "RECONCILED_ORDER_FILL",
+                    extra_data=extra,
+                )
+            return {"applied": True, "side": side, "delta": delta, "price": executed_price}
+
+        if side in {"sell", "rotation_sell"}:
+            applied = self.db.close_position(symbol, executed_price, "RECONCILED_ORDER_FILL", sold_amount=delta)
+            return {"applied": bool(applied), "side": side, "delta": delta, "price": executed_price}
+
+        return {"applied": False, "reason": f"UNSUPPORTED_SIDE:{side}", "filled": total_filled}
+
+    def reconcile_pending_order_events(self, max_orders=20):
+        if self.exchange.modo_simulacion or not getattr(config, "ORDER_RECONCILE_ENABLED", True):
+            return {"checked": 0, "updated": 0, "applied": 0, "errors": []}
+        pending = self.db.get_unreconciled_order_events(max_age_seconds=0, limit=max_orders)
+        summary = {"checked": 0, "updated": 0, "applied": 0, "errors": []}
+        for row in pending:
+            summary["checked"] += 1
+            local_order_id = row.get("local_order_id")
+            symbol = row.get("symbol")
+            exchange_order_id = row.get("exchange_order_id")
+            if not exchange_order_id:
+                summary["errors"].append({"local_order_id": local_order_id, "reason": "MISSING_EXCHANGE_ORDER_ID"})
+                continue
+            order_result = self.exchange.reconcile_existing_order(symbol, exchange_order_id)
+            applied = self._apply_reconciled_order_delta(row, order_result)
+            if applied.get("applied"):
+                summary["applied"] += 1
+                self.log_message(
+                    f"[RECONCILE] applied {symbol} {row.get('side')} "
+                    f"delta={applied.get('delta'):.8g} px={applied.get('price'):.8g}"
+                )
+            status = str((order_result or {}).get("status") or "unknown")
+            reason = (order_result or {}).get("reason", applied.get("reason", ""))
+            self.db.record_order_event(
+                local_order_id=local_order_id,
+                symbol=symbol,
+                side=row.get("side"),
+                requested_amount=row.get("requested_amount"),
+                requested_price=row.get("requested_price"),
+                status=status,
+                decision_journal_id=row.get("decision_journal_id"),
+                exchange_order_id=exchange_order_id,
+                executed_amount=self._order_execution_details(order_result, row.get("requested_amount"), row.get("requested_price"))[0],
+                executed_price=self._order_execution_details(order_result, row.get("requested_amount"), row.get("requested_price"))[1],
+                reason=reason,
+                raw=order_result,
+            )
+            summary["updated"] += 1
+            if status == "failed":
+                summary["errors"].append({"local_order_id": local_order_id, "reason": reason})
+                self._send_alert("order_reconcile_failed", f"Fallo reconciliando orden {local_order_id}", {"order": row, "result": order_result})
+        if summary["checked"]:
+            self.update_daemon_status("order_reconcile", order_reconcile=summary)
+        return summary
+
     def _audit_event(self, event_type, message='', symbol='', severity='info', payload=None):
         if not getattr(config, "AUDIT_EVENTS_ENABLED", True):
             return None
@@ -1158,6 +1254,7 @@ class BotDaemon:
                         current_equity = self.exchange.get_balance()
                         self.db.set_system_status('real_start_balance', current_equity)
                         self.log_message(f"{ _('LOG_INITIAL_REAL', lang=self.u_lang) } ${current_equity:.2f}")
+                    self.reconcile_pending_order_events()
 
                 if str(is_running).lower() == 'true':
                     self.bot_iteration()

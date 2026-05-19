@@ -668,7 +668,7 @@ class DatabaseManager:
 
     def get_unreconciled_order_events(self, max_age_seconds=0, limit=100):
         params = []
-        where = "LOWER(status) IN ('open', 'submitted', 'pending')"
+        where = "LOWER(status) IN ('open', 'submitted', 'pending', 'partial')"
         if max_age_seconds and float(max_age_seconds) > 0:
             where += " AND updated_at <= ?"
             params.append(time.time() - float(max_age_seconds))
