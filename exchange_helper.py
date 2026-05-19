@@ -275,9 +275,9 @@ class ExchangeHelper:
                     return []
                 time.sleep(1.5) # Esperar 1.5s antes de reintentar
 
-    def execute_order(self, symbol, side, amount, price=None, force_market=False):
+    def execute_order(self, symbol, side, amount, price=None, force_market=False, client_order_id=None):
         with self._order_lock:
-            return self._execute_order_inner(symbol, side, amount, price, force_market)
+            return self._execute_order_inner(symbol, side, amount, price, force_market, client_order_id)
 
     def _reconcile_created_order(self, exchange, symbol, order):
         order_id = order.get('id')
@@ -287,7 +287,7 @@ class ExchangeHelper:
         while str(order.get('status') or '').lower() == 'open' and time.time() < deadline:
             try:
                 time.sleep(1.0)
-                refreshed = exchange.fetch_order(order_id, symbol)
+                refreshed = self._call_private(lambda ex: ex.fetch_order(order_id, symbol))
                 if refreshed:
                     order.update(refreshed)
             except Exception as e:
@@ -311,16 +311,15 @@ class ExchangeHelper:
             return {"status": "failed", "reason": "Missing exchange_order_id"}
         with self._order_lock:
             try:
-                exchange = self._get_private_exchange()
                 self._copy_public_markets_to_private()
-                order = exchange.fetch_order(str(exchange_order_id), symbol)
+                order = self._call_private(lambda ex: ex.fetch_order(str(exchange_order_id), symbol))
                 if not order:
                     return {"status": "failed", "reason": "Order not found"}
                 return self._normalize_order_status(order)
             except Exception as e:
                 return {"status": "failed", "reason": self._sanitize_error(e)}
 
-    def _execute_order_inner(self, symbol, side, amount, price=None, force_market=False):
+    def _execute_order_inner(self, symbol, side, amount, price=None, force_market=False, client_order_id=None):
         """
         Ejecuta una orden. Si es simulación, actualiza los saldos virtuales.
         En simulación siempre asumimos que la orden se ejecuta al precio de mercado (ticker) actual.
@@ -364,7 +363,7 @@ class ExchangeHelper:
                     sell_amount_in = float(amount)
                     if side == "sell":
                         coin = symbol.split("/")[0]
-                        bal = exchange.fetch_balance()
+                        bal = self._call_private(lambda ex: ex.fetch_balance())
                         free_coin = float(bal.get("free", {}).get(coin) or 0)
                         if free_coin <= 0:
                             return {"status": "failed", "reason": "Saldo base libre insuficiente para vender"}
@@ -410,7 +409,16 @@ class ExchangeHelper:
                                 return {"status": "failed", "reason": f"Slippage demasiado alto ({slippage*100:.2f}%)"}
 
                     # Ejecutar orden real
-                    order = exchange.create_market_order(symbol, side, formatted_amount)
+                    order_params = {}
+                    if bool(getattr(config, "ORDER_CLIENT_ID_ENABLED", False)) and client_order_id:
+                        param_name = str(getattr(config, "ORDER_CLIENT_ID_PARAM", "client_oid") or "client_oid")
+                        order_params[param_name] = str(client_order_id)
+                    order = self._call_private(
+                        lambda ex: ex.create_market_order(symbol, side, formatted_amount, order_params)
+                    )
+                    order = order or {}
+                    if client_order_id:
+                        order.setdefault("clientOrderId", str(client_order_id))
                     order = self._reconcile_created_order(exchange, symbol, order)
                     
                     # Validar estado
