@@ -359,6 +359,7 @@ class BacktestEngine:
         win_rate = len(wins) / len(trades) if trades else 0
         avg_profit = np.mean([t['pnl_pct'] for t in wins]) if wins else 0
         avg_loss = np.mean([t['pnl_pct'] for t in losses]) if losses else 0
+        expectancy = (win_rate * avg_profit) + ((1 - win_rate) * avg_loss)
 
         gross_profit = sum(t['pnl_usd'] for t in wins) if wins else 0
         gross_loss = abs(sum(t['pnl_usd'] for t in losses)) if losses else 0
@@ -377,6 +378,10 @@ class BacktestEngine:
         sharpe = (returns.mean() / returns.std() * np.sqrt(trades_per_year)) if returns.std() > 0 and trades_per_year > 0 else 0
 
         total_return = (equity_curve[-1] - initial_capital) / initial_capital * 100
+        min_sample = int(getattr(config, "BACKTEST_MIN_SAMPLE_TRADES", 30) or 30)
+        sample_factor = min(1.0, len(trades) / max(1, min_sample))
+        drawdown_factor = max(0.0, 1.0 - (abs(max_drawdown) / 50.0))
+        reliability_score = max(0.0, min(1.0, (sample_factor * 0.65) + (drawdown_factor * 0.35)))
 
         return {
             'strategy': strategy_name,
@@ -384,9 +389,11 @@ class BacktestEngine:
             'win_rate': round(win_rate, 4),
             'avg_profit_pct': round(avg_profit, 2),
             'avg_loss_pct': round(avg_loss, 2),
+            'expectancy_pct': round(expectancy, 3),
             'profit_factor': round(profit_factor, 2),
             'total_return_pct': round(total_return, 2),
             'max_drawdown_pct': round(max_drawdown, 2),
+            'reliability_score': round(reliability_score, 3),
             'sharpe_ratio': round(sharpe, 2),
             'avg_duration_hours': round(np.mean([t['duration_hours'] for t in trades]), 1),
             'trades_detail': trades  # Guardamos para la tabla de condiciones
@@ -427,8 +434,10 @@ class BacktestEngine:
         win_rate = float(result.get('win_rate', 0) or 0)
         total_return = float(result.get('total_return_pct', 0) or 0) / 100.0
         drawdown_penalty = abs(float(result.get('max_drawdown_pct', 0) or 0)) / 100.0
-        sample_factor = min(1.0, trades / 12.0)
-        return ((pf * 0.55) + (win_rate * 2.0) + total_return - drawdown_penalty) * sample_factor
+        min_sample = int(getattr(config, "BACKTEST_MIN_SAMPLE_TRADES", 30) or 30)
+        sample_factor = min(1.0, trades / max(1, min_sample))
+        reliability = float(result.get('reliability_score', sample_factor) or sample_factor)
+        return ((pf * 0.50) + (win_rate * 2.0) + total_return - drawdown_penalty) * min(sample_factor, reliability)
 
     # ─────────────────────────────────────────────
     # CONSTRUCCIÓN DE LA TABLA DE CONDICIONES
@@ -450,7 +459,8 @@ class BacktestEngine:
 
         rows_to_insert = []
         for (regime, strategy, rsi_bucket, adx_bucket, trend), group in groups:
-            if len(group) < 3:  # Mínimo 3 trades para ser estadísticamente relevante
+            min_bucket_trades = int(getattr(config, "BACKTEST_MIN_TRADES_PER_BUCKET", 5) or 5)
+            if len(group) < min_bucket_trades:
                 continue
 
             wins = group[group['won'] == True]

@@ -317,6 +317,8 @@ def render_settings():
                 mtf_divergence_penalty = st.slider("Penalización divergencia MTF", 0.0, 0.5, get_setting('MTF_DIVERGENCE_PENALTY', 0.15, float), step=0.01)
                 backtest_hard_veto_wr = st.slider("Win rate mínimo veto backtest", 0.0, 0.8, get_setting('BACKTEST_HARD_VETO_WIN_RATE', 0.50, float), step=0.01)
                 backtest_hard_veto_min_trades = st.number_input("Trades mínimos veto backtest", min_value=5, max_value=200, value=get_setting('BACKTEST_HARD_VETO_MIN_TRADES', 20, int), step=1)
+                backtest_min_bucket_trades = st.number_input("Trades mínimos por bucket", min_value=3, max_value=200, value=get_setting('BACKTEST_MIN_TRADES_PER_BUCKET', 5, int), step=1)
+                backtest_min_sample_trades = st.number_input("Trades muestra completa fiable", min_value=5, max_value=1000, value=get_setting('BACKTEST_MIN_SAMPLE_TRADES', 30, int), step=1)
 
             st.markdown("##### Presupuesto IA")
             col_i1, col_i2 = st.columns(2)
@@ -427,6 +429,8 @@ def render_settings():
                 "MTF_DIVERGENCE_PENALTY": float(mtf_divergence_penalty),
                 "BACKTEST_HARD_VETO_WIN_RATE": float(backtest_hard_veto_wr),
                 "BACKTEST_HARD_VETO_MIN_TRADES": int(backtest_hard_veto_min_trades),
+                "BACKTEST_MIN_TRADES_PER_BUCKET": int(backtest_min_bucket_trades),
+                "BACKTEST_MIN_SAMPLE_TRADES": int(backtest_min_sample_trades),
                 "AI_MAX_REQUESTS_PER_CYCLE": int(ai_max_requests_cycle),
                 "AI_MAX_REQUESTS_PER_DAY": int(ai_max_requests_day),
                 "AI_MAX_EST_TOKENS_PER_DAY": int(ai_max_tokens_day),
