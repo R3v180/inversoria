@@ -151,10 +151,11 @@ def render_settings():
             st.rerun()
 
     with st.form("settings_form"):
-        tab1, tab2, tab3 = st.tabs([_('TAB_CONNECTIONS'), _('TAB_RISK'), _('TAB_AI')])
+        tab1, tab2, tab3, tab4 = st.tabs([_('TAB_CONNECTIONS'), _('TAB_RISK'), _('TAB_AI'), "Avanzado"])
         
         with tab1:
             st.subheader(_('API_CREDENTIALS'))
+            st.caption("Por seguridad, las API keys se leen desde `.env`/variables de entorno y no se guardan en user_settings.json.")
             crypto_api = st.text_input("Crypto.com API Key", value=get_setting('CRYPTO_API_KEY', ''), type="password")
             crypto_sec = st.text_input("Crypto.com API Secret", value=get_setting('CRYPTO_API_SECRET', ''), type="password")
             groq_api = st.text_input("Groq API Key", value=get_setting('GROQ_API_KEY', ''), type="password")
@@ -209,7 +210,7 @@ def render_settings():
                     value=get_setting('MAX_OPEN_POSITIONS', 5, int),
                     help=_('MAX_POSITIONS_HELP'),
                 )
-                riesgo = st.slider(_('RISK_PER_TRADE_L'), 1, 100, int(get_setting('RISK_PER_TRADE', 0.1, float)*100))
+                riesgo = st.slider(_('RISK_PER_TRADE_L'), 1, 100, int(get_setting('RISK_PER_TRADE', 0.02, float)*100))
                 max_exposure = st.slider(_('MAX_EXPOSURE_L'), 1.0, 100.0, get_setting('MAX_PORTFOLIO_EXPOSURE_PCT', 85.0, float), step=1.0)
                 max_symbol_exposure = st.slider(_('MAX_SYMBOL_EXPOSURE_L'), 1.0, 100.0, get_setting('MAX_SYMBOL_EXPOSURE_PCT', 30.0, float), step=1.0)
                 max_alt_exposure = st.slider(_('MAX_ALT_EXPOSURE_L'), 1.0, 100.0, get_setting('MAX_ALT_EXPOSURE_PCT', 75.0, float), step=1.0)
@@ -222,10 +223,18 @@ def render_settings():
                 min_profit = st.number_input(
                     _('MIN_PROFIT_L'),
                     min_value=0.1,
-                    max_value=10.0,
-                    value=get_setting('MIN_PROFIT_NET', 1.0, float),
+                    max_value=20.0,
+                    value=get_setting('MIN_PROFIT_NET', 3.0, float),
                     step=0.1,
                     help=_('MIN_PROFIT_NET_HELP')
+                )
+                stop_loss_percent = st.number_input(
+                    "Stop-loss base (%)",
+                    min_value=0.1,
+                    max_value=50.0,
+                    value=get_setting('STOP_LOSS_PERCENT', 2.0, float),
+                    step=0.1,
+                    help="Fallback porcentual configurable. En fases siguientes se unificará con ATR/backtest.",
                 )
             
             st.markdown("---")
@@ -247,6 +256,95 @@ def render_settings():
             p_dec = st.text_area(_('PROMPT_DECISION_LABEL'), value=get_setting('PROMPT_DECISION', DEFAULT_SETTINGS['PROMPT_DECISION']), height=100)
             p_cur = st.text_area(_('PROMPT_CURATION_LABEL'), value=get_setting('PROMPT_CURATION', DEFAULT_SETTINGS['PROMPT_CURATION']), height=100)
 
+        with tab4:
+            st.subheader("Gobierno operativo")
+            st.caption("Parámetros base para dust, órdenes, kill-switches, presupuesto IA y futuras reglas de posición. Algunos preparan funciones que se implementan en issues separadas.")
+
+            st.markdown("##### Ciclo y radar")
+            col_a, col_b = st.columns(2)
+            with col_a:
+                daemon_cycle_seconds = st.number_input("Segundos entre ciclos daemon", min_value=15, max_value=600, value=get_setting('DAEMON_CYCLE_SECONDS', 60, int), step=5)
+            with col_b:
+                watchlist_update_seconds = st.number_input("Segundos entre refrescos radar", min_value=900, max_value=86400, value=get_setting('WATCHLIST_UPDATE_SECONDS', 14400, int), step=300)
+
+            st.markdown("##### Dust e inventario")
+            col_d1, col_d2 = st.columns(2)
+            with col_d1:
+                dust_watch_enabled = st.checkbox("Vigilar dust/inventario", value=get_setting('DUST_WATCH_ENABLED', True, bool))
+                dust_auto_sell_enabled = st.checkbox("Auto-vender dust recuperable", value=get_setting('DUST_AUTO_SELL_ENABLED', False, bool), help="Mantener apagado hasta implementar la política completa de dust.")
+                dust_alert_on_recoverable = st.checkbox("Avisar cuando dust pase a vendible", value=get_setting('DUST_ALERT_ON_RECOVERABLE', True, bool))
+            with col_d2:
+                dust_sell_min_usdt = st.number_input("Mínimo USDT para dust sell", min_value=0.1, max_value=10000.0, value=get_setting('DUST_SELL_MIN_USDT', 5.0, float), step=0.5)
+                dust_log_compact_enabled = st.checkbox("Compactar logs repetidos de dust", value=get_setting('DUST_LOG_COMPACT_ENABLED', True, bool))
+
+            st.markdown("##### Órdenes y reconciliación")
+            col_o1, col_o2 = st.columns(2)
+            with col_o1:
+                order_reconcile_enabled = st.checkbox("Reconciliar órdenes reales", value=get_setting('ORDER_RECONCILE_ENABLED', True, bool))
+                order_reconcile_timeout = st.number_input("Timeout reconciliación orden (s)", min_value=5, max_value=600, value=get_setting('ORDER_RECONCILE_TIMEOUT_SECONDS', 30, int), step=5)
+                order_max_pending = st.number_input("Máximo tiempo orden pendiente (s)", min_value=10, max_value=3600, value=get_setting('ORDER_MAX_PENDING_SECONDS', 120, int), step=10)
+            with col_o2:
+                buy_fee_buffer_pct = st.number_input("Buffer fee compra (%)", min_value=0.0, max_value=5.0, value=get_setting('BUY_FEE_BUFFER_PCT', 0.5, float), step=0.1)
+                orderbook_depth_levels = st.number_input("Niveles orderbook para validar", min_value=1, max_value=50, value=get_setting('ORDERBOOK_DEPTH_LEVELS', 5, int), step=1)
+
+            st.markdown("##### Kill-switches")
+            col_k1, col_k2 = st.columns(2)
+            with col_k1:
+                kill_switch_enabled = st.checkbox("Activar kill-switches", value=get_setting('KILL_SWITCH_ENABLED', True, bool))
+                auto_pause_mismatch = st.checkbox("Pausar por discrepancia DB/exchange", value=get_setting('AUTO_PAUSE_ON_DB_EXCHANGE_MISMATCH', True, bool))
+                auto_pause_heartbeat = st.checkbox("Pausar por heartbeat vencido", value=get_setting('AUTO_PAUSE_ON_STALE_HEARTBEAT', True, bool))
+                max_portfolio_drawdown_pct = st.number_input("Drawdown máximo portfolio (%)", min_value=1.0, max_value=95.0, value=get_setting('MAX_PORTFOLIO_DRAWDOWN_PCT', 15.0, float), step=1.0)
+            with col_k2:
+                max_exchange_errors = st.number_input("Errores exchange máximos por ciclo", min_value=1, max_value=100, value=get_setting('MAX_EXCHANGE_ERRORS_PER_CYCLE', 3, int), step=1)
+                max_unreconciled_orders = st.number_input("Órdenes sin reconciliar máximas", min_value=0, max_value=100, value=get_setting('MAX_UNRECONCILED_ORDERS', 0, int), step=1)
+                drawdown_cooldown_hours = st.number_input("Cooldown por drawdown (h)", min_value=1, max_value=720, value=get_setting('DRAWDOWN_COOLDOWN_HOURS', 24, int), step=1)
+
+            st.markdown("##### Macro y backtest")
+            col_m1, col_m2 = st.columns(2)
+            with col_m1:
+                macro_altseason_btc_dom = st.number_input("BTC dominance ALTSEASON máx. (%)", min_value=35.0, max_value=60.0, value=get_setting('MACRO_ALTSEASON_BTC_DOM', 48.0, float), step=0.5)
+                macro_risk_on_max_btc_dom = st.number_input("BTC dominance máx. para RISK_ON alts (%)", min_value=45.0, max_value=75.0, value=get_setting('MACRO_RISK_ON_MAX_BTC_DOM', 55.0, float), step=0.5)
+                macro_caution_risk_off_btc_dom = st.number_input("BTC dominance RISK_OFF en caídas (%)", min_value=45.0, max_value=80.0, value=get_setting('MACRO_CAUTION_RISK_OFF_BTC_DOM', 55.0, float), step=0.5)
+            with col_m2:
+                backtest_hard_veto_wr = st.slider("Win rate mínimo veto backtest", 0.0, 0.8, get_setting('BACKTEST_HARD_VETO_WIN_RATE', 0.50, float), step=0.01)
+                backtest_hard_veto_min_trades = st.number_input("Trades mínimos veto backtest", min_value=5, max_value=200, value=get_setting('BACKTEST_HARD_VETO_MIN_TRADES', 20, int), step=1)
+
+            st.markdown("##### Presupuesto IA")
+            col_i1, col_i2 = st.columns(2)
+            with col_i1:
+                ai_batch_decisions_enabled = st.checkbox("Batch IA de decisiones", value=get_setting('AI_BATCH_DECISIONS_ENABLED', True, bool))
+                ai_rules_only_budget = st.checkbox("Pasar a rules-only si se agota presupuesto IA", value=get_setting('AI_RULES_ONLY_ON_BUDGET_EXHAUSTED', True, bool))
+                ai_max_requests_cycle = st.number_input("Máx. requests IA por ciclo", min_value=0, max_value=100, value=get_setting('AI_MAX_REQUESTS_PER_CYCLE', 2, int), step=1)
+            with col_i2:
+                ai_max_requests_day = st.number_input("Máx. requests IA por día", min_value=0, max_value=10000, value=get_setting('AI_MAX_REQUESTS_PER_DAY', 80, int), step=5)
+                ai_max_tokens_day = st.number_input("Máx. tokens estimados IA/día", min_value=0, max_value=10000000, value=get_setting('AI_MAX_EST_TOKENS_PER_DAY', 120000, int), step=5000)
+                ai_max_output_tokens = st.number_input("Máx. tokens salida IA", min_value=64, max_value=4096, value=get_setting('AI_MAX_OUTPUT_TOKENS', 700, int), step=64)
+                ai_provider_timeout_seconds = st.number_input("Timeout proveedor IA (s)", min_value=3, max_value=120, value=get_setting('AI_PROVIDER_TIMEOUT_SECONDS', 15, int), step=1)
+
+            st.markdown("##### Gestión avanzada de posiciones")
+            col_p1, col_p2 = st.columns(2)
+            with col_p1:
+                add_to_winner_enabled = st.checkbox("Add-to-winner", value=get_setting('ADD_TO_WINNER_ENABLED', False, bool), help="Mantener apagado hasta implementar tramos/lotes.")
+                add_min_profit = st.number_input("Beneficio mínimo para add (%)", min_value=0.0, max_value=50.0, value=get_setting('ADD_MIN_PROFIT_PCT', 1.0, float), step=0.1)
+                add_min_score = st.slider("Score mínimo para add", 0.0, 1.0, get_setting('ADD_MIN_SCORE', 0.62, float), step=0.01)
+                add_min_confidence = st.slider("Confianza mínima para add", 0.0, 1.0, get_setting('ADD_MIN_CONFIDENCE', 0.65, float), step=0.01)
+            with col_p2:
+                add_max_per_symbol = st.number_input("Máx. adds por símbolo", min_value=0, max_value=10, value=get_setting('ADD_MAX_PER_SYMBOL', 1, int), step=1)
+                add_size_multiplier = st.slider("Tamaño add vs entrada", 0.05, 2.0, get_setting('ADD_SIZE_MULTIPLIER', 0.5, float), step=0.05)
+                break_even_enabled = st.checkbox("Break-even stop", value=get_setting('BREAK_EVEN_ENABLED', True, bool))
+                partial_tp_enabled = st.checkbox("Take-profit parcial", value=get_setting('PARTIAL_TAKE_PROFIT_ENABLED', True, bool))
+                partial_tp_pct = st.slider("Porcentaje a vender en TP parcial", 1.0, 100.0, get_setting('PARTIAL_TAKE_PROFIT_PCT', 50.0, float), step=1.0)
+
+            st.markdown("##### Observabilidad y alertas")
+            col_obs1, col_obs2 = st.columns(2)
+            with col_obs1:
+                alerts_enabled = st.checkbox("Alertas externas", value=get_setting('ALERTS_ENABLED', False, bool))
+                alert_webhook_url = st.text_input("Webhook de alertas", value=get_setting('ALERT_WEBHOOK_URL', ''), type="password")
+            with col_obs2:
+                health_export_enabled = st.checkbox("Exportar health/status", value=get_setting('HEALTH_EXPORT_ENABLED', True, bool))
+                structured_logs_enabled = st.checkbox("Logs estructurados", value=get_setting('STRUCTURED_LOGS_ENABLED', True, bool))
+                audit_events_enabled = st.checkbox("Audit events", value=get_setting('AUDIT_EVENTS_ENABLED', True, bool))
+
         # Guardar todo
         submit = st.form_submit_button(_('SAVE_SETTINGS'), type="primary", width="stretch")
         
@@ -266,8 +364,11 @@ def render_settings():
                 "MANUAL_MAX_POSITIONS_PRIORITY": bool(manual_cap),
                 "MAX_OPEN_POSITIONS": int(max_pos),
                 "MIN_PROFIT_NET": float(min_profit),
+                "STOP_LOSS_PERCENT": float(stop_loss_percent),
                 "RISK_PER_TRADE": riesgo / 100.0,
                 "MAX_DAILY_LOSS_PCT": float(max_daily_loss),
+                "MAX_PORTFOLIO_DRAWDOWN_PCT": float(max_portfolio_drawdown_pct),
+                "DRAWDOWN_COOLDOWN_HOURS": int(drawdown_cooldown_hours),
                 "MAX_PORTFOLIO_EXPOSURE_PCT": float(max_exposure),
                 "VOLATILITY_SIZING_ENABLED": bool(vol_sizing),
                 "MAX_POSITION_RISK_PCT": float(max_position_risk),
@@ -285,6 +386,49 @@ def render_settings():
                 "ROTATION_CONFIDENCE_GAP": float(rot_gap),
                 "ROTATION_MIN_NEW_CONFIDENCE": float(rot_min_new),
                 "AI_ANALYSIS_INTERVAL": int(ai_interval_min * 60),
+                "AI_BATCH_DECISIONS_ENABLED": bool(ai_batch_decisions_enabled),
+                "DAEMON_CYCLE_SECONDS": int(daemon_cycle_seconds),
+                "WATCHLIST_UPDATE_SECONDS": int(watchlist_update_seconds),
+                "DUST_WATCH_ENABLED": bool(dust_watch_enabled),
+                "DUST_AUTO_SELL_ENABLED": bool(dust_auto_sell_enabled),
+                "DUST_SELL_MIN_USDT": float(dust_sell_min_usdt),
+                "DUST_ALERT_ON_RECOVERABLE": bool(dust_alert_on_recoverable),
+                "DUST_LOG_COMPACT_ENABLED": bool(dust_log_compact_enabled),
+                "ORDER_RECONCILE_ENABLED": bool(order_reconcile_enabled),
+                "ORDER_RECONCILE_TIMEOUT_SECONDS": int(order_reconcile_timeout),
+                "ORDER_MAX_PENDING_SECONDS": int(order_max_pending),
+                "BUY_FEE_BUFFER_PCT": float(buy_fee_buffer_pct),
+                "ORDERBOOK_DEPTH_LEVELS": int(orderbook_depth_levels),
+                "KILL_SWITCH_ENABLED": bool(kill_switch_enabled),
+                "MAX_EXCHANGE_ERRORS_PER_CYCLE": int(max_exchange_errors),
+                "MAX_UNRECONCILED_ORDERS": int(max_unreconciled_orders),
+                "AUTO_PAUSE_ON_DB_EXCHANGE_MISMATCH": bool(auto_pause_mismatch),
+                "AUTO_PAUSE_ON_STALE_HEARTBEAT": bool(auto_pause_heartbeat),
+                "MACRO_ALTSEASON_BTC_DOM": float(macro_altseason_btc_dom),
+                "MACRO_RISK_ON_MAX_BTC_DOM": float(macro_risk_on_max_btc_dom),
+                "MACRO_CAUTION_RISK_OFF_BTC_DOM": float(macro_caution_risk_off_btc_dom),
+                "BACKTEST_HARD_VETO_WIN_RATE": float(backtest_hard_veto_wr),
+                "BACKTEST_HARD_VETO_MIN_TRADES": int(backtest_hard_veto_min_trades),
+                "AI_MAX_REQUESTS_PER_CYCLE": int(ai_max_requests_cycle),
+                "AI_MAX_REQUESTS_PER_DAY": int(ai_max_requests_day),
+                "AI_MAX_EST_TOKENS_PER_DAY": int(ai_max_tokens_day),
+                "AI_RULES_ONLY_ON_BUDGET_EXHAUSTED": bool(ai_rules_only_budget),
+                "AI_MAX_OUTPUT_TOKENS": int(ai_max_output_tokens),
+                "AI_PROVIDER_TIMEOUT_SECONDS": int(ai_provider_timeout_seconds),
+                "ADD_TO_WINNER_ENABLED": bool(add_to_winner_enabled),
+                "ADD_MIN_PROFIT_PCT": float(add_min_profit),
+                "ADD_MIN_SCORE": float(add_min_score),
+                "ADD_MIN_CONFIDENCE": float(add_min_confidence),
+                "ADD_MAX_PER_SYMBOL": int(add_max_per_symbol),
+                "ADD_SIZE_MULTIPLIER": float(add_size_multiplier),
+                "BREAK_EVEN_ENABLED": bool(break_even_enabled),
+                "PARTIAL_TAKE_PROFIT_ENABLED": bool(partial_tp_enabled),
+                "PARTIAL_TAKE_PROFIT_PCT": float(partial_tp_pct),
+                "ALERTS_ENABLED": bool(alerts_enabled),
+                "ALERT_WEBHOOK_URL": alert_webhook_url,
+                "HEALTH_EXPORT_ENABLED": bool(health_export_enabled),
+                "STRUCTURED_LOGS_ENABLED": bool(structured_logs_enabled),
+                "AUDIT_EVENTS_ENABLED": bool(audit_events_enabled),
                 "PROMPT_SENTIMENT": p_sent,
                 "PROMPT_DECISION": p_dec,
                 "PROMPT_CURATION": p_cur

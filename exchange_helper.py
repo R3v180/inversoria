@@ -3,6 +3,7 @@ import time
 import datetime
 import json
 import os
+import threading
 from config import (
     MODO_SIMULACION,
     PRESUPUESTO_INICIAL,
@@ -23,6 +24,7 @@ class ExchangeHelper:
         self.simulated_account_path = get_active_account_path() if self.modo_simulacion else 'simulated_account.json'
         self.private_exchange = None
         self.public_exchange = None
+        self._order_lock = threading.RLock()
         
         if self.modo_simulacion:
             self._load_simulated_state()
@@ -144,11 +146,18 @@ class ExchangeHelper:
         raise last_error
 
     def _save_simulated_state(self):
-        with open(self.simulated_account_path, 'w') as f:
+        path = self.simulated_account_path
+        directory = os.path.dirname(os.path.abspath(path))
+        os.makedirs(directory, exist_ok=True)
+        tmp_path = f"{path}.tmp"
+        with open(tmp_path, 'w') as f:
             json.dump({
                 'virtual_balance': self.virtual_balance,
                 'virtual_portfolio': self.virtual_portfolio
             }, f)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp_path, path)
 
     def _load_simulated_state(self):
         if os.path.exists(self.simulated_account_path):
@@ -267,6 +276,32 @@ class ExchangeHelper:
                 time.sleep(1.5) # Esperar 1.5s antes de reintentar
 
     def execute_order(self, symbol, side, amount, price=None, force_market=False):
+        with self._order_lock:
+            return self._execute_order_inner(symbol, side, amount, price, force_market)
+
+    def _reconcile_created_order(self, exchange, symbol, order):
+        order_id = order.get('id')
+        if not order_id:
+            return order
+        deadline = time.time() + int(get_setting('ORDER_RECONCILE_TIMEOUT_SECONDS', 30) or 30)
+        while str(order.get('status') or '').lower() == 'open' and time.time() < deadline:
+            try:
+                time.sleep(1.0)
+                refreshed = exchange.fetch_order(order_id, symbol)
+                if refreshed:
+                    order.update(refreshed)
+            except Exception as e:
+                self._log_exchange_warning("Aviso: no se pudo reconciliar orden recién creada", e)
+                break
+        status = str(order.get('status') or '').lower()
+        filled = float(order.get('filled') or 0)
+        if status == 'open' and filled > 0:
+            order['status'] = 'partial'
+        elif not status:
+            order['status'] = 'partial' if filled > 0 else 'open'
+        return order
+
+    def _execute_order_inner(self, symbol, side, amount, price=None, force_market=False):
         """
         Ejecuta una orden. Si es simulación, actualiza los saldos virtuales.
         En simulación siempre asumimos que la orden se ejecuta al precio de mercado (ticker) actual.
@@ -322,11 +357,9 @@ class ExchangeHelper:
                     # Truncar cantidad a la precisión permitida
                     formatted_amount = float(exchange.amount_to_precision(symbol, amount))
                     if side == "sell":
-                        bal2 = exchange.fetch_balance()
-                        free2 = float(bal2.get("free", {}).get(coin) or 0)
-                        if formatted_amount > free2:
+                        if formatted_amount > free_coin:
                             formatted_amount = float(
-                                exchange.amount_to_precision(symbol, free2 * 0.9999)
+                                exchange.amount_to_precision(symbol, free_coin * 0.9999)
                             )
                         if formatted_amount <= 0:
                             return {"status": "failed", "reason": "Ajuste de precisión: cantidad no vendible"}
@@ -359,11 +392,10 @@ class ExchangeHelper:
 
                     # Ejecutar orden real
                     order = exchange.create_market_order(symbol, side, formatted_amount)
+                    order = self._reconcile_created_order(exchange, symbol, order)
                     
                     # Validar estado
-                    if order.get('status') in ['closed', 'open'] or order.get('id'):
-                        if not order.get('status'):
-                            order['status'] = 'closed'
+                    if order.get('status') in ['closed', 'partial', 'open']:
                         return order
                     else:
                         return {"status": "failed", "reason": f"Order status fallido: {order.get('status')}"}

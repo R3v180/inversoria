@@ -201,6 +201,115 @@ class DatabaseManager:
                 cursor.execute(
                     f'CREATE INDEX IF NOT EXISTS {idx_name} ON decision_journal ({idx_cols})'
                 )
+
+            # Exchange Balance Watch: inventario real/simulado observado por el daemon.
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS exchange_balance_watch (
+                    symbol TEXT PRIMARY KEY,
+                    coin TEXT,
+                    free REAL,
+                    total REAL,
+                    usd_free REAL,
+                    usd_total REAL,
+                    status TEXT,
+                    min_amount REAL,
+                    min_cost REAL,
+                    missing_qty REAL,
+                    target_price REAL,
+                    in_open_position INTEGER,
+                    first_seen REAL,
+                    last_seen REAL,
+                    last_transition REAL,
+                    details TEXT
+                )
+            ''')
+            for idx_name, idx_cols in {
+                'idx_exchange_balance_watch_status': 'status',
+                'idx_exchange_balance_watch_seen': 'last_seen',
+            }.items():
+                cursor.execute(
+                    f'CREATE INDEX IF NOT EXISTS {idx_name} ON exchange_balance_watch ({idx_cols})'
+                )
+
+            # AI Usage Events: presupuesto preventivo de requests/tokens estimados.
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS ai_usage_events (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    timestamp REAL,
+                    provider TEXT,
+                    feature TEXT,
+                    prompt_hash TEXT,
+                    estimated_input_tokens INTEGER,
+                    estimated_output_tokens INTEGER,
+                    success INTEGER,
+                    blocked_reason TEXT
+                )
+            ''')
+            for idx_name, idx_cols in {
+                'idx_ai_usage_ts': 'timestamp',
+                'idx_ai_usage_provider_feature': 'provider, feature',
+            }.items():
+                cursor.execute(
+                    f'CREATE INDEX IF NOT EXISTS {idx_name} ON ai_usage_events ({idx_cols})'
+                )
+
+            # Exchange Order Events: auditoría local de órdenes enviadas al exchange.
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS exchange_order_events (
+                    local_order_id TEXT PRIMARY KEY,
+                    exchange_order_id TEXT,
+                    decision_journal_id INTEGER,
+                    symbol TEXT,
+                    side TEXT,
+                    requested_amount REAL,
+                    requested_price REAL,
+                    executed_amount REAL,
+                    executed_price REAL,
+                    status TEXT,
+                    reason TEXT,
+                    raw_json TEXT,
+                    created_at REAL,
+                    updated_at REAL
+                )
+            ''')
+            for idx_name, idx_cols in {
+                'idx_exchange_order_events_symbol': 'symbol, created_at',
+                'idx_exchange_order_events_status': 'status, updated_at',
+                'idx_exchange_order_events_exchange_id': 'exchange_order_id',
+            }.items():
+                cursor.execute(
+                    f'CREATE INDEX IF NOT EXISTS {idx_name} ON exchange_order_events ({idx_cols})'
+                )
+
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS audit_events (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    timestamp REAL,
+                    event_type TEXT,
+                    symbol TEXT,
+                    severity TEXT,
+                    message TEXT,
+                    payload_json TEXT
+                )
+            ''')
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS cycle_replay_snapshots (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    cycle_id TEXT,
+                    timestamp REAL,
+                    phase TEXT,
+                    payload_json TEXT
+                )
+            ''')
+            for idx_name, idx_cols in {
+                'idx_audit_events_type_ts': 'event_type, timestamp',
+                'idx_audit_events_symbol_ts': 'symbol, timestamp',
+                'idx_cycle_replay_cycle_phase': 'cycle_id, phase',
+            }.items():
+                table = 'audit_events' if idx_name.startswith('idx_audit') else 'cycle_replay_snapshots'
+                cursor.execute(
+                    f'CREATE INDEX IF NOT EXISTS {idx_name} ON {table} ({idx_cols})'
+                )
             
             conn.commit()
 
@@ -268,6 +377,165 @@ class DatabaseManager:
             cursor = conn.execute('SELECT * FROM open_positions')
             return {row['symbol']: dict(row) for row in cursor.fetchall()}
 
+    def upsert_exchange_balance_watch(self, payload):
+        now = time.time()
+        symbol = str(payload.get('symbol') or '').strip().upper()
+        if not symbol:
+            coin = str(payload.get('coin') or '').strip().upper() or 'UNKNOWN'
+            symbol = f"UNROUTABLE:{coin}"
+        status = str(payload.get('status') or 'UNKNOWN')
+        with self._get_connection() as conn:
+            row = conn.execute(
+                'SELECT status, first_seen, last_transition FROM exchange_balance_watch WHERE symbol = ?',
+                (symbol,),
+            ).fetchone()
+            first_seen = float(row['first_seen']) if row and row['first_seen'] else now
+            previous_status = row['status'] if row else None
+            last_transition = float(row['last_transition']) if row and row['last_transition'] else now
+            transitioned = bool(previous_status and previous_status != status)
+            if transitioned:
+                last_transition = now
+            conn.execute(
+                '''
+                INSERT OR REPLACE INTO exchange_balance_watch
+                    (symbol, coin, free, total, usd_free, usd_total, status,
+                     min_amount, min_cost, missing_qty, target_price, in_open_position,
+                     first_seen, last_seen, last_transition, details)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ''',
+                (
+                    symbol,
+                    str(payload.get('coin') or ''),
+                    float(payload.get('free') or 0),
+                    float(payload.get('total') or 0),
+                    float(payload.get('usd_free') or 0),
+                    float(payload.get('usd_total') or 0),
+                    status,
+                    float(payload.get('min_amount') or 0),
+                    float(payload.get('min_cost') or 0),
+                    float(payload.get('missing_qty') or 0),
+                    float(payload.get('target_price') or 0),
+                    1 if payload.get('in_open_position') else 0,
+                    first_seen,
+                    now,
+                    last_transition,
+                    self._json_or_none(payload.get('details') or {}),
+                ),
+            )
+            conn.commit()
+        return {
+            'symbol': symbol,
+            'previous_status': previous_status,
+            'status': status,
+            'transitioned': transitioned,
+        }
+
+    def get_exchange_balance_watch(self, limit=500):
+        limit = max(1, min(int(limit), 5000))
+        with self._get_connection() as conn:
+            cursor = conn.execute(
+                '''
+                SELECT * FROM exchange_balance_watch
+                ORDER BY usd_total DESC, last_seen DESC
+                LIMIT ?
+                ''',
+                (limit,),
+            )
+            return [dict(row) for row in cursor.fetchall()]
+
+    def get_exchange_balance_watch_summary(self):
+        with self._get_connection() as conn:
+            rows = conn.execute(
+                '''
+                SELECT status, COUNT(*) AS count, SUM(usd_total) AS usd_total
+                FROM exchange_balance_watch
+                GROUP BY status
+                '''
+            ).fetchall()
+        return {
+            row['status']: {
+                'count': int(row['count'] or 0),
+                'usd_total': float(row['usd_total'] or 0),
+            }
+            for row in rows
+        }
+
+    def record_ai_usage(
+        self,
+        provider,
+        feature,
+        prompt_hash,
+        estimated_input_tokens=0,
+        estimated_output_tokens=0,
+        success=True,
+        blocked_reason='',
+        timestamp=None,
+    ):
+        ts = time.time() if timestamp is None else float(timestamp)
+        with self._get_connection() as conn:
+            conn.execute(
+                '''
+                INSERT INTO ai_usage_events
+                    (timestamp, provider, feature, prompt_hash, estimated_input_tokens,
+                     estimated_output_tokens, success, blocked_reason)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                ''',
+                (
+                    ts,
+                    str(provider or ''),
+                    str(feature or 'general'),
+                    str(prompt_hash or ''),
+                    int(estimated_input_tokens or 0),
+                    int(estimated_output_tokens or 0),
+                    1 if success else 0,
+                    str(blocked_reason or ''),
+                ),
+            )
+            conn.commit()
+
+    def get_ai_usage_summary(self, since_ts=None):
+        if since_ts is None:
+            since_ts = time.time() - 86400
+        with self._get_connection() as conn:
+            row = conn.execute(
+                '''
+                SELECT
+                    COUNT(*) AS requests,
+                    SUM(CASE WHEN success = 1 THEN 1 ELSE 0 END) AS successes,
+                    SUM(CASE WHEN success = 0 THEN 1 ELSE 0 END) AS blocked,
+                    SUM(estimated_input_tokens) AS input_tokens,
+                    SUM(estimated_output_tokens) AS output_tokens
+                FROM ai_usage_events
+                WHERE timestamp >= ?
+                ''',
+                (float(since_ts),),
+            ).fetchone()
+            by_feature = conn.execute(
+                '''
+                SELECT feature, COUNT(*) AS requests,
+                       SUM(estimated_input_tokens + estimated_output_tokens) AS tokens
+                FROM ai_usage_events
+                WHERE timestamp >= ?
+                GROUP BY feature
+                ''',
+                (float(since_ts),),
+            ).fetchall()
+        return {
+            'requests': int(row['requests'] or 0) if row else 0,
+            'successes': int(row['successes'] or 0) if row else 0,
+            'blocked': int(row['blocked'] or 0) if row else 0,
+            'input_tokens': int(row['input_tokens'] or 0) if row else 0,
+            'output_tokens': int(row['output_tokens'] or 0) if row else 0,
+            'estimated_tokens': int((row['input_tokens'] or 0) + (row['output_tokens'] or 0)) if row else 0,
+            'by_feature': {
+                item['feature']: {
+                    'requests': int(item['requests'] or 0),
+                    'tokens': int(item['tokens'] or 0),
+                }
+                for item in by_feature
+            },
+        }
+
     def add_open_position(self, symbol, entry_price, highest_price, amount, entry_time=None, extra_data=None):
         if entry_time is None:
             entry_time = time.time()
@@ -278,9 +546,193 @@ class DatabaseManager:
             ''', (symbol, entry_price, highest_price, amount, entry_time, extra_data))
             conn.commit()
 
+    def add_open_position_with_trade(
+        self,
+        symbol,
+        entry_price,
+        highest_price,
+        amount,
+        trade_reason,
+        pnl_pct=0.0,
+        entry_time=None,
+        extra_data=None,
+    ):
+        if entry_time is None:
+            entry_time = time.time()
+        with self._get_connection() as conn:
+            conn.execute('''
+                INSERT OR REPLACE INTO open_positions (symbol, entry_price, highest_price, amount, entry_time, extra_data)
+                VALUES (?, ?, ?, ?, ?, ?)
+            ''', (symbol, entry_price, highest_price, amount, entry_time, extra_data))
+            cursor = conn.execute('''
+                INSERT INTO trades (symbol, side, price, amount, reason, pnl_pct, timestamp)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            ''', (symbol, 'buy', float(entry_price), float(amount), trade_reason, float(pnl_pct or 0), time.time()))
+            conn.commit()
+            return cursor.lastrowid
+
+    def add_to_open_position_with_trade(
+        self,
+        symbol,
+        add_price,
+        add_amount,
+        trade_reason,
+        extra_data=None,
+        pnl_pct=0.0,
+    ):
+        with self._get_connection() as conn:
+            row = conn.execute(
+                'SELECT entry_price, highest_price, amount FROM open_positions WHERE symbol = ?',
+                (symbol,),
+            ).fetchone()
+            if not row:
+                return None
+            old_amount = float(row['amount'] or 0)
+            amount = float(add_amount or 0)
+            if old_amount <= 0 or amount <= 0:
+                return None
+            old_entry = float(row['entry_price'] or 0)
+            price = float(add_price or 0)
+            new_amount = old_amount + amount
+            new_entry = ((old_entry * old_amount) + (price * amount)) / new_amount if new_amount > 0 else price
+            highest = max(float(row['highest_price'] or 0), price)
+            conn.execute(
+                '''
+                UPDATE open_positions
+                SET entry_price = ?, highest_price = ?, amount = ?, extra_data = ?
+                WHERE symbol = ?
+                ''',
+                (new_entry, highest, new_amount, extra_data, symbol),
+            )
+            cursor = conn.execute('''
+                INSERT INTO trades (symbol, side, price, amount, reason, pnl_pct, timestamp)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            ''', (symbol, 'buy', price, amount, trade_reason, float(pnl_pct or 0), time.time()))
+            conn.commit()
+            return {
+                'trade_id': cursor.lastrowid,
+                'entry_price': new_entry,
+                'highest_price': highest,
+                'amount': new_amount,
+            }
+
+    def record_order_event(
+        self,
+        local_order_id,
+        symbol,
+        side,
+        requested_amount=0,
+        requested_price=0,
+        status='created',
+        decision_journal_id=None,
+        exchange_order_id='',
+        executed_amount=0,
+        executed_price=0,
+        reason='',
+        raw=None,
+    ):
+        now = time.time()
+        raw_json = self._json_or_none(raw) if raw is not None else None
+        with self._get_connection() as conn:
+            row = conn.execute(
+                'SELECT created_at FROM exchange_order_events WHERE local_order_id = ?',
+                (str(local_order_id),),
+            ).fetchone()
+            created_at = float(row['created_at']) if row and row['created_at'] else now
+            conn.execute(
+                '''
+                INSERT OR REPLACE INTO exchange_order_events
+                    (local_order_id, exchange_order_id, decision_journal_id, symbol, side,
+                     requested_amount, requested_price, executed_amount, executed_price,
+                     status, reason, raw_json, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ''',
+                (
+                    str(local_order_id),
+                    str(exchange_order_id or ''),
+                    decision_journal_id,
+                    str(symbol),
+                    str(side),
+                    float(requested_amount or 0),
+                    float(requested_price or 0),
+                    float(executed_amount or 0),
+                    float(executed_price or 0),
+                    str(status or ''),
+                    str(reason or ''),
+                    raw_json,
+                    created_at,
+                    now,
+                ),
+            )
+            conn.commit()
+
+    def get_unreconciled_order_events(self, max_age_seconds=0, limit=100):
+        params = []
+        where = "LOWER(status) IN ('open', 'submitted', 'pending')"
+        if max_age_seconds and float(max_age_seconds) > 0:
+            where += " AND updated_at <= ?"
+            params.append(time.time() - float(max_age_seconds))
+        params.append(max(1, min(int(limit), 1000)))
+        with self._get_connection() as conn:
+            rows = conn.execute(
+                f'''
+                SELECT * FROM exchange_order_events
+                WHERE {where}
+                ORDER BY updated_at ASC
+                LIMIT ?
+                ''',
+                tuple(params),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def add_audit_event(self, event_type, message='', symbol='', severity='info', payload=None, timestamp=None):
+        ts = time.time() if timestamp is None else float(timestamp)
+        with self._get_connection() as conn:
+            cursor = conn.execute(
+                '''
+                INSERT INTO audit_events
+                    (timestamp, event_type, symbol, severity, message, payload_json)
+                VALUES (?, ?, ?, ?, ?, ?)
+                ''',
+                (
+                    ts,
+                    str(event_type or ''),
+                    str(symbol or ''),
+                    str(severity or 'info'),
+                    str(message or ''),
+                    self._json_or_none(payload or {}),
+                ),
+            )
+            conn.commit()
+            return cursor.lastrowid
+
+    def add_cycle_replay_snapshot(self, cycle_id, phase, payload=None, timestamp=None):
+        ts = time.time() if timestamp is None else float(timestamp)
+        with self._get_connection() as conn:
+            cursor = conn.execute(
+                '''
+                INSERT INTO cycle_replay_snapshots
+                    (cycle_id, timestamp, phase, payload_json)
+                VALUES (?, ?, ?, ?)
+                ''',
+                (
+                    str(cycle_id or ''),
+                    ts,
+                    str(phase or ''),
+                    self._json_or_none(payload or {}),
+                ),
+            )
+            conn.commit()
+            return cursor.lastrowid
+
     def update_highest_price(self, symbol, highest_price):
         with self._get_connection() as conn:
             conn.execute('UPDATE open_positions SET highest_price = ? WHERE symbol = ?', (highest_price, symbol))
+            conn.commit()
+
+    def update_position_extra_data(self, symbol, extra_data):
+        with self._get_connection() as conn:
+            conn.execute('UPDATE open_positions SET extra_data = ? WHERE symbol = ?', (extra_data, symbol))
             conn.commit()
 
     def remove_open_position(self, symbol):

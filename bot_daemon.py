@@ -2,6 +2,7 @@ import time
 import os
 import json
 import sys
+import uuid
 import config 
 from exchange_helper import ExchangeHelper
 from sentiment_engine import SentimentEngine
@@ -139,10 +140,22 @@ class BotDaemon:
                 "reason": (state_info or {}).get("reason", ""),
             }
         payload["ai_provider_cooldowns"] = ai_cooldowns
+        try:
+            payload["ai_usage_24h"] = self.db.get_ai_usage_summary(time.time() - 86400)
+        except Exception:
+            payload["ai_usage_24h"] = {}
         if state == "cycle_done":
             payload["cycle_ts"] = payload["state_ts"]
         payload.update(extra)
         self.db.set_system_status("daemon_diagnostics", json.dumps(payload))
+        if getattr(config, "HEALTH_EXPORT_ENABLED", True):
+            try:
+                health_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "launcher_logs")
+                os.makedirs(health_dir, exist_ok=True)
+                with open(os.path.join(health_dir, "health.json"), "w", encoding="utf-8") as f:
+                    json.dump(payload, f, ensure_ascii=False, indent=2)
+            except Exception:
+                pass
 
     def is_consultive_mode(self):
         return getattr(config, "TRADING_EXECUTION_MODE", "auto") == "consultive"
@@ -158,6 +171,197 @@ class BotDaemon:
 
     def _status_float(self, key, default=0.0):
         return self._safe_float(self.db.get_system_status(key, default), default)
+
+    def _trigger_kill_switch(self, reason, details=None):
+        if not getattr(config, "KILL_SWITCH_ENABLED", True):
+            return False
+        payload = {
+            "reason": str(reason),
+            "details": details or {},
+            "timestamp": time.time(),
+        }
+        self.db.set_system_status("is_running", "false")
+        self.db.set_system_status("kill_switch_last", json.dumps(payload, ensure_ascii=False))
+        self.update_daemon_status("kill_switch", kill_switch=payload)
+        self.log_message(f"[KILL_SWITCH] Trading pausado | reason={reason} | details={details or {}}")
+        return True
+
+    def _new_local_order_id(self, symbol, side):
+        base = str(symbol or "").replace("/", "")
+        return f"{int(time.time() * 1000)}-{base}-{str(side).upper()}-{uuid.uuid4().hex[:8]}"
+
+    def _order_execution_details(self, order_result, fallback_amount, fallback_price):
+        status = str((order_result or {}).get("status") or "")
+        filled = self._safe_float((order_result or {}).get("filled"), 0.0)
+        if filled <= 0:
+            filled = self._safe_float((order_result or {}).get("amount"), 0.0)
+        if filled <= 0 and status == "simulated":
+            filled = self._safe_float(fallback_amount, 0.0)
+        price = self._safe_float((order_result or {}).get("average"), 0.0)
+        if price <= 0:
+            price = self._safe_float((order_result or {}).get("price"), 0.0)
+        if price <= 0:
+            price = self._safe_float(fallback_price, 0.0)
+        return filled, price
+
+    def _is_filled_order_status(self, order_result):
+        status = str((order_result or {}).get("status") or "").lower()
+        if status in {"closed", "simulated", "partial"}:
+            return True
+        return status == "open" and self._safe_float((order_result or {}).get("filled"), 0.0) > 0
+
+    def _record_order_event(
+        self,
+        local_order_id,
+        symbol,
+        side,
+        requested_amount,
+        requested_price,
+        order_result,
+        decision_journal_id=None,
+    ):
+        try:
+            executed_amount, executed_price = self._order_execution_details(
+                order_result,
+                requested_amount,
+                requested_price,
+            )
+            self.db.record_order_event(
+                local_order_id=local_order_id,
+                symbol=symbol,
+                side=side,
+                requested_amount=requested_amount,
+                requested_price=requested_price,
+                status=(order_result or {}).get("status", "unknown"),
+                decision_journal_id=decision_journal_id,
+                exchange_order_id=(order_result or {}).get("id", ""),
+                executed_amount=executed_amount,
+                executed_price=executed_price,
+                reason=(order_result or {}).get("reason", ""),
+                raw=order_result,
+            )
+            if getattr(config, "AUDIT_EVENTS_ENABLED", True):
+                self.db.add_audit_event(
+                    "order_event",
+                    f"{symbol} {side} {((order_result or {}).get('status') or 'unknown')}",
+                    symbol=symbol,
+                    severity="info" if (order_result or {}).get("status") in ("closed", "simulated", "partial") else "warning",
+                    payload={
+                        "local_order_id": local_order_id,
+                        "side": side,
+                        "requested_amount": requested_amount,
+                        "requested_price": requested_price,
+                        "order": order_result,
+                    },
+                )
+        except Exception as exc:
+            self.log_message(f"[WARN] order audit failed | {symbol} {side} | reason={self._short_reason(exc, 100)}")
+
+    def _audit_event(self, event_type, message='', symbol='', severity='info', payload=None):
+        if not getattr(config, "AUDIT_EVENTS_ENABLED", True):
+            return None
+        try:
+            return self.db.add_audit_event(event_type, message, symbol=symbol, severity=severity, payload=payload or {})
+        except Exception:
+            return None
+
+    def _cycle_snapshot(self, cycle_id, phase, payload=None):
+        if not getattr(config, "AUDIT_EVENTS_ENABLED", True):
+            return None
+        try:
+            return self.db.add_cycle_replay_snapshot(cycle_id, phase, payload or {})
+        except Exception:
+            return None
+
+    def _position_balance_mismatches(self, open_positions):
+        mismatches = []
+        if self.exchange.modo_simulacion:
+            return mismatches
+        for symbol, pos in (open_positions or {}).items():
+            expected = self._safe_float(pos.get("amount"), 0.0)
+            if expected <= 0:
+                continue
+            try:
+                actual = self._safe_float(self.exchange.get_coin_balance(symbol), 0.0)
+            except Exception as exc:
+                mismatches.append({"symbol": symbol, "reason": f"BALANCE_ERROR:{exc}"})
+                continue
+            tolerance = max(1e-8, expected * 0.001)
+            if actual + tolerance < expected:
+                mismatches.append({
+                    "symbol": symbol,
+                    "db_amount": round(expected, 10),
+                    "exchange_amount": round(actual, 10),
+                })
+        return mismatches
+
+    def evaluate_operational_kill_switches(self, total_value, open_positions):
+        if not getattr(config, "KILL_SWITCH_ENABLED", True):
+            return {"ok": True, "reasons": []}
+        reasons = []
+        details = {}
+
+        if total_value <= 0:
+            reasons.append("NO_EQUITY")
+
+        peak_key = "sim_equity_peak" if self.exchange.modo_simulacion else "real_equity_peak"
+        peak = self._status_float(peak_key, 0.0)
+        if total_value > 0:
+            if peak <= 0 or total_value > peak:
+                peak = total_value
+                self.db.set_system_status(peak_key, peak)
+            max_drawdown = float(getattr(config, "MAX_PORTFOLIO_DRAWDOWN_PCT", 0.15) or 0.15)
+            drawdown_pct = ((peak - total_value) / peak) if peak > 0 else 0.0
+            details["portfolio_drawdown_pct"] = round(drawdown_pct * 100, 3)
+            details["portfolio_equity_peak"] = round(peak, 8)
+            if max_drawdown > 0 and drawdown_pct >= max_drawdown:
+                reasons.append("PORTFOLIO_DRAWDOWN")
+                cooldown_until = time.time() + (int(getattr(config, "DRAWDOWN_COOLDOWN_HOURS", 24) or 24) * 3600)
+                self.db.set_system_status("drawdown_cooldown_until", cooldown_until)
+
+        if getattr(config, "AUTO_PAUSE_ON_DB_EXCHANGE_MISMATCH", True):
+            mismatches = self._position_balance_mismatches(open_positions)
+            if mismatches:
+                reasons.append("DB_EXCHANGE_MISMATCH")
+                details["mismatches"] = mismatches[:8]
+
+        try:
+            max_unreconciled = int(getattr(config, "MAX_UNRECONCILED_ORDERS", 0) or 0)
+            if max_unreconciled >= 0:
+                stale_seconds = int(getattr(config, "ORDER_MAX_PENDING_SECONDS", 120) or 120)
+                pending_orders = self.db.get_unreconciled_order_events(max_age_seconds=stale_seconds, limit=25)
+                if len(pending_orders) > max_unreconciled:
+                    reasons.append("UNRECONCILED_ORDERS")
+                    details["unreconciled_orders"] = [
+                        {
+                            "local_order_id": item.get("local_order_id"),
+                            "symbol": item.get("symbol"),
+                            "side": item.get("side"),
+                            "status": item.get("status"),
+                        }
+                        for item in pending_orders[:8]
+                    ]
+        except Exception:
+            pass
+
+        try:
+            ai_day = self.db.get_ai_usage_summary(time.time() - 86400)
+            max_requests = int(getattr(config, "AI_MAX_REQUESTS_PER_DAY", 0) or 0)
+            max_tokens = int(getattr(config, "AI_MAX_EST_TOKENS_PER_DAY", 0) or 0)
+            ai_exhausted = (
+                (max_requests > 0 and ai_day.get("requests", 0) >= max_requests)
+                or (max_tokens > 0 and ai_day.get("estimated_tokens", 0) >= max_tokens)
+            )
+            if ai_exhausted and not getattr(config, "AI_RULES_ONLY_ON_BUDGET_EXHAUSTED", True):
+                reasons.append("AI_BUDGET_EXHAUSTED")
+                details["ai_usage_24h"] = ai_day
+        except Exception:
+            pass
+
+        if reasons:
+            self._trigger_kill_switch(";".join(reasons), details)
+            return {"ok": False, "reasons": reasons, "details": details}
+        return {"ok": True, "reasons": []}
 
     def _clamp(self, value, low, high):
         return max(low, min(high, value))
@@ -294,6 +498,74 @@ class BotDaemon:
             "min_notional": min_notional,
             "validation": validation or {},
         }
+
+    def _dust_watch_payload(self, row, symbol, status, balance_state=None, in_open_position=False):
+        balance_state = balance_state or {}
+        validation = balance_state.get("validation") or {}
+        errors = validation.get("errors") or []
+        amount = self._safe_float(row.get("free"), 0.0)
+        total = self._safe_float(row.get("total"), amount)
+        usd_free = self._safe_float(row.get("usd_free"), balance_state.get("value", 0.0))
+        usd_total = self._safe_float(row.get("usd_total"), usd_free)
+        price = self._safe_float(balance_state.get("price"), 0.0)
+        min_amount = self._safe_float(validation.get("min_amount"), 0.0)
+        min_cost = self._safe_float(validation.get("min_cost"), 0.0)
+        missing_qty = 0.0
+        target_price = 0.0
+
+        for err in errors:
+            text = str(err)
+            if text.startswith("BELOW_MIN_AMOUNT:"):
+                min_amount = self._safe_float(text.split(":", 1)[1], min_amount)
+            elif text.startswith("BELOW_MIN_COST:"):
+                parts = text.split(":")
+                if len(parts) > 1:
+                    min_cost = self._safe_float(parts[1], min_cost)
+
+        if status == "DUST_BELOW_MIN_ORDER":
+            if min_amount > 0 and amount > 0:
+                missing_qty = max(0.0, min_amount - amount)
+            effective_min_notional = max(
+                self._safe_float(balance_state.get("min_notional"), 0.0),
+                min_cost,
+                self._safe_float(getattr(config, "DUST_SELL_MIN_USDT", 0.0), 0.0),
+            )
+            if amount > 0 and effective_min_notional > usd_free:
+                target_price = effective_min_notional / amount
+                if price > 0 and min_amount <= 0:
+                    missing_qty = max(0.0, (effective_min_notional / price) - amount)
+
+        return {
+            "symbol": symbol,
+            "coin": row.get("coin"),
+            "free": amount,
+            "total": total,
+            "usd_free": usd_free,
+            "usd_total": usd_total,
+            "status": status,
+            "min_amount": min_amount,
+            "min_cost": min_cost,
+            "missing_qty": missing_qty,
+            "target_price": target_price,
+            "in_open_position": in_open_position,
+            "details": {
+                "price": price,
+                "errors": errors,
+                "min_notional": balance_state.get("min_notional"),
+                "amount_after_precision": validation.get("amount_after_precision"),
+            },
+        }
+
+    def _record_balance_watch(self, row, symbol, status, balance_state=None, in_open_position=False):
+        if not getattr(config, "DUST_WATCH_ENABLED", True):
+            return None
+        try:
+            return self.db.upsert_exchange_balance_watch(
+                self._dust_watch_payload(row, symbol, status, balance_state, in_open_position)
+            )
+        except Exception as exc:
+            self.log_message(f"[WARN] Dust watch update failed | reason={self._short_reason(exc, 100)}")
+            return None
 
     def _position_extra(self, pos):
         raw = (pos or {}).get('extra_data')
@@ -533,6 +805,8 @@ class BotDaemon:
         """Adopta saldos vendibles aunque no pertenezcan al universo de nuevas compras."""
         adopted = []
         skipped = {}
+        dust_rows = []
+        transitions = []
         ignored_coins = {"USDT", "USD", "EUR", "USDC", "DAI", "TUSD", "BUSD", "PYUSD"}
         try:
             rows = self.exchange.get_spot_inventory_rows()
@@ -543,9 +817,17 @@ class BotDaemon:
         for row in rows:
             coin = str(row.get("coin") or "").upper()
             symbol = row.get("symbol")
-            if not symbol or coin in ignored_coins:
+            if coin in ignored_coins:
+                continue
+            if not symbol:
+                watch = self._record_balance_watch(row, None, "UNROUTABLE_BALANCE")
+                if watch and watch.get("transitioned"):
+                    transitions.append(watch)
                 continue
             if symbol in open_positions:
+                watch = self._record_balance_watch(row, symbol, "IN_OPEN_POSITION", in_open_position=True)
+                if watch and watch.get("transitioned"):
+                    transitions.append(watch)
                 continue
 
             try:
@@ -557,6 +839,9 @@ class BotDaemon:
             price = (usd_free / free_amount) if free_amount > 0 else 0.0
             if free_amount <= 0 or price <= 0:
                 skipped["ADOPT_NO_VALUE"] = skipped.get("ADOPT_NO_VALUE", 0) + 1
+                watch = self._record_balance_watch(row, symbol, "NO_VALUE")
+                if watch and watch.get("transitioned"):
+                    transitions.append(watch)
                 continue
 
             balance_state = self._sellable_balance_snapshot(
@@ -569,10 +854,15 @@ class BotDaemon:
             notional_est = self._safe_float(balance_state.get("value"), usd_free)
             if balance_state.get("status") == "DUST_BELOW_MIN_ORDER":
                 skipped["ADOPT_DUST_BELOW_MIN_ORDER"] = skipped.get("ADOPT_DUST_BELOW_MIN_ORDER", 0) + 1
-                self.log_message(
-                    f"[SKIP] {symbol} adopt ignored | reason=DUST_BELOW_MIN_ORDER | "
-                    f"value={notional_est:.4f} < min={min_notional:.4f} | qty={free_amount:.8g}"
-                )
+                watch = self._record_balance_watch(row, symbol, "DUST_BELOW_MIN_ORDER", balance_state)
+                if watch and watch.get("transitioned"):
+                    transitions.append(watch)
+                dust_rows.append((symbol, notional_est, min_notional, free_amount))
+                if not getattr(config, "DUST_LOG_COMPACT_ENABLED", True):
+                    self.log_message(
+                        f"[SKIP] {symbol} adopt ignored | reason=DUST_BELOW_MIN_ORDER | "
+                        f"value={notional_est:.4f} < min={min_notional:.4f} | qty={free_amount:.8g}"
+                    )
                 continue
 
             if self.exchange.modo_simulacion:
@@ -583,6 +873,9 @@ class BotDaemon:
                 if not validation.get("ok"):
                     errors = ",".join(validation.get("errors") or ["UNKNOWN"])
                     skipped["ADOPT_UNSELLABLE"] = skipped.get("ADOPT_UNSELLABLE", 0) + 1
+                    watch = self._record_balance_watch(row, symbol, "ADOPT_UNSELLABLE", balance_state)
+                    if watch and watch.get("transitioned"):
+                        transitions.append(watch)
                     self.log_message(
                         f"[SKIP] {symbol} adopt ignored | reason=ADOPT_UNSELLABLE | "
                         f"errors={errors} | value={notional_est:.4f} | min={min_notional:.4f} | qty={free_amount:.8g}"
@@ -592,10 +885,37 @@ class BotDaemon:
                 notional = self._safe_float(validation.get("notional"), amount * price)
             if amount <= 0 or notional <= 0:
                 skipped["ADOPT_ZERO_AFTER_PRECISION"] = skipped.get("ADOPT_ZERO_AFTER_PRECISION", 0) + 1
+                watch = self._record_balance_watch(row, symbol, "ADOPT_ZERO_AFTER_PRECISION", balance_state)
+                if watch and watch.get("transitioned"):
+                    transitions.append(watch)
                 continue
 
+            watch = self._record_balance_watch(row, symbol, "SELLABLE_ADOPTABLE_BALANCE", balance_state)
+            if watch and watch.get("transitioned"):
+                transitions.append(watch)
             self._record_adopted_position(symbol, price, amount, notional, open_positions)
             adopted.append(symbol)
+
+        if dust_rows and getattr(config, "DUST_LOG_COMPACT_ENABLED", True):
+            top = ", ".join(
+                f"{sym}={value:.4f}/{minimum:.2f}"
+                for sym, value, minimum, _ in sorted(dust_rows, key=lambda item: item[1], reverse=True)[:8]
+            )
+            self.log_message(
+                f"[SKIP] dust watch compact | reason=DUST_BELOW_MIN_ORDER | "
+                f"count={len(dust_rows)} | top={top}"
+            )
+        if transitions and getattr(config, "DUST_ALERT_ON_RECOVERABLE", True):
+            interesting = [
+                t for t in transitions
+                if t.get("status") in {"SELLABLE_ADOPTABLE_BALANCE", "DUST_BELOW_MIN_ORDER", "UNROUTABLE_BALANCE"}
+            ][:8]
+            if interesting:
+                text = ", ".join(
+                    f"{t.get('symbol')}:{t.get('previous_status') or 'new'}->{t.get('status')}"
+                    for t in interesting
+                )
+                self.log_message(f"[DUST] watch transitions | {text}")
 
         return adopted, skipped
 
@@ -790,6 +1110,7 @@ class BotDaemon:
 
                 if str(is_running).lower() == 'true':
                     self.bot_iteration()
+                    self.db.set_system_status("daemon_consecutive_errors", 0)
                     cycle_sleep = max(15, int(getattr(config, 'DAEMON_CYCLE_SECONDS', 60)))
                     self.update_daemon_status("sleeping", next_cycle_in=cycle_sleep)
                 else:
@@ -804,13 +1125,25 @@ class BotDaemon:
                 cycle_sleep = max(15, int(getattr(config, 'DAEMON_CYCLE_SECONDS', 60)))
                 time.sleep(cycle_sleep)
             except Exception as e:
-                self.update_daemon_status("error", error=str(e))
+                consecutive_errors = int(self._status_float("daemon_consecutive_errors", 0)) + 1
+                self.db.set_system_status("daemon_consecutive_errors", consecutive_errors)
+                if (
+                    getattr(config, "KILL_SWITCH_ENABLED", True)
+                    and consecutive_errors >= int(getattr(config, "MAX_EXCHANGE_ERRORS_PER_CYCLE", 3) or 3)
+                ):
+                    self._trigger_kill_switch(
+                        "DAEMON_ERRORS",
+                        {"consecutive_errors": consecutive_errors, "last_error": str(e)},
+                    )
+                self.update_daemon_status("error", error=str(e), consecutive_errors=consecutive_errors)
                 self.log_message(f"Error crítico en daemon: {e}")
                 time.sleep(30)
 
     def bot_iteration(self):
         cycle_start = time.time()
-        self.update_daemon_status("scanning", cycle_started_at=cycle_start)
+        cycle_id = f"{int(cycle_start * 1000)}-{uuid.uuid4().hex[:8]}"
+        self.update_daemon_status("scanning", cycle_started_at=cycle_start, cycle_id=cycle_id)
+        self._audit_event("cycle_start", "Daemon cycle started", payload={"cycle_id": cycle_id})
         action_counts = {"BUY": 0, "SELL": 0, "HOLD": 0}
         providers = {}
         hold_reasons = {}
@@ -827,9 +1160,43 @@ class BotDaemon:
         
         # Para el cálculo de cuánto podemos comprar, necesitamos el cash (USDT) disponible
         open_positions = self.db.get_open_positions()
+        self._cycle_snapshot(
+            cycle_id,
+            "start",
+            {
+                "equity": total_value,
+                "open_positions": list(open_positions.keys()),
+                "active_symbols": list(self.active_symbols or []),
+                "execution_mode": getattr(config, "TRADING_EXECUTION_MODE", "auto"),
+                "decision_mode": getattr(config, "DECISION_MODE", "hybrid"),
+            },
+        )
+        operational_guard = self.evaluate_operational_kill_switches(total_value, open_positions)
+        if not operational_guard.get("ok", True):
+            self._cycle_snapshot(cycle_id, "blocked", {"operational_guard": operational_guard})
+            self._audit_event(
+                "cycle_blocked",
+                "Cycle blocked by operational guard",
+                severity="warning",
+                payload={"cycle_id": cycle_id, "operational_guard": operational_guard},
+            )
+            self.update_daemon_status(
+                "cycle_blocked",
+                cycle_id=cycle_id,
+                scanned=scanned,
+                actions=action_counts,
+                skipped={"KILL_SWITCH": 1},
+                open_positions=len(open_positions),
+                operational_guard=operational_guard,
+            )
+            return
         adopted_symbols, adoption_skipped = self.adopt_sellable_positions(open_positions)
         for reason, count in adoption_skipped.items():
             skipped[reason] = skipped.get(reason, 0) + count
+        try:
+            dust_watch_summary = self.db.get_exchange_balance_watch_summary()
+        except Exception:
+            dust_watch_summary = {}
         buy_candidates = []
         cycle_risk = self.evaluate_risk_guards(total_value, open_positions)
         if not cycle_risk["ok"]:
@@ -933,20 +1300,19 @@ class BotDaemon:
                 return False
 
             amount_coin = amount_usdt / price
+            local_order_id = self._new_local_order_id(sym, "buy")
             res = self.exchange.execute_order(sym, 'buy', amount_coin, price)
-            if res.get('status') in ['closed', 'simulated']:
+            self._record_order_event(local_order_id, sym, "buy", amount_coin, price, res, decision_journal_id)
+            if self._is_filled_order_status(res):
+                executed_amount, executed_price = self._order_execution_details(res, amount_coin, price)
+                if executed_amount <= 0:
+                    executed_amount = amount_coin
+                if executed_price <= 0:
+                    executed_price = price
                 decision['entry_confidence'] = decision.get('confidence', 0.7)
                 decision['entry_decision_id'] = decision_journal_id
                 decision['atr_at_entry'] = sizing.get('atr', 0)
                 decision['sizing'] = sizing
-                self.db.add_open_position(sym, price, price, amount_coin, extra_data=json.dumps(decision))
-                open_positions[sym] = {
-                    'entry_price': price,
-                    'highest_price': price,
-                    'amount': amount_coin,
-                    'entry_confidence': decision.get('entry_confidence', 0.7),
-                    'extra_data': json.dumps(decision),
-                }
                 trade_reason = (
                     f"BOT [{provider}] | score={self._safe_float(decision.get('decision_score'), 0):.2f} | "
                     f"conf={self._safe_float(decision.get('confidence'), 0):.2f} | "
@@ -954,30 +1320,55 @@ class BotDaemon:
                     f"strategy={decision.get('best_strategy', 'N/A')} | "
                     f"{self._short_reason(decision.get('reasoning', ''), 160)}"
                 )
-                trade_id = self.db.save_trade(
-                    sym, 'buy', float(price), float(amount_coin),
-                    trade_reason, 0.0,
+                extra_json = json.dumps(decision)
+                trade_id = self.db.add_open_position_with_trade(
+                    sym,
+                    float(executed_price),
+                    float(executed_price),
+                    float(executed_amount),
+                    trade_reason,
+                    0.0,
+                    extra_data=extra_json,
                 )
+                open_positions[sym] = {
+                    'entry_price': executed_price,
+                    'highest_price': executed_price,
+                    'amount': executed_amount,
+                    'entry_confidence': decision.get('entry_confidence', 0.7),
+                    'extra_data': extra_json,
+                }
                 if decision_journal_id:
                     self.db.update_decision_journal(
                         decision_journal_id,
                         execution_status=res.get('status', 'executed'),
                         execution_side="buy",
-                        executed_price=float(price),
-                        executed_amount=float(amount_coin),
+                        executed_price=float(executed_price),
+                        executed_amount=float(executed_amount),
                         sizing=sizing,
                         risk=candidate_risk,
-                        block_reason=f"trade_id={trade_id}",
+                        block_reason=f"trade_id={trade_id};order_id={local_order_id}",
                     )
                 self.log_message(
-                    f"[BUY] {sym} amount={amount_usdt:.2f} USDT | px={price:.6g} | "
-                    f"qty={amount_coin:.8g} | score={self._safe_float(decision.get('decision_score'), 0):.2f} | "
+                    f"[BUY] {sym} amount={amount_usdt:.2f} USDT | px={executed_price:.6g} | "
+                    f"qty={executed_amount:.8g} | score={self._safe_float(decision.get('decision_score'), 0):.2f} | "
                     f"conf={self._safe_float(decision.get('confidence'), 0):.2f} | "
                     f"sizing={sizing.get('sizing_reason')} | risk={sizing.get('risk_amount_usdt', 0):.4f} USDT | "
-                    f"provider={provider}"
+                    f"provider={provider} | order={local_order_id}"
                 )
                 return True
 
+            if str(res.get('status') or '').lower() == "open":
+                pending_reason = f"ORDER_PENDING_NO_FILL order_id={local_order_id}"
+                self.log_message(f"[PENDING] {sym} BUY order open without fill | order={local_order_id}")
+                if decision_journal_id:
+                    self.db.update_decision_journal(
+                        decision_journal_id,
+                        execution_status="pending_order",
+                        block_reason=pending_reason,
+                        sizing=sizing,
+                        risk=candidate_risk,
+                    )
+                return False
             fail_reason = str(res.get('reason', res))
             tag = "[BLOCK]" if self._is_expected_order_block(fail_reason) else "[ERROR]"
             self.log_message(
@@ -993,6 +1384,165 @@ class BotDaemon:
                     risk=candidate_risk,
                 )
             return False
+
+        def execute_add_to_winner(symbol, current_price, indicators, decision, provider, decision_journal_id):
+            if not getattr(config, "ADD_TO_WINNER_ENABLED", False):
+                return False
+            pos = open_positions.get(symbol)
+            if not pos:
+                return False
+            entry_price = self._safe_float(pos.get("entry_price"), 0.0)
+            if entry_price <= 0 or current_price <= entry_price:
+                return False
+
+            profit_pct = ((current_price - entry_price) / entry_price) * 100
+            if profit_pct < float(getattr(config, "ADD_MIN_PROFIT_PCT", 2.5) or 2.5):
+                return False
+            decision_score = self._safe_float(decision.get("decision_score"), 0.0)
+            confidence = self._safe_float(decision.get("confidence"), 0.0)
+            if decision_score < float(getattr(config, "ADD_MIN_SCORE", 0.74) or 0.74):
+                return False
+            if confidence < float(getattr(config, "ADD_MIN_CONFIDENCE", 0.72) or 0.72):
+                return False
+
+            extra = self._position_extra(pos)
+            add_count = int(extra.get("add_count") or 0)
+            max_adds = int(getattr(config, "ADD_MAX_PER_SYMBOL", 1) or 1)
+            if add_count >= max_adds:
+                return False
+
+            sizing = self.calculate_position_size(symbol, current_price, indicators, decision, total_value, open_positions)
+            amount_usdt = self._safe_float(sizing.get("amount_usdt"), 0.0) * float(getattr(config, "ADD_SIZE_MULTIPLIER", 0.5) or 0.5)
+            capped_amount, cap_info = self.cap_size_to_risk_capacity(symbol, amount_usdt, total_value, open_positions)
+            if cap_info.get("capped"):
+                amount_usdt = capped_amount
+                sizing["risk_cap"] = cap_info
+            candidate_risk = self.evaluate_risk_guards(
+                total_value,
+                open_positions,
+                pending_buy_usdt=amount_usdt,
+                pending_symbol=symbol,
+            )
+            if not candidate_risk.get("ok"):
+                if decision_journal_id:
+                    self.db.update_decision_journal(
+                        decision_journal_id,
+                        execution_status="blocked_add_risk",
+                        block_reason=", ".join(candidate_risk.get("reasons") or []),
+                        sizing=sizing,
+                        risk=candidate_risk,
+                    )
+                return False
+            if amount_usdt < config.MIN_POSITION_USDT:
+                if decision_journal_id:
+                    self.db.update_decision_journal(
+                        decision_journal_id,
+                        execution_status="blocked_add_min_size",
+                        block_reason=f"ADD_TO_WINNER amount {amount_usdt:.4f} < MIN_POSITION_USDT {config.MIN_POSITION_USDT:.4f}",
+                        sizing=sizing,
+                        risk=candidate_risk,
+                    )
+                return False
+            if consultive_mode:
+                self.log_message(
+                    f"[CONSULTIVE] {symbol} ADD_TO_WINNER | profit={profit_pct:.2f}% | "
+                    f"score={decision_score:.2f} | conf={confidence:.2f} | amount={amount_usdt:.2f} USDT"
+                )
+                if decision_journal_id:
+                    self.db.update_decision_journal(
+                        decision_journal_id,
+                        execution_status="consultive_add",
+                        block_reason="TRADING_EXECUTION_MODE=consultive",
+                        sizing=sizing,
+                        risk=candidate_risk,
+                    )
+                return False
+
+            add_amount_coin = amount_usdt / current_price
+            local_order_id = self._new_local_order_id(symbol, "add")
+            res = self.exchange.execute_order(symbol, "buy", add_amount_coin, current_price)
+            self._record_order_event(local_order_id, symbol, "buy_add", add_amount_coin, current_price, res, decision_journal_id)
+            if not self._is_filled_order_status(res):
+                if str(res.get("status") or "").lower() == "open":
+                    if decision_journal_id:
+                        self.db.update_decision_journal(
+                            decision_journal_id,
+                            execution_status="pending_add_order",
+                            block_reason=f"ORDER_PENDING_NO_FILL order_id={local_order_id}",
+                            sizing=sizing,
+                            risk=candidate_risk,
+                        )
+                    self.log_message(f"[PENDING] {symbol} ADD order open without fill | order={local_order_id}")
+                    return False
+                if decision_journal_id:
+                    self.db.update_decision_journal(
+                        decision_journal_id,
+                        execution_status="failed_add",
+                        block_reason=str(res.get("reason", res)),
+                        sizing=sizing,
+                        risk=candidate_risk,
+                    )
+                self.log_message(f"[ERROR] {symbol} ADD failed | reason={res.get('reason', 'unknown')}")
+                return False
+
+            executed_amount, executed_price = self._order_execution_details(res, add_amount_coin, current_price)
+            if executed_amount <= 0:
+                executed_amount = add_amount_coin
+            if executed_price <= 0:
+                executed_price = current_price
+            add_event = {
+                "ts": time.time(),
+                "price": executed_price,
+                "amount": executed_amount,
+                "profit_pct_before_add": profit_pct,
+                "decision_score": decision_score,
+                "confidence": confidence,
+                "order_id": local_order_id,
+            }
+            history = list(extra.get("add_history") or [])
+            history.append(add_event)
+            extra.update({
+                "add_count": add_count + 1,
+                "add_history": history[-10:],
+                "last_add_ts": add_event["ts"],
+            })
+            trade_reason = (
+                f"ADD_TO_WINNER [{provider}] | profit={profit_pct:.2f}% | "
+                f"score={decision_score:.2f} | conf={confidence:.2f}"
+            )
+            updated = self.db.add_to_open_position_with_trade(
+                symbol,
+                executed_price,
+                executed_amount,
+                trade_reason,
+                extra_data=json.dumps(extra),
+            )
+            if not updated:
+                self.log_message(f"[WARN] {symbol} ADD executed but DB position was not found")
+                return False
+            open_positions[symbol] = {
+                **pos,
+                "entry_price": updated["entry_price"],
+                "highest_price": updated["highest_price"],
+                "amount": updated["amount"],
+                "extra_data": json.dumps(extra),
+            }
+            if decision_journal_id:
+                self.db.update_decision_journal(
+                    decision_journal_id,
+                    execution_status=res.get("status", "executed_add"),
+                    execution_side="buy_add",
+                    executed_price=float(executed_price),
+                    executed_amount=float(executed_amount),
+                    sizing=sizing,
+                    risk=candidate_risk,
+                    block_reason=f"trade_id={updated.get('trade_id')};order_id={local_order_id}",
+                )
+            self.log_message(
+                f"[ADD] {symbol} qty={executed_amount:.8g} | px={executed_price:.6g} | "
+                f"profit_before={profit_pct:+.2f}% | add={add_count + 1}/{max_adds} | order={local_order_id}"
+            )
+            return True
 
         scan_symbols = []
         for symbol in list(self.active_symbols or []) + list(open_positions.keys()):
@@ -1116,9 +1666,12 @@ class BotDaemon:
                             exit_reason=sell_res['reason'],
                         )
                         continue
+                    sell_fraction = self._safe_float(sell_res.get("sell_fraction"), 1.0)
+                    sell_fraction = self._clamp(sell_fraction, 0.0, 1.0)
+                    requested_sell = self._safe_float(pos.get('amount'), 0.0) * sell_fraction
                     validation = self.exchange.prevalidate_market_sell(
                         symbol,
-                        pos['amount'],
+                        requested_sell,
                         price_hint=current_price,
                     )
                     if not validation.get("ok"):
@@ -1140,29 +1693,43 @@ class BotDaemon:
                             exit_reason=sell_res['reason'],
                         )
                         continue
-                    order_result = self.exchange.execute_order(symbol, 'sell', pos['amount'], current_price)
-                    if order_result.get('status') in ['closed', 'simulated']:
-                        try:
-                            sold = float(order_result.get('filled') or 0)
-                        except (TypeError, ValueError):
-                            sold = 0.0
+                    local_order_id = self._new_local_order_id(symbol, "sell")
+                    order_result = self.exchange.execute_order(symbol, 'sell', requested_sell, current_price)
+                    self._record_order_event(
+                        local_order_id,
+                        symbol,
+                        "sell",
+                        requested_sell,
+                        current_price,
+                        order_result,
+                        decision_journal_id,
+                    )
+                    if self._is_filled_order_status(order_result):
+                        sold, executed_price = self._order_execution_details(
+                            order_result,
+                            requested_sell,
+                            current_price,
+                        )
                         if sold <= 0:
                             sold = float(pos['amount'])
                         sold = min(sold, float(pos['amount']))
+                        if executed_price <= 0:
+                            executed_price = current_price
                         entry_extra = self._position_extra(pos)
                         entry_decision_id = entry_extra.get('entry_decision_id')
-                        entry_price = float(pos.get('entry_price') or current_price)
-                        realized_pnl = ((float(current_price) - entry_price) / entry_price) * 100 if entry_price else 0.0
-                        closed = self.db.close_position(symbol, current_price, sell_res['reason'], sold_amount=sold)
+                        entry_price = float(pos.get('entry_price') or executed_price)
+                        realized_pnl = ((float(executed_price) - entry_price) / entry_price) * 100 if entry_price else 0.0
+                        closed = self.db.close_position(symbol, executed_price, sell_res['reason'], sold_amount=sold)
                         if closed:
                             self.db.update_decision_journal(
                                 decision_journal_id,
                                 execution_status=order_result.get('status', 'executed'),
                                 execution_side="sell",
-                                executed_price=float(current_price),
+                                executed_price=float(executed_price),
                                 executed_amount=float(sold),
                                 realized_pnl_pct=realized_pnl,
                                 exit_reason=sell_res['reason'],
+                                block_reason=f"order_id={local_order_id}",
                             )
                             if entry_decision_id:
                                 self.db.update_decision_journal(
@@ -1172,17 +1739,33 @@ class BotDaemon:
                                 )
                             still = self.db.get_open_positions().get(symbol)
                             if still:
+                                if sell_fraction < 0.999:
+                                    updated_extra = self._position_extra(still)
+                                    updated_extra["partial_take_profit_done"] = True
+                                    updated_extra["partial_take_profit_ts"] = time.time()
+                                    updated_extra["partial_take_profit_order_id"] = local_order_id
+                                    still["extra_data"] = json.dumps(updated_extra)
+                                    self.db.update_position_extra_data(symbol, still["extra_data"])
                                 open_positions[symbol] = still
                             else:
                                 del open_positions[symbol]
                             self.log_message(
-                                f"[SELL] {symbol} qty={sold:.8g} | px={current_price:.6g} | "
+                                f"[SELL] {symbol} qty={sold:.8g} | px={executed_price:.6g} | "
                                 f"pnl={realized_pnl:+.2f}% | reason={self._short_reason(sell_res['reason'], 80)} | "
-                                f"provider={provider}"
+                                f"provider={provider} | order={local_order_id}"
                             )
                         else:
                             self.log_message(f"[WARN] {symbol} SELL executed but DB position was not found")
                     else:
+                        if str(order_result.get("status") or "").lower() == "open":
+                            self.log_message(f"[PENDING] {symbol} SELL order open without fill | order={local_order_id}")
+                            self.db.update_decision_journal(
+                                decision_journal_id,
+                                execution_status="pending_sell_order",
+                                execution_side="sell",
+                                block_reason=f"ORDER_PENDING_NO_FILL order_id={local_order_id}",
+                            )
+                            continue
                         self.log_message(f"[ERROR] {symbol} SELL failed | reason={order_result.get('reason', 'Error desconocido')}")
                         self.db.update_decision_journal(
                             decision_journal_id,
@@ -1205,6 +1788,13 @@ class BotDaemon:
                             execution_side="sell",
                             block_reason=f"SELL confidence {confidence:.2f} < threshold {threshold:.2f}; no protective trigger",
                         )
+                if (
+                    symbol in open_positions
+                    and action == "BUY"
+                    and executable_action == "BUY"
+                    and not sell_res.get("should_sell")
+                ):
+                    execute_add_to_winner(symbol, current_price, indicators, decision, provider, decision_journal_id)
             
             # 2. Lógica de COMPRA
             else:
@@ -1388,23 +1978,28 @@ class BotDaemon:
                     self.log_message(f"[WARN] {sym_sac} rotation cancelled | reason=NO_PRICE")
                     break
 
-                rot_res = self.exchange.execute_order(sym_sac, 'sell', sac_pos['amount'], sac_price)
-                if rot_res.get('status') not in ['closed', 'simulated']:
+                rot_order_id = self._new_local_order_id(sym_sac, "rotation_sell")
+                rot_amount = self._safe_float(sac_pos.get('amount'), 0.0)
+                rot_res = self.exchange.execute_order(sym_sac, 'sell', rot_amount, sac_price)
+                self._record_order_event(rot_order_id, sym_sac, "rotation_sell", rot_amount, sac_price, rot_res)
+                if not self._is_filled_order_status(rot_res):
+                    if str(rot_res.get("status") or "").lower() == "open":
+                        self.log_message(f"[PENDING] {sym_sac} rotation sell open without fill | order={rot_order_id}")
+                        break
                     self.log_message(f"[ERROR] {sym_sac} rotation sell failed | reason={rot_res.get('reason', rot_res)}")
                     break
 
-                try:
-                    sold = float(rot_res.get('filled') or 0)
-                except (TypeError, ValueError):
-                    sold = 0.0
+                sold, rot_exec_price = self._order_execution_details(rot_res, rot_amount, sac_price)
                 if sold <= 0:
                     sold = float(sac_pos['amount'])
                 sold = min(sold, float(sac_pos['amount']))
+                if rot_exec_price <= 0:
+                    rot_exec_price = sac_price
                 sac_extra = self._position_extra(sac_pos)
                 sac_entry_decision_id = sac_extra.get('entry_decision_id')
-                sac_entry_price = float(sac_pos.get('entry_price') or sac_price)
-                sac_pnl = ((float(sac_price) - sac_entry_price) / sac_entry_price) * 100 if sac_entry_price else 0.0
-                self.db.close_position(sym_sac, sac_price, "ROTACIÓN IA", sold_amount=sold)
+                sac_entry_price = float(sac_pos.get('entry_price') or rot_exec_price)
+                sac_pnl = ((float(rot_exec_price) - sac_entry_price) / sac_entry_price) * 100 if sac_entry_price else 0.0
+                self.db.close_position(sym_sac, rot_exec_price, "ROTACIÓN IA", sold_amount=sold)
                 if sac_entry_decision_id:
                     self.db.update_decision_journal(
                         sac_entry_decision_id,
@@ -1417,13 +2012,14 @@ class BotDaemon:
                 else:
                     del open_positions[sym_sac]
                 self.log_message(
-                    f"[ROTATION] executed sell={sym_sac} px={sac_price:.6g} pnl={sac_pnl:+.2f}% "
+                    f"[ROTATION] executed sell={sym_sac} px={rot_exec_price:.6g} pnl={sac_pnl:+.2f}% "
                     f"buy_candidate={candidate['symbol']}"
                 )
                 execute_buy_candidate(candidate)
                 break
 
         diag = {
+            "cycle_id": cycle_id,
             "cycle_duration_s": round(time.time() - cycle_start, 2),
             "scanned": scanned,
             "actions": action_counts,
@@ -1435,6 +2031,8 @@ class BotDaemon:
             "execution_mode": getattr(config, "TRADING_EXECUTION_MODE", "auto"),
             "decision_mode": getattr(config, "DECISION_MODE", "hybrid"),
             "risk_guards": cycle_risk,
+            "operational_guard": operational_guard,
+            "dust_watch": dust_watch_summary,
             "top_buy_candidates": [
                 {
                     "symbol": c['symbol'],
@@ -1448,6 +2046,12 @@ class BotDaemon:
             "dynamic_max": getattr(self, "dynamic_max", None),
         }
         self.update_daemon_status("cycle_done", **diag)
+        self._cycle_snapshot(cycle_id, "done", diag)
+        self._audit_event(
+            "cycle_done",
+            f"Cycle done: scanned={scanned}, candidates={len(buy_candidates)}",
+            payload=diag,
+        )
         top_summary = ", ".join(
             f"{c['symbol']} {c['score']:.3f}"
             for c in buy_candidates[:3]
