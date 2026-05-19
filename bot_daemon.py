@@ -1438,6 +1438,8 @@ class BotDaemon:
             return False
 
         def execute_add_to_winner(symbol, current_price, indicators, decision, provider, decision_journal_id):
+            if not getattr(config, "ADVANCED_EDGE_ENABLED", False):
+                return False
             if not getattr(config, "ADD_TO_WINNER_ENABLED", False):
                 return False
             pos = open_positions.get(symbol)
@@ -1455,6 +1457,13 @@ class BotDaemon:
             if decision_score < float(getattr(config, "ADD_MIN_SCORE", 0.74) or 0.74):
                 return False
             if confidence < float(getattr(config, "ADD_MIN_CONFIDENCE", 0.72) or 0.72):
+                return False
+            components = decision.get("score_components") if isinstance(decision.get("score_components"), dict) else {}
+            historical_reliability = self._safe_float(components.get("historical_reliability"), 0.0)
+            historical_trades = int(self._safe_float(components.get("historical_trades"), 0.0))
+            if historical_reliability < float(getattr(config, "ADVANCED_EDGE_MIN_RELIABILITY", 0.65) or 0.65):
+                return False
+            if historical_trades < int(getattr(config, "ADVANCED_EDGE_MIN_TRADES", 30) or 30):
                 return False
 
             extra = self._position_extra(pos)
