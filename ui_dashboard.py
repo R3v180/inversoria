@@ -180,10 +180,20 @@ def render_dashboard():
 
     # Baseline para el cálculo de PnL (Presupuesto inicial de config o Saldo inicial real)
     baseline = PRESUPUESTO_INICIAL
+    baseline_label = "initial"
     if not exchange.modo_simulacion:
         real_start = db.get_system_status('real_start_balance')
         if real_start:
             baseline = float(real_start)
+            baseline_label = "real_start"
+    evaluation_start = db.get_system_status('evaluation_start_balance')
+    evaluation_ts = db.get_system_status('evaluation_start_ts')
+    if evaluation_start:
+        try:
+            baseline = float(evaluation_start)
+            baseline_label = "evaluation"
+        except (TypeError, ValueError):
+            pass
 
     pnl = total_value - baseline
     pnl_pct = (pnl / baseline) * 100 if baseline else 0
@@ -209,6 +219,21 @@ def render_dashboard():
     m4.metric(_('PNL_USD'), f"${pnl:.2f}", f"{pnl_pct:.2f}%")
     m5.metric(_("DASH_MODE"), mode_label)
     m6.metric(_("DAEMON_STATE"), state_label, f"{decision_mode} · {diag_top.get('scanned', 0)} scan")
+    if baseline_label == "evaluation":
+        try:
+            eval_age_min = int((time.time() - float(evaluation_ts or 0)) / 60)
+        except (TypeError, ValueError):
+            eval_age_min = 0
+        st.caption(f"Baseline de evaluación activo: ${baseline:.2f} · hace {max(0, eval_age_min)} min. El histórico no se ha borrado.")
+    c_eval1, c_eval2, _ = st.columns([1, 1, 4])
+    if c_eval1.button("Reiniciar evaluación desde ahora", help="No borra historial; solo cambia el baseline de PnL visible."):
+        db.set_system_status('evaluation_start_balance', total_value)
+        db.set_system_status('evaluation_start_ts', time.time())
+        st.rerun()
+    if c_eval2.button("Quitar baseline evaluación", help="Vuelve al baseline real/sim inicial sin borrar datos."):
+        db.set_system_status('evaluation_start_balance', '')
+        db.set_system_status('evaluation_start_ts', '')
+        st.rerun()
 
     # --- POSITIONS + LIVE EVENTS FIRST ---
     col_left, col_right = st.columns([1.5, 1])
