@@ -32,4 +32,20 @@ Estado: **plan de ejecución completado** en rama `feat/plan-execution-2026-05` 
 python -m unittest discover -s tests -v
 ```
 
-PR a `main`: cuando el usuario lo solicite (sin commit automático).
+## Fase 5 — Configuración completa y plantillas (mayo 2026)
+
+- [x] `CONFIG_SCHEMA` sincronizado con `DEFAULT_SETTINGS` (`config_schema_sync.py` + test paridad).
+- [x] Plantillas completas: `config_presets.py` (recomendado / conservador / agresivo + guardar/importar).
+- [x] UI Ajustes: tab **Motor** (schema groups) + panel **Plantillas** + importador JSON.
+- [x] Asistente: contexto por intención + `[FETCH_CONTEXT]` + proveedores webhooks/plantilla activa.
+
+### Perfil de simulación vs plantilla de estrategia
+
+| Concepto | Dónde vive | Qué cambia |
+|----------|------------|------------|
+| **Perfil simulación** | `simulation_profiles` + sidebar | Capital inicial, DB `iversoria.db` del perfil, settings del perfil en modo sim |
+| **Plantilla estrategia** | `config_presets` + Ajustes | Todos los parámetros de `CONFIG_SCHEMA` (prompts, riesgo, motor, IA) vía importador |
+
+Aplicar una plantilla **no** cambia de perfil de simulación ni API keys.
+
+PR a `main`: cuando el usuario lo solicite.

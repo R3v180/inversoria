@@ -43,3 +43,5 @@ env/
 .gemini/
 .vscode/
 .idea/
+.cursor/
+!.cursor/rules/

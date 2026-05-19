@@ -22,7 +22,8 @@ Maintained by Olivier Hottelet, trading as OHCodex: https://ohcodex.com
 - **Simulation-first workflow**: isolated paper-trading profiles let you test different risk settings without contaminating real data.
 - **Auditable decisions**: every signal, block, execution, size, risk reason and realized outcome can be written to `decision_journal`.
 - **Risk controls before execution**: portfolio, symbol, alt and bucket exposure guards can cap size or block unsafe buys.
-- **Autopilot hardening**: operational kill-switches, AI budgets, order reconciliation, symbol cooldowns, ATR exits, macro hysteresis, backtest reliability/Monte Carlo metrics and advanced-edge gates are configurable instead of hardcoded.
+- **Autopilot hardening**: operational kill-switches, optional local AI budgets (provider quotas apply by default), order reconciliation, symbol cooldowns, ATR exits, macro hysteresis, backtest reliability/Monte Carlo metrics and advanced-edge gates are configurable instead of hardcoded.
+- **Bilingual UI (ES/EN)**: Streamlit strings and configuration labels use the central `i18n` dictionary; see [docs/I18N.md](docs/I18N.md).
 - **Real balances are protected**: existing sellable balances can be adopted into active management even if they are outside the new-buy watchlist.
 - **Local-first architecture**: Streamlit UI, daemon and SQLite run locally; API keys stay in `.env`/environment variables instead of `user_settings.json`.
 
@@ -86,7 +87,8 @@ InversorIA.exe
 - **Primero simulación**: los perfiles aislados permiten probar configuraciones de riesgo sin contaminar datos reales.
 - **Decisiones auditables**: cada señal, bloqueo, ejecución, tamaño, motivo de riesgo y resultado puede quedar en `decision_journal`.
 - **Riesgo antes que ejecución**: los guardrails de cartera, símbolo, alts y buckets pueden recortar tamaño o bloquear compras inseguras.
-- **Autopilot endurecido**: kill-switches operativos, presupuesto IA, reconciliación de órdenes, cooldowns por símbolo, salidas ATR, histeresis macro, fiabilidad/Monte Carlo de backtest y gates de edge avanzado son configurables.
+- **Autopilot endurecido**: kill-switches operativos, presupuesto IA local opcional (por defecto mandan los límites del proveedor), reconciliación de órdenes, cooldowns por símbolo, salidas ATR, histeresis macro, fiabilidad/Monte Carlo de backtest y gates de edge avanzado son configurables.
+- **UI bilingüe (ES/EN)**: textos Streamlit y etiquetas de configuración vía `i18n`; ver [docs/I18N.md](docs/I18N.md).
 - **Protección de saldos existentes**: los saldos vendibles pueden adoptarse para gestión activa aunque estén fuera de la watchlist de nuevas compras.
 - **Arquitectura local-first**: UI Streamlit, daemon y SQLite corren en local; las claves API se leen de `.env`/variables de entorno y no de `user_settings.json`.
 
@@ -227,8 +229,12 @@ Available today:
 - Dynamic radar hard-filter for fiat/stablecoin pairs before they can enter the watchlist.
 - AI assistant with mandatory explicit UI confirmation before any order.
 - AI assistant can include compact context from recent local logs after sanitizing known secrets.
-- Safe configuration import/export with validation, backups and secret blocking.
+- Configuration presets (Recommended / Conservative / Aggressive) with diff preview, profile assistant (“What profile fits me?”) and user preset save/duplicate/import.
+- Settings organized in four tabs: **Operation**, **Risk & limits**, **Connections**, **Advanced** (~168 schema-driven parameters with search in Advanced).
+- Safe configuration import/export with validation, backups and secret blocking (collapsed JSON tools in Advanced).
 - Safe AI diagnostic package in settings, copyable/downloadable, with sanitized relevant config and recent logs; it excludes `.env` and known secrets.
+- Dashboard positions show **invested cost**, **current value** and quantity aligned with the exchange when balances differ from SQLite.
+- Rules fallback when AI is offline, on invalid JSON or when optional local AI budget is exhausted (`AI_RULES_ONLY_ON_BUDGET_EXHAUSTED`).
 - AI assistant can propose configuration changes, but the UI requires explicit confirmation before applying them.
 - Historical backtesting engine with SQLite priors.
 - Incremental global macro refresh with Alpha Vantage, persistent cache and provider cooldowns to avoid wasting free-tier requests after restarts or rate limits.
@@ -293,9 +299,14 @@ Main modules:
 | `ui_wallet.py`         | Exchange wallet, dust, PnL and manual sell.                            |
 | `ui_news.py`           | Full news page and dashboard news widget.                              |
 | `ui_assistant.py`      | AI assistant and pending order confirmation.                           |
-| `ui_settings.py`       | Hot settings panel.                                                    |
+| `ui_settings.py`       | Settings hub (four tabs + presets).                                    |
 | `ui_terminal.py`       | Technical terminal and logs.                                           |
 | `ui_history.py`        | Trade history and analytics.                                           |
+| `ui_services/config_form.py` | Schema-driven settings widgets per tab.                          |
+| `ui_services/config_presets_ui.py` | Preset cards, assistant and management.                    |
+| `ui_services/config_io_panel.py` | JSON import/export and diagnostic bundle.                  |
+| `ui_services/position_display.py` | Dashboard position cost/value/qty helpers.                 |
+| `config_presets.py`    | Built-in and user configuration templates.                             |
 | `runtime_bootstrap.py` | Defensive Streamlit hot-reload helpers.                                |
 
 
@@ -416,7 +427,7 @@ Shows:
 - Open positions vs effective maximum.
 - PnL vs baseline.
 - Mode and daemon state summary.
-- Active positions with quick manual sell plus detailed sell options for max or partial amounts.
+- Active positions with invested cost, current market value, quantity (DB vs exchange hint), quick manual sell and partial/max sell options.
 - Recent bot events.
 - Equity curve.
 - Technical chart.
@@ -544,45 +555,30 @@ Shows:
 
 ### Settings
 
-Hot-editable settings:
+The settings screen (**Centro de Mandos**) is organized in four tabs:
 
-- API keys.
-- Simulation / real mode.
-- Initial capital.
-- Manual position limit priority.
-- Maximum positions.
-- Risk per trade.
-- Execution mode: automatic or consultive.
-- Decision mode: AI-aggressive, hybrid, or rules/quant.
-- Minimum deterministic score for automatic buys.
-- Daily loss and portfolio exposure guardrails.
-- Volatility sizing, max risk per position and min order size.
-- Symbol, alt and bucket exposure caps.
-- Rolling metrics window.
-- Minimum profit target.
-- Rotation.
-- Minimum profit for rotation.
-- Confidence gap.
-- Minimum new signal confidence.
-- AI analysis frequency.
-- AI prompts.
+| Tab | Contents |
+| --- | --- |
+| **Operation** | Simulation/real mode, capital, execution/decision modes, watchlist, portfolio buckets, liquidity filters, AI intervals and optional local AI budget (`AI_ENABLE_LOCAL_BUDGET`, off by default). |
+| **Risk & limits** | Max positions, risk per trade, exposure guardrails, stops/exits, rotation thresholds. |
+| **Connections** | API keys only (password fields; never written to export JSON). |
+| **Advanced** | Prompts, macro, backtest, daemon, protections, edge modules; **search** filters ~168 parameters. |
 
-Safe configuration import/export:
+**Configuration presets** (top of the page, outside the save form so preview/apply buttons work):
 
-- Download a clean example JSON for AI review.
-- Download the current safe configuration without API keys or secrets.
-- Paste JSON from an AI recommendation.
-- Validate fields against an allowlist before applying.
-- Accept strict JSON and legacy copied settings using Python-style booleans, single quotes or bucket maps saved as strings.
-- Preview before/after values.
-- Block API keys and sensitive fields automatically.
-- Create a `user_settings.json.backup-*.json` backup before applying.
+- Built-in cards: Recommended, Conservative, Aggressive.
+- Assistant **“What profile fits me?”** suggests a preset from account size, risk and activity.
+- Expandable **Manage presets** for save, duplicate, export, import and delete.
 
-Safe AI diagnostic package:
+Click **Save settings** in the form to persist tab fields to `user_settings.json`. Presets apply immediately after preview confirmation (with extra checkbox in real mode).
 
-- Copies or downloads a compact support bundle for AI review.
-- Includes relevant sanitized configuration and recent local logs.
-- Excludes `.env` and known secrets; it is a diagnostic aid, not a guarantee that every possible sensitive value is removed.
+**Import / export** (collapsed expander at the bottom):
+
+- Intent: apply pasted JSON (patch or full) or download current/partial/example safe JSON.
+- Validate against allowlist, preview diff, block secrets, backup before apply.
+- Optional AI diagnostic package (sanitized config + recent logs).
+
+See also [docs/I18N.md](docs/I18N.md) for translation keys and `python scripts/audit_i18n.py`.
 
 ---
 
@@ -802,8 +798,10 @@ Daemon console logs are structured for quick triage:
 | `ROTATION_CONFIDENCE_GAP`       | New signal must exceed old confidence by this much | `0.20`         |
 | `ROTATION_MIN_NEW_CONFIDENCE`   | Minimum confidence for new rotation target         | `0.85`         |
 | `AI_ANALYSIS_INTERVAL`          | Deep AI interval per symbol                        | `1200` seconds |
-| `AI_MAX_REQUESTS_PER_CYCLE`     | AI request budget per daemon cycle                  | `2`            |
-| `AI_MAX_REQUESTS_PER_DAY`       | AI request budget per 24h                           | `80`           |
+| `AI_ENABLE_LOCAL_BUDGET`        | Enforce local cycle/day/token caps (off = provider limits only) | `False` |
+| `AI_MAX_REQUESTS_PER_CYCLE`     | Local AI request budget per cycle (if enabled)      | `2`            |
+| `AI_MAX_REQUESTS_PER_DAY`       | Local AI request budget per 24h (if enabled)          | `80`           |
+| `AI_RULES_ONLY_ON_BUDGET_EXHAUSTED` | Fall back to rules when local budget blocks AI   | `True`         |
 | `AI_PROVIDER_TIMEOUT_SECONDS`   | Timeout for external AI provider calls              | `15`           |
 | `ADVANCED_EDGE_ENABLED`         | Global gate for add-to-winner/future advanced edge   | `False`        |
 | `TRADING_FEE_RATE`              | Estimated fee per side                             | `0.001`        |
@@ -1242,7 +1240,11 @@ Modos disponibles:
 - Filtro duro del radar dinámico para excluir pares fiat/stablecoin antes de entrar en la watchlist.
 - Asistente IA con confirmación obligatoria antes de ejecutar.
 - El asistente IA puede incorporar contexto compacto de logs locales recientes tras sanear secretos conocidos.
+- Plantillas de configuración (Recomendado / Conservador / Agresivo) con vista previa, asistente de perfil y plantillas de usuario.
+- Ajustes en cuatro pestañas: **Operación**, **Riesgo y límites**, **Conexiones**, **Avanzado** (~168 parámetros con búsqueda en Avanzado).
 - Importación/exportación segura de configuración con validación, backups y bloqueo de secretos.
+- Posiciones en dashboard con **coste invertido**, **valor actual** y cantidad alineada con el exchange.
+- Fallback a reglas si la IA no responde, JSON inválido o presupuesto local agotado.
 - Paquete de diagnóstico seguro para IA en configuración, copiable/descargable, con config relevante saneada y logs recientes; excluye `.env` y secretos conocidos.
 - El asistente IA puede proponer cambios de configuración, pero la UI exige confirmación explícita antes de aplicarlos.
 - Backtesting histórico guardado en SQLite.
@@ -1407,19 +1409,26 @@ Trades con filtros por símbolo, tipo, resultado y fechas; paginación para hist
 
 ### Configuración
 
-Permite editar modo, ejecución automática/consultiva, cerebro de decisión, score mínimo, volatility sizing, concentración de cartera, riesgo, posiciones, rotación, frecuencia IA, APIs y prompts.
+Pantalla **Centro de Mandos** con cuatro pestañas:
 
-También incluye importación/exportación segura:
+| Pestaña | Contenido |
+| --- | --- |
+| **Operación** | Modo sim/real, capital, ejecución/decisión, monedas, buckets, filtros de liquidez, IA y presupuesto local opcional (`AI_ENABLE_LOCAL_BUDGET`, desactivado por defecto). |
+| **Riesgo y límites** | Posiciones, riesgo por trade, exposición, stops y rotación. |
+| **Conexiones** | Solo claves API (nunca en export JSON). |
+| **Avanzado** | Prompts, macro, backtest, daemon, motor; **búsqueda** sobre ~168 parámetros. |
 
-- descargar ejemplo JSON limpio para pasarlo a una IA,
-- descargar la configuración actual sin claves ni secretos,
-- pegar un JSON recomendado por una IA,
-- validar campos permitidos,
-- previsualizar valores antes/después,
-- bloquear claves API automáticamente,
-- crear backup `user_settings.json.backup-*.json` antes de aplicar.
+**Plantillas** (arriba, fuera del formulario de guardado):
 
-También puede copiar o descargar un paquete de diagnóstico seguro para IA con configuración relevante saneada y logs recientes. Excluye `.env` y secretos conocidos; es una ayuda de diagnóstico, no una garantía de que cualquier valor sensible imaginable haya sido eliminado.
+- Tarjetas integradas: Recomendado, Conservador, Agresivo.
+- Asistente **«¿Qué perfil soy?»** según tamaño de cuenta, riesgo y actividad.
+- Expander **Gestionar plantillas** para guardar, duplicar, exportar, importar y borrar.
+
+**Guardar configuración** persiste los campos del formulario. Las plantillas se aplican tras vista previa (confirmación extra en modo real).
+
+**Importar / exportar** (expander colapsado al final): aplicar JSON parche/completo o descargar copias seguras; paquete de diagnóstico IA opcional.
+
+Ver [docs/I18N.md](docs/I18N.md) y `python scripts/audit_i18n.py`.
 
 ---
 
@@ -1594,8 +1603,10 @@ Los logs de consola del daemon usan formato compacto:
 | `ROTATION_CONFIDENCE_GAP`       | Gap de confianza           | `0.20`  |
 | `ROTATION_MIN_NEW_CONFIDENCE`   | Confianza mínima nueva     | `0.85`  |
 | `AI_ANALYSIS_INTERVAL`          | Frecuencia IA              | `1200`  |
-| `AI_MAX_REQUESTS_PER_CYCLE`     | Presupuesto IA por ciclo   | `2`     |
-| `AI_MAX_REQUESTS_PER_DAY`       | Presupuesto IA por 24h     | `80`    |
+| `AI_ENABLE_LOCAL_BUDGET`        | Activar topes locales ciclo/día/tokens (off = solo proveedor) | `False` |
+| `AI_MAX_REQUESTS_PER_CYCLE`     | Tope local por ciclo (si activo) | `2`     |
+| `AI_MAX_REQUESTS_PER_DAY`       | Tope local por 24h (si activo) | `80`    |
+| `AI_RULES_ONLY_ON_BUDGET_EXHAUSTED` | Reglas si el presupuesto local bloquea IA | `True` |
 | `AI_PROVIDER_TIMEOUT_SECONDS`   | Timeout proveedores IA     | `15`    |
 | `ADVANCED_EDGE_ENABLED`         | Gate global para edge avanzado | `False` |
 | `TRADING_FEE_RATE`              | Fee estimada               | `0.001` |
