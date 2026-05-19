@@ -9,6 +9,11 @@ from database_services.audit import get_audit_events as fetch_audit_events
 from database_services.audit import get_cycle_replay_snapshots as fetch_cycle_replay_snapshots
 from database_services import webhook_signals as webhook_db
 from database_services.decision_journal_queries import count_recent_exit_reasons as _count_recent_exit_reasons
+from database_services import checkpoints as checkpoint_db
+from database_services.decision_journal_closures import (
+    apply_closure_to_journal,
+    backfill_journal_closures_from_trades,
+)
 
 class DatabaseManager:
     def __init__(self, db_path=None):
@@ -305,6 +310,7 @@ class DatabaseManager:
                     payload_json TEXT
                 )
             ''')
+            checkpoint_db.ensure_checkpoints_table(conn)
             webhook_db.ensure_webhook_table(conn)
             for idx_name, idx_cols in {
                 'idx_audit_events_type_ts': 'event_type, timestamp',
@@ -781,15 +787,18 @@ class DatabaseManager:
             conn.execute('DELETE FROM open_positions WHERE symbol = ?', (symbol,))
             conn.commit()
 
-    def close_position(self, symbol, exit_price, reason, sold_amount=None):
+    def close_position(self, symbol, exit_price, reason, sold_amount=None, *, sync_journal=True):
         """
         Cierra (total o parcialmente) una posición abierta: registra el trade y
         actualiza o elimina la fila en open_positions. sold_amount: cantidad
         vendida en exchange (si difiere de la DB por fees/redondeo).
+
+        sync_journal: si True, enlaza el cierre al decision_journal (entry_decision_id
+        o fila nueva ligada al trade_id). Si False, el llamador actualiza el journal.
         """
         with self._get_connection() as conn:
             cursor = conn.execute(
-                'SELECT entry_price, amount FROM open_positions WHERE symbol = ?',
+                'SELECT entry_price, amount, extra_data FROM open_positions WHERE symbol = ?',
                 (symbol,)
             )
             row = cursor.fetchone()
@@ -798,6 +807,7 @@ class DatabaseManager:
 
             entry_price = float(row['entry_price'] or 0)
             db_amount = float(row['amount'] or 0)
+            extra_data = row['extra_data'] if row else None
 
             qty = float(sold_amount) if sold_amount is not None else db_amount
             qty = min(qty, db_amount)
@@ -809,10 +819,25 @@ class DatabaseManager:
             else:
                 pnl_pct = 0.0
 
-            conn.execute('''
+            ts = time.time()
+            trade_cur = conn.execute('''
                 INSERT INTO trades (symbol, side, price, amount, reason, pnl_pct, timestamp)
                 VALUES (?, ?, ?, ?, ?, ?, ?)
-            ''', (symbol, 'sell', float(exit_price), qty, reason, pnl_pct, time.time()))
+            ''', (symbol, 'sell', float(exit_price), qty, reason, pnl_pct, ts))
+            trade_id = trade_cur.lastrowid
+
+            if sync_journal and trade_id:
+                apply_closure_to_journal(
+                    conn,
+                    symbol=symbol,
+                    exit_price=float(exit_price),
+                    qty=qty,
+                    pnl_pct=pnl_pct,
+                    reason=reason,
+                    extra_data=extra_data,
+                    trade_id=int(trade_id),
+                    ts=ts,
+                )
 
             remaining = db_amount - qty
             dust_usd = remaining * float(exit_price) if exit_price else 0.0
@@ -1022,6 +1047,28 @@ class DatabaseManager:
                 conn,
                 params=(limit,),
             )
+
+    def get_closed_decision_journal(self, limit=500):
+        """Rows with realized PnL (closed round-trips), newest first."""
+        limit = max(1, min(int(limit), 5000))
+        with self._get_connection() as conn:
+            return pd.read_sql_query(
+                '''
+                SELECT * FROM decision_journal
+                WHERE realized_pnl_pct IS NOT NULL
+                ORDER BY COALESCE(updated_at, timestamp) DESC
+                LIMIT ?
+                ''',
+                conn,
+                params=(limit,),
+            )
+
+    def backfill_journal_closures_from_trades(self, limit=5000) -> int:
+        """Idempotent backfill of journal closures from historical sell trades."""
+        with self._get_connection() as conn:
+            inserted = backfill_journal_closures_from_trades(conn, limit=limit)
+            conn.commit()
+        return inserted
 
     def get_decision_metrics(self, limit=500):
         df = self.get_decision_journal(limit=limit)

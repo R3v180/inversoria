@@ -377,13 +377,32 @@ def compact_pending_orders_context(db) -> str:
 
 
 def compact_periods_context(db, exchange) -> str:
+    from ui_services import checkpoint_service as cs
     from ui_services.performance_period import compute_period_performance, preset_start_datetime
 
     now = datetime.now()
     lines = []
     balance = safe_float(exchange.get_balance())
-    for label in ("Hoy 00:00", "Última hora", "Últimas 24h"):
-        perf = compute_period_performance(db, balance, preset_start_datetime(label, now))
+    active = cs.get_active_checkpoint(db, exchange)
+    if active:
+        start_dt = datetime.fromtimestamp(float(active.get("created_at") or time.time()))
+        perf = compute_period_performance(
+            db,
+            balance,
+            start_dt,
+            start_equity=float(active.get("equity_usdt") or 0.0),
+        )
+        if perf.get("ok"):
+            lines.append(
+                f"Desde checkpoint activo ({active.get('label')}): "
+                f"{perf['pnl_usd']:+.2f} USDT ({perf['pnl_pct']:+.2f}%)"
+            )
+    for preset_id, label in (
+        ("today", "Hoy 00:00"),
+        ("last_hour", "Última hora"),
+        ("last_24h", "Últimas 24h"),
+    ):
+        perf = compute_period_performance(db, balance, preset_start_datetime(preset_id, now))
         if perf.get("ok"):
             lines.append(
                 f"{label}: {perf['pnl_usd']:+.2f} USDT ({perf['pnl_pct']:+.2f}%) desde {perf['start_ts']}"

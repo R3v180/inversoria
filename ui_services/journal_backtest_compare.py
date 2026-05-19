@@ -7,23 +7,50 @@ import sqlite3
 import pandas as pd
 
 
+def ensure_journal_closures(db, *, backfill_limit: int = 5000) -> int:
+    """
+    Ensure closed journal rows exist for Journal vs backtest UI.
+    Runs idempotent backfill from trades when sells outnumber journal closures.
+    """
+    try:
+        with sqlite3.connect(db.db_path, timeout=10) as conn:
+            sell_n = int(
+                conn.execute(
+                    "SELECT COUNT(*) FROM trades WHERE LOWER(side) = 'sell'"
+                ).fetchone()[0]
+            )
+            closed_n = int(
+                conn.execute(
+                    "SELECT COUNT(*) FROM decision_journal WHERE realized_pnl_pct IS NOT NULL"
+                ).fetchone()[0]
+            )
+    except Exception:
+        return 0
+
+    if sell_n <= closed_n:
+        return 0
+    try:
+        return int(db.backfill_journal_closures_from_trades(limit=backfill_limit) or 0)
+    except Exception:
+        return 0
+
+
 def build_journal_vs_backtest_rows(db) -> list[dict]:
     rows_out = []
+    ensure_journal_closures(db)
+
     try:
-        journal = db.get_decision_journal(limit=2000)
+        journal = db.get_closed_decision_journal(limit=2000)
     except Exception:
         return rows_out
     if journal.empty or "symbol" not in journal.columns:
         return rows_out
 
-    realized = pd.to_numeric(
-        journal.get("realized_pnl_pct", pd.Series([None] * len(journal))),
-        errors="coerce",
-    )
-    closed = journal[realized.notna()].copy()
+    closed = journal.copy()
+    closed["realized_pnl_pct"] = pd.to_numeric(closed["realized_pnl_pct"], errors="coerce")
+    closed = closed[closed["realized_pnl_pct"].notna()]
     if closed.empty:
         return rows_out
-    closed["realized_pnl_pct"] = realized[realized.notna()]
 
     with sqlite3.connect(db.db_path, timeout=10) as conn:
         bt = pd.read_sql_query(

@@ -13,15 +13,35 @@ from ui_services.config_form import (
 )
 from ui_services.config_io_panel import render_config_io_panel
 from ui_services.config_presets_ui import render_config_presets_panel
+from ui_services.checkpoint_dialog import offer_checkpoint_after_event, render_pending_checkpoint_dialog
+from ui_services.checkpoint_ui import MANUAL_FORM_OPEN_KEY, render_manual_checkpoint_form
 
 
 def render_settings():
     st.title(_("SETTINGS_TITLE"))
+    db = st.session_state.get("db")
+    exchange = st.session_state.get("exchange")
+    if db is not None and exchange is not None:
+        render_pending_checkpoint_dialog(db, exchange)
+
+    st.caption(_("CHK_HINT_SETTINGS"))
+    if db is not None and exchange is not None:
+        if st.button(_("HIST_CHECKPOINT_MANUAL_BTN"), key="settings_open_manual_cp"):
+            st.session_state[MANUAL_FORM_OPEN_KEY] = True
+        render_manual_checkpoint_form(db, exchange, key_prefix="settings_cp")
 
     col_reset1, col_reset2 = st.columns([4, 1])
     with col_reset2:
         if st.button(_("RESET_GLOBAL"), help=_("RESET_HELP"), type="secondary"):
             reset_to_defaults()
+            if db is not None and exchange is not None:
+                offer_checkpoint_after_event(
+                    db,
+                    exchange,
+                    event_type="reset_global",
+                    label=_("CHK_EVENT_RESET"),
+                    default_primary="activate",
+                )
             st.rerun()
 
     st.caption(_("CFG_SCHEMA_COUNT").format(schema_keys_count()))

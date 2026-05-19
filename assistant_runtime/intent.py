@@ -29,6 +29,11 @@ SECTION_ALIASES = {
     "macro": "MACRO",
     "preset": "PLANTILLA ACTIVA",
     "plantilla": "PLANTILLA ACTIVA",
+    "checkpoint": "CHECKPOINTS / EVALUACIÓN ESTRATEGIA",
+    "checkpoints": "CHECKPOINTS / EVALUACIÓN ESTRATEGIA",
+    "estrategia": "CHECKPOINTS / EVALUACIÓN ESTRATEGIA",
+    "evaluacion": "CHECKPOINTS / EVALUACIÓN ESTRATEGIA",
+    "evaluación": "CHECKPOINTS / EVALUACIÓN ESTRATEGIA",
 }
 
 

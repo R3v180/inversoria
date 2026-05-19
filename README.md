@@ -21,6 +21,7 @@ Maintained by Olivier Hottelet, trading as OHCodex: https://ohcodex.com
 - **Not blind AI trading**: AI suggestions are checked against deterministic scoring, technical indicators, multi-timeframe context, macro filters and historical priors.
 - **Simulation-first workflow**: isolated paper-trading profiles let you test different risk settings without contaminating real data.
 - **Auditable decisions**: every signal, block, execution, size, risk reason and realized outcome can be written to `decision_journal`.
+- **Strategy evaluation checkpoints**: mark named reference points (reset, preset, mode change, manual) to compare performance and filter history from a baseline equity without altering live config.
 - **Risk controls before execution**: portfolio, symbol, alt and bucket exposure guards can cap size or block unsafe buys.
 - **Autopilot hardening**: operational kill-switches, optional local AI budgets (provider quotas apply by default), order reconciliation, symbol cooldowns, ATR exits, macro hysteresis, backtest reliability/Monte Carlo metrics and advanced-edge gates are configurable instead of hardcoded.
 - **Bilingual UI (ES/EN)**: Streamlit strings and configuration labels use the central `i18n` dictionary; see [docs/I18N.md](docs/I18N.md).
@@ -86,6 +87,7 @@ InversorIA.exe
 - **No es trading ciego por IA**: las sugerencias de IA se contrastan con score determinista, indicadores técnicos, contexto multi-timeframe, filtros macro y priors históricos.
 - **Primero simulación**: los perfiles aislados permiten probar configuraciones de riesgo sin contaminar datos reales.
 - **Decisiones auditables**: cada señal, bloqueo, ejecución, tamaño, motivo de riesgo y resultado puede quedar en `decision_journal`.
+- **Checkpoints de evaluación**: puntos de referencia con nombre (reset, plantilla, cambio de modo, manual) para comparar rendimiento y filtrar historial desde un equity base sin cambiar la config en vivo.
 - **Riesgo antes que ejecución**: los guardrails de cartera, símbolo, alts y buckets pueden recortar tamaño o bloquear compras inseguras.
 - **Autopilot endurecido**: kill-switches operativos, presupuesto IA local opcional (por defecto mandan los límites del proveedor), reconciliación de órdenes, cooldowns por símbolo, salidas ATR, histeresis macro, fiabilidad/Monte Carlo de backtest y gates de edge avanzado son configurables.
 - **UI bilingüe (ES/EN)**: textos Streamlit y etiquetas de configuración vía `i18n`; ver [docs/I18N.md](docs/I18N.md).
@@ -551,6 +553,9 @@ Shows:
 - Best trade.
 - Approximate PnL curve.
 - Trade journal.
+- **Evaluation checkpoints**: global vs “from checkpoint” view, manual named checkpoints, period presets including “from active checkpoint”, and optional post-change dialog after reset/preset/mode/import.
+- **Journal vs backtest**: per-symbol live win rate/expectancy from closed journal rows compared with `backtest_conditions` priors (auto-syncs sell trades into journal when missing).
+- Period performance from `equity_history` (today, last hour, 24h, custom) without deleting history.
 - Audit events and cycle replay snapshots for operational review.
 
 ### Settings
@@ -934,7 +939,7 @@ InversorIA.exe
 
 Open `InversorIA.exe` from the project root. It is the main entry point for normal use.
 
-The launcher provides a bilingual Windows control panel. It starts the web app, controls the daemon, opens the dashboard, switches between simulation and real mode, configures local API keys, prevents system sleep while running, shows live daemon logs and can copy the visible logs to the clipboard. The bot control button toggles between starting and stopping trading depending on the current paused/active state. Real mode requires explicit confirmation and exchange keys in `.env`.
+The launcher provides a bilingual Windows control panel. It starts the web app, controls the daemon, opens the dashboard, switches between simulation and real mode, configures local API keys, prevents system sleep while running, shows live daemon logs and can copy the visible logs to the clipboard. **Launcher v2** adds strategy preset selection (apply before start), startup modes (web only / web + paused daemon / web + active bot), a pre-start summary of effective config, operational vs technical log tabs, and a scrollable layout so logs stay readable when maximized. The bot control button toggles between starting and stopping trading depending on the current paused/active state. Real mode requires explicit confirmation and exchange keys in `.env`.
 
 In simulation mode, the launcher and the app can create and switch complete simulation profiles. Each profile has its own initial capital, virtual account, SQLite DB, trades, equity history and `decision_journal`, so experiments with different risk settings do not contaminate each other.
 
@@ -985,6 +990,7 @@ Recommended workflow:
 | `simulated_account.json`         | Paper account state                   | Ignored |
 | `iversoria_bot.log`              | Local log                             | Ignored |
 | `launcher.py`                    | Windows desktop launcher source       | Tracked |
+| `launcher_startup.py`            | Preset apply, startup modes, log helpers | Tracked |
 | `launcher.spec`                  | PyInstaller build config              | Tracked |
 | `build_launcher.bat`             | Launcher build helper                 | Tracked |
 | `assets/inversoria_logo.png`     | Shared app, launcher and favicon logo | Tracked |
@@ -1011,6 +1017,7 @@ Main tables:
 | `backtest_runs`       | Backtest summaries.                                      |
 | `backtest_conditions` | Historical priors by condition.                          |
 | `decision_journal`    | Auditable decisions, sizing, risk blocks and outcomes.   |
+| `strategy_checkpoints` | Named evaluation baselines (equity, universe, optional preset). |
 | `exchange_balance_watch` | Persistent dust/inventory watch state.                |
 | `exchange_order_events` | Local order state audit and reconciliation trail.       |
 | `ai_usage_events`    | AI request/token budget accounting.                       |
@@ -1405,7 +1412,7 @@ Chat contextual con cartera, posiciones, wallet/dust, rendimiento por periodo, m
 
 ### Historial
 
-Trades con filtros por símbolo, tipo, resultado y fechas; paginación para historiales grandes; tabla compacta con formato adaptativo para precios/cantidades pequeñas como PEPE; tarjetas detalladas opcionales por página; aviso de que win rate, profit factor, mejor trade y expectancy son métricas realizadas basadas en cierres; justificación enriquecida con provider, score, confianza, régimen, estrategia y razonamiento IA cuando existe; drawdown rolling, profit factor rolling, métricas por provider/régimen, curva aproximada y journal. Incluye rendimiento por periodo basado en `equity_history` con presets como hoy 00:00, última hora, 24h, inicio disponible y personalizado, sin borrar ni alterar histórico. También incluye vista de `audit_events` y `cycle_replay_snapshots` para revisar eventos operativos y reconstruir ciclos.
+Trades con filtros por símbolo, tipo, resultado y fechas; paginación para historiales grandes; tabla compacta con formato adaptativo para precios/cantidades pequeñas como PEPE; tarjetas detalladas opcionales por página; aviso de que win rate, profit factor, mejor trade y expectancy son métricas realizadas basadas en cierres; justificación enriquecida con provider, score, confianza, régimen, estrategia y razonamiento IA cuando existe; drawdown rolling, profit factor rolling, métricas por provider/régimen, curva aproximada y journal. Incluye **checkpoints de evaluación** (vista global / desde checkpoint, creación manual con nombre, periodo desde checkpoint activo) y **journal vs backtest** por símbolo (sincroniza cierres desde `trades` si faltan en journal). Incluye rendimiento por periodo basado en `equity_history` con presets como hoy 00:00, última hora, 24h, inicio disponible y personalizado, sin borrar ni alterar histórico. También incluye vista de `audit_events` y `cycle_replay_snapshots` para revisar eventos operativos y reconstruir ciclos.
 
 ### Configuración
 
@@ -1700,7 +1707,7 @@ InversorIA.exe
 
 Abre `InversorIA.exe` desde la raíz del proyecto. Es el punto de entrada principal para usar la aplicación.
 
-El launcher ofrece un panel bilingüe para Windows. Inicia la web, controla el daemon, abre el dashboard, cambia entre simulación y real, configura las APIs locales, evita la suspensión del sistema mientras está activo, muestra logs vivos del daemon y permite copiar los logs visibles al portapapeles. El botón del bot alterna entre arrancar y detener el trading según esté pausado o activo. El modo real pide confirmación explícita y exige claves de exchange en `.env`.
+El launcher ofrece un panel bilingüe para Windows. Inicia la web, controla el daemon, abre el dashboard, cambia entre simulación y real, configura las APIs locales, evita la suspensión del sistema mientras está activo, muestra logs vivos del daemon y permite copiar los logs visibles al portapapeles. **Launcher v2** añade selección de plantilla de estrategia, modos de arranque (solo web / web + daemon pausado / web + bot activo), resumen de config efectiva antes de arrancar, pestañas de log operativo vs técnico y layout con scroll para que el log se lea bien maximizado. El botón del bot alterna entre arrancar y detener el trading según esté pausado o activo. El modo real pide confirmación explícita y exige claves de exchange en `.env`.
 
 En modo simulación, el launcher y la app pueden crear y cambiar perfiles completos de simulación. Cada perfil tiene su propio capital inicial, cuenta virtual, SQLite, trades, equity y `decision_journal`, así que los experimentos con configuraciones distintas no se contaminan entre sí.
 
@@ -1743,6 +1750,7 @@ python bot_daemon.py
 | `simulated_account.json`         | Cuenta sim                                   | Ignorado   |
 | `iversoria_bot.log`              | Log local                                    | Ignorado   |
 | `launcher.py`                    | Código del launcher de escritorio Windows    | Versionado |
+| `launcher_startup.py`            | Plantillas, modos de arranque y logs del launcher | Versionado |
 | `launcher.spec`                  | Configuración PyInstaller                    | Versionado |
 | `build_launcher.bat`             | Helper para reconstruir el exe               | Versionado |
 | `assets/inversoria_logo.png`     | Logo compartido para app, launcher y favicon | Versionado |
@@ -1766,6 +1774,7 @@ Tablas:
 - `backtest_runs`
 - `backtest_conditions`
 - `decision_journal`
+- `strategy_checkpoints`
 - `exchange_balance_watch`
 - `exchange_order_events`
 - `ai_usage_events`

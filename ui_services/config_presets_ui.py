@@ -18,11 +18,13 @@ from config_presets import (
 )
 from i18n import _
 from ui_services.config_preset_assistant import BUILTIN_PRESET_IDS, suggest_preset_id
+from ui_services.checkpoint_dialog import offer_checkpoint_after_event
 
 _BUILTIN_I18N: dict[str, tuple[str, str]] = {
     "recommended": ("PRESETS_BUILTIN_RECOMMENDED_NAME", "PRESETS_BUILTIN_RECOMMENDED_DESC"),
     "conservative": ("PRESETS_BUILTIN_CONSERVATIVE_NAME", "PRESETS_BUILTIN_CONSERVATIVE_DESC"),
     "aggressive": ("PRESETS_BUILTIN_AGGRESSIVE_NAME", "PRESETS_BUILTIN_AGGRESSIVE_DESC"),
+    "signals_only": ("PRESETS_BUILTIN_SIGNALS_ONLY_NAME", "PRESETS_BUILTIN_SIGNALS_ONLY_DESC"),
 }
 
 _PENDING_KEY = "pending_preset_apply"
@@ -76,6 +78,17 @@ def _render_preset_pending(preset_id: str):
                 else:
                     result = apply_preset(preset_id, confirm_real=confirm_real or not real_mode)
                     st.session_state.pop(_PENDING_KEY, None)
+                    db = st.session_state.get("db")
+                    exchange = st.session_state.get("exchange")
+                    if db is not None and exchange is not None:
+                        offer_checkpoint_after_event(
+                            db,
+                            exchange,
+                            event_type="preset_applied",
+                            label=_("CHK_EVENT_PRESET") + f": {preset_id}",
+                            preset_id=preset_id,
+                            default_primary="save_only",
+                        )
                     msg = _("CONFIG_APPLIED")
                     if result.get("backup"):
                         msg = _("CONFIG_APPLIED_BACKUP").format(result["backup"])
@@ -140,11 +153,21 @@ def render_preset_assistant():
             horizontal=True,
             key="preset_assistant_activity",
         )
+        execution = st.radio(
+            _("PRESETS_ASSISTANT_EXECUTION"),
+            options=["auto", "consultive"],
+            format_func=lambda v: _("PRESETS_ASSISTANT_EXEC_AUTO")
+            if v == "auto"
+            else _("PRESETS_ASSISTANT_EXEC_CONSULTIVE"),
+            horizontal=True,
+            key="preset_assistant_execution",
+        )
         suggested = suggest_preset_id(
             real_mode=bool(real_mode),
             risk_tolerance=risk,
             activity_level=activity,
             account_size=account_size,
+            execution_mode=execution,
         )
         name_key, desc_key = _BUILTIN_I18N[suggested]
         st.info(_("PRESETS_ASSISTANT_RESULT").format(_(name_key), _(desc_key)))

@@ -8,7 +8,7 @@ RiskTolerance = Literal["low", "medium", "high"]
 ActivityLevel = Literal["low", "medium", "high"]
 AccountSize = Literal["small", "medium", "large"]
 
-BUILTIN_PRESET_IDS = ("recommended", "conservative", "aggressive")
+BUILTIN_PRESET_IDS = ("recommended", "conservative", "aggressive", "signals_only")
 
 
 def suggest_preset_id(
@@ -17,14 +17,18 @@ def suggest_preset_id(
     risk_tolerance: RiskTolerance,
     activity_level: ActivityLevel,
     account_size: AccountSize,
+    execution_mode: str = "auto",
 ) -> str:
     """Map questionnaire answers to a built-in preset id."""
+    if execution_mode == "consultive":
+        return "signals_only"
+
     if not real_mode:
         return "recommended"
 
     if risk_tolerance == "low":
         return "conservative"
-    if account_size == "small" and risk_tolerance != "high":
+    if account_size == "small" and risk_tolerance != "high" and activity_level != "high":
         return "conservative"
     if activity_level == "high" and risk_tolerance == "high":
         return "aggressive"

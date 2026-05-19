@@ -124,6 +124,15 @@ def _provider_webhooks(ctx: RuntimeContext) -> str:
     return "\n".join(lines) if lines else "Sin señales webhook pendientes."
 
 
+def _provider_checkpoints(ctx: RuntimeContext) -> str:
+    try:
+        from ui_services.checkpoint_service import compact_checkpoint_summary
+
+        return compact_checkpoint_summary(ctx.db, ctx.exchange)
+    except Exception as exc:
+        return f"Checkpoints: {exc}"
+
+
 def _provider_presets(ctx: RuntimeContext) -> str:
     try:
         from config_presets import get_active_preset_id, get_preset, list_presets
@@ -150,6 +159,7 @@ def build_default_context_registry() -> ContextProviderRegistry:
         .register("CARTERA / POSICIONES BOT", _provider_portfolio, priority=20)
         .register("CARTERA EXCHANGE / DUST", _provider_wallet, priority=30)
         .register("RENDIMIENTO POR PERIODO", _provider_periods, priority=40)
+        .register("CHECKPOINTS / EVALUACIÓN ESTRATEGIA", _provider_checkpoints, priority=42, max_chars=1200)
         .register("MACRO", _provider_macro, priority=50)
         .register("DAEMON", _provider_daemon, priority=60)
         .register("RADAR / WATCHLIST", _provider_watchlist, priority=65, max_chars=700)

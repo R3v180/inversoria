@@ -216,6 +216,18 @@ def render_dashboard(snapshot=None, *, stale=False, age_sec=0):
             baseline,
         )
     )
+    strategy = breakdown.get("strategy_pnl")
+    if strategy and strategy.get("checkpoint"):
+        cp = strategy["checkpoint"]
+        st.caption(
+            _("DASH_PNL_STRATEGY_CAPTION").format(
+                label=cp.get("label", _("CHK_DEFAULT_LABEL")),
+                start=f"{float(strategy.get('start_equity', 0)):.2f}",
+            )
+            + f" · { _('DASH_PNL_STRATEGY') }: ${strategy['pnl_usd']:+.2f} ({strategy['pnl_pct']:+.2f}%)"
+        )
+    else:
+        st.caption(_("DASH_PNL_NO_CHECKPOINT"))
     st.caption(_("DASH_AUTO_REFRESH_NOTE"))
 
     # --- POSITIONS + LIVE EVENTS FIRST ---

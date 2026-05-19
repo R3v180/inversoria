@@ -65,8 +65,19 @@ def _builtin_definitions() -> list[dict]:
         "AI_ENABLE_LOCAL_BUDGET": False,
         "AI_RULES_ONLY_ON_BUDGET_EXHAUSTED": True,
     }
-    conservative = {
+    signals_only = {
         "TRADING_EXECUTION_MODE": "consultive",
+        "DECISION_MODE": "hybrid",
+        "MIN_AUTO_DECISION_SCORE": 0.68,
+        "RISK_PER_TRADE": 0.01,
+        "MAX_OPEN_POSITIONS": 2,
+        "PROTECTIONS_ENABLED": True,
+        "PAIRLIST_LIQUIDITY_FILTER_ENABLED": True,
+        "ROTATION_ENABLED": False,
+        "WEBHOOK_AUTO_APPROVE": False,
+    }
+    conservative = {
+        "TRADING_EXECUTION_MODE": "auto",
         "DECISION_MODE": "hybrid",
         "MIN_AUTO_DECISION_SCORE": 0.72,
         "RISK_PER_TRADE": 0.01,
@@ -110,7 +121,7 @@ def _builtin_definitions() -> list[dict]:
         {
             "id": "conservative",
             "name": "Conservador",
-            "description": "Menor riesgo, más filtros y modo consultivo por defecto.",
+            "description": "Menor riesgo y más filtros; ejecución automática con umbrales estrictos.",
             "builtin": True,
             "settings": conservative,
         },
@@ -120,6 +131,13 @@ def _builtin_definitions() -> list[dict]:
             "description": "Más señales y exposición; solo para cuentas que aceptan mayor volatilidad.",
             "builtin": True,
             "settings": aggressive,
+        },
+        {
+            "id": "signals_only",
+            "name": "Solo señales",
+            "description": "Análisis y registro sin ejecutar órdenes (modo consultivo).",
+            "builtin": True,
+            "settings": signals_only,
         },
     ]
 

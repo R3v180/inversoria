@@ -534,8 +534,12 @@ TRANSLATIONS = {
         'en': 'Compares closed journal win rate and expectancy with latest backtest priors. Positive gap = live outperforming backtest.',
     },
     'HISTORY_JOURNAL_BT_EMPTY': {
-        'es': 'Sin cierres en el journal o sin datos de backtest para comparar.',
-        'en': 'No closed journal rows or backtest data to compare.',
+        'es': 'Sin cierres enlazados en el journal todavía. Tras nuevas ventas del bot o tras sincronizar, aparecerá la comparación por símbolo.',
+        'en': 'No linked journal closures yet. After new bot sells or sync, per-symbol comparison will appear here.',
+    },
+    'HISTORY_JOURNAL_BT_PARTIAL': {
+        'es': 'Live desde journal cerrado. Símbolos sin fila de backtest muestran solo datos en vivo.',
+        'en': 'Live from closed journal. Symbols without a backtest row show live data only.',
     },
     'HISTORY_AUDIT_TITLE': {
         'es': 'Auditoría operativa y replay de ciclos',

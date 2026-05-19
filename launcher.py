@@ -67,6 +67,7 @@ TEXT = {
         "port": "Puerto",
         "logs": "Log del daemon",
         "logs_hint": "Escaneo en vivo del bot: decisiones por símbolo, proveedores IA, filtros y errores.",
+        "logs_scroll_hint": "Rueda del ratón o barra lateral para desplazarte por el log.",
         "copy_logs": "Copiar logs",
         "logs_copied": "Logs copiados al portapapeles ({lines} líneas).",
         "logs_copied_short": "Copiado",
@@ -117,6 +118,27 @@ TEXT = {
         "project_missing": "No encuentro app.py o bot_daemon.py en la carpeta del proyecto.",
         "mode_saved": "Modo guardado.",
         "db_error": "Error accediendo a la base de datos",
+        "pre_start_summary": "Resumen antes de arrancar",
+        "summary_db": "Base de datos",
+        "summary_checkpoint": "Vista evaluación",
+        "summary_global_view": "Global",
+        "summary_preset": "Plantilla activa",
+        "summary_none": "—",
+        "strategy_title": "Estrategia (plantilla)",
+        "preset_keep": "Mantener configuración actual",
+        "apply_preset": "Aplicar plantilla",
+        "preset_applied": "Plantilla aplicada.",
+        "startup_plan": "Al arrancar",
+        "plan_web_only": "Solo web",
+        "plan_paused": "Web + daemon pausado",
+        "plan_active": "Web + bot activo",
+        "prepare": "Preparar",
+        "prepared": "Configuración preparada.",
+        "summary_effective": "Config efectiva",
+        "log_operational": "Log operativo",
+        "log_technical": "Log técnico",
+        "copy_technical": "Copiar técnico",
+        "technical_copied": "Log técnico copiado.",
     },
     "en": {
         "title": "InversorIA",
@@ -156,6 +178,7 @@ TEXT = {
         "port": "Port",
         "logs": "Daemon log",
         "logs_hint": "Live bot scan: symbol decisions, AI providers, filters and errors.",
+        "logs_scroll_hint": "Use the mouse wheel or scrollbar to scroll the log.",
         "copy_logs": "Copy logs",
         "logs_copied": "Logs copied to clipboard ({lines} lines).",
         "logs_copied_short": "Copied",
@@ -206,6 +229,27 @@ TEXT = {
         "project_missing": "Could not find app.py or bot_daemon.py in the project folder.",
         "mode_saved": "Mode saved.",
         "db_error": "Database access error",
+        "pre_start_summary": "Pre-start summary",
+        "summary_db": "Database",
+        "summary_checkpoint": "Evaluation view",
+        "summary_global_view": "Global",
+        "summary_preset": "Active preset",
+        "summary_none": "—",
+        "strategy_title": "Strategy (preset)",
+        "preset_keep": "Keep current settings",
+        "apply_preset": "Apply preset",
+        "preset_applied": "Preset applied.",
+        "startup_plan": "On startup",
+        "plan_web_only": "Web only",
+        "plan_paused": "Web + paused daemon",
+        "plan_active": "Web + active bot",
+        "prepare": "Prepare",
+        "prepared": "Configuration prepared.",
+        "summary_effective": "Effective config",
+        "log_operational": "Operational log",
+        "log_technical": "Technical log",
+        "copy_technical": "Copy technical",
+        "technical_copied": "Technical log copied.",
     },
 }
 
@@ -281,6 +325,10 @@ class InversoriaLauncher(ctk.CTk):
         self._profile_display_to_id = {}
         self._api_prompt_shown = False
         self._sleep_blocked = False
+        self.preset_var = ctk.StringVar(value="")
+        self.startup_plan_var = ctk.StringVar(value="")
+        self._preset_id_by_label: dict[str, str] = {}
+        self._log_view = "operational"
 
         self._build_ui()
         self.refresh_texts()
@@ -292,7 +340,9 @@ class InversoriaLauncher(ctk.CTk):
 
     def _build_ui(self):
         self.grid_columnconfigure(0, weight=1)
-        self.grid_rowconfigure(3, weight=1)
+        for row in (0, 1, 2, 4):
+            self.grid_rowconfigure(row, weight=0)
+        self.grid_rowconfigure(3, weight=1, minsize=280)
 
         self.configure(fg_color="#070B12")
         header = ctk.CTkFrame(self, corner_radius=26, fg_color="#0B1220", border_width=1, border_color="#1F2937")
@@ -323,8 +373,17 @@ class InversoriaLauncher(ctk.CTk):
         )
         self.language_menu.grid(row=0, column=1, padx=22, pady=22, sticky="ne")
 
-        controls = ctk.CTkFrame(self, corner_radius=24, fg_color="#111827", border_width=1, border_color="#1F2937")
-        controls.grid(row=1, column=0, padx=20, pady=10, sticky="ew")
+        controls_outer = ctk.CTkFrame(self, corner_radius=24, fg_color="#111827", border_width=1, border_color="#1F2937")
+        controls_outer.grid(row=1, column=0, padx=20, pady=10, sticky="ew")
+        controls_outer.grid_columnconfigure(0, weight=1)
+        self.controls_scroll = ctk.CTkScrollableFrame(
+            controls_outer,
+            fg_color="#111827",
+            corner_radius=0,
+            height=320,
+        )
+        self.controls_scroll.grid(row=0, column=0, sticky="ew")
+        controls = self.controls_scroll
         controls.grid_columnconfigure((0, 1, 2, 3), weight=1)
 
         self.mode_label = ctk.CTkLabel(controls, font=ctk.CTkFont(size=14, weight="bold"))
@@ -333,13 +392,47 @@ class InversoriaLauncher(ctk.CTk):
             controls,
             variable=self.mode_var,
             values=[self.t("simulation"), self.t("real")],
+            command=self._on_mode_segment_change,
             selected_color="#10B981",
             selected_hover_color="#059669",
             unselected_color="#1F2937",
             unselected_hover_color="#374151",
             height=42,
         )
-        self.mode_menu.grid(row=1, column=0, padx=18, pady=(0, 18), sticky="ew")
+        self.mode_menu.grid(row=1, column=0, padx=18, pady=(0, 10), sticky="ew")
+
+        self.strategy_label = ctk.CTkLabel(controls, font=ctk.CTkFont(size=14, weight="bold"))
+        self.strategy_label.grid(row=2, column=0, columnspan=4, padx=18, pady=(4, 4), sticky="w")
+        self.preset_menu = ctk.CTkOptionMenu(
+            controls,
+            variable=self.preset_var,
+            values=[self.t("preset_keep")],
+            fg_color="#1F2937",
+            button_color="#374151",
+            button_hover_color="#4B5563",
+            height=38,
+        )
+        self.preset_menu.grid(row=3, column=0, padx=18, pady=(0, 8), sticky="ew")
+        self.apply_preset_button = ctk.CTkButton(
+            controls,
+            height=38,
+            corner_radius=14,
+            fg_color="#0F766E",
+            hover_color="#0D9488",
+            command=self.apply_preset_from_launcher,
+        )
+        self.apply_preset_button.grid(row=3, column=1, padx=8, pady=(0, 8), sticky="ew")
+        self.startup_plan_menu = ctk.CTkSegmentedButton(
+            controls,
+            variable=self.startup_plan_var,
+            values=[self.t("plan_web_only"), self.t("plan_paused"), self.t("plan_active")],
+            selected_color="#2563EB",
+            selected_hover_color="#1D4ED8",
+            unselected_color="#1F2937",
+            unselected_hover_color="#374151",
+            height=38,
+        )
+        self.startup_plan_menu.grid(row=3, column=2, columnspan=2, padx=(8, 18), pady=(0, 8), sticky="ew")
 
         self.start_button = ctk.CTkButton(controls, height=46, corner_radius=14, fg_color="#10B981", hover_color="#059669", command=self.start_system)
         self.start_button.grid(row=1, column=1, padx=8, pady=(0, 18), sticky="ew")
@@ -355,7 +448,16 @@ class InversoriaLauncher(ctk.CTk):
             hover_color="#991B1B",
             command=self.stop_all,
         )
-        self.stop_all_button.grid(row=2, column=1, columnspan=3, padx=(8, 18), pady=(0, 18), sticky="ew")
+        self.stop_all_button.grid(row=4, column=1, columnspan=2, padx=8, pady=(0, 8), sticky="ew")
+        self.prepare_button = ctk.CTkButton(
+            controls,
+            height=40,
+            corner_radius=14,
+            fg_color="#374151",
+            hover_color="#4B5563",
+            command=self.prepare_startup,
+        )
+        self.prepare_button.grid(row=4, column=3, padx=(8, 18), pady=(0, 8), sticky="ew")
         self.api_button = ctk.CTkButton(
             controls,
             height=40,
@@ -364,12 +466,12 @@ class InversoriaLauncher(ctk.CTk):
             hover_color="#4B5563",
             command=self.open_api_config,
         )
-        self.api_button.grid(row=2, column=0, padx=18, pady=(0, 18), sticky="ew")
+        self.api_button.grid(row=4, column=0, padx=18, pady=(0, 8), sticky="ew")
 
         self.profile_label = ctk.CTkLabel(controls, font=ctk.CTkFont(size=14, weight="bold"))
-        self.profile_label.grid(row=3, column=0, padx=18, pady=(0, 6), sticky="w")
+        self.profile_label.grid(row=5, column=0, padx=18, pady=(0, 6), sticky="w")
         self.profile_name_entry = ctk.CTkEntry(controls, textvariable=self.profile_name_var, height=34)
-        self.profile_name_entry.grid(row=3, column=1, columnspan=3, padx=(8, 18), pady=(0, 6), sticky="ew")
+        self.profile_name_entry.grid(row=5, column=1, columnspan=3, padx=(8, 18), pady=(0, 6), sticky="ew")
         self.profile_menu = ctk.CTkOptionMenu(
             controls,
             variable=self.profile_var,
@@ -380,9 +482,9 @@ class InversoriaLauncher(ctk.CTk):
             button_hover_color="#4B5563",
             height=38,
         )
-        self.profile_menu.grid(row=4, column=0, padx=18, pady=(0, 18), sticky="ew")
+        self.profile_menu.grid(row=6, column=0, padx=18, pady=(0, 18), sticky="ew")
         self.profile_capital_entry = ctk.CTkEntry(controls, textvariable=self.profile_capital_var, height=38)
-        self.profile_capital_entry.grid(row=4, column=1, padx=8, pady=(0, 18), sticky="ew")
+        self.profile_capital_entry.grid(row=6, column=1, padx=8, pady=(0, 18), sticky="ew")
         self.create_profile_button = ctk.CTkButton(
             controls,
             height=38,
@@ -391,7 +493,7 @@ class InversoriaLauncher(ctk.CTk):
             hover_color="#0D9488",
             command=self.create_simulation_profile,
         )
-        self.create_profile_button.grid(row=4, column=2, padx=8, pady=(0, 18), sticky="ew")
+        self.create_profile_button.grid(row=6, column=2, padx=8, pady=(0, 18), sticky="ew")
         self.reset_profile_button = ctk.CTkButton(
             controls,
             height=38,
@@ -400,7 +502,28 @@ class InversoriaLauncher(ctk.CTk):
             hover_color="#9A3412",
             command=self.reset_simulation_profile,
         )
-        self.reset_profile_button.grid(row=4, column=3, padx=(8, 18), pady=(0, 18), sticky="ew")
+        self.reset_profile_button.grid(row=6, column=3, padx=(8, 18), pady=(0, 18), sticky="ew")
+        self._sim_profile_widgets = [
+            self.profile_label,
+            self.profile_name_entry,
+            self.profile_menu,
+            self.profile_capital_entry,
+            self.create_profile_button,
+            self.reset_profile_button,
+        ]
+
+        self.summary_frame = ctk.CTkFrame(controls, fg_color="#0B1220", corner_radius=14, border_width=1, border_color="#1F2937")
+        self.summary_frame.grid(row=7, column=0, columnspan=4, padx=18, pady=(0, 12), sticky="ew")
+        self.summary_title = ctk.CTkLabel(self.summary_frame, font=ctk.CTkFont(size=13, weight="bold"))
+        self.summary_title.pack(anchor="w", padx=14, pady=(10, 4))
+        self.summary_label = ctk.CTkLabel(
+            self.summary_frame,
+            text_color="#94A3B8",
+            font=ctk.CTkFont(size=11),
+            justify="left",
+            anchor="w",
+        )
+        self.summary_label.pack(anchor="w", padx=14, pady=(0, 10), fill="x")
 
         status = ctk.CTkFrame(self, corner_radius=24, fg_color="#0B1220", border_width=1, border_color="#1F2937")
         status.grid(row=2, column=0, padx=20, pady=10, sticky="ew")
@@ -414,11 +537,14 @@ class InversoriaLauncher(ctk.CTk):
         self.port_card = self._metric(status, 4, self.t("port"), self.port_state_var)
         self.api_card = self._metric(status, 5, self.t("api_status"), self.api_state_var)
 
-        logs = ctk.CTkFrame(self, corner_radius=24, fg_color="#0B1220", border_width=1, border_color="#1F2937")
-        logs.grid(row=3, column=0, padx=20, pady=10, sticky="nsew")
-        logs.grid_columnconfigure(0, weight=1)
-        logs.grid_columnconfigure(1, weight=0)
-        logs.grid_rowconfigure(2, weight=1, minsize=180)
+        self._logs_frame = ctk.CTkFrame(self, corner_radius=24, fg_color="#0B1220", border_width=1, border_color="#1F2937")
+        self._logs_frame.grid(row=3, column=0, padx=20, pady=10, sticky="nsew")
+        self._logs_frame.grid_columnconfigure(0, weight=1)
+        self._logs_frame.grid_columnconfigure(1, weight=0)
+        for row in (0, 1, 2):
+            self._logs_frame.grid_rowconfigure(row, weight=0)
+        self._logs_frame.grid_rowconfigure(3, weight=1, minsize=200)
+        logs = self._logs_frame
         self.logs_label = ctk.CTkLabel(logs, font=ctk.CTkFont(size=15, weight="bold"))
         self.logs_label.grid(row=0, column=0, padx=18, pady=(16, 6), sticky="w")
         self.copy_logs_button = ctk.CTkButton(
@@ -431,23 +557,70 @@ class InversoriaLauncher(ctk.CTk):
             command=self.copy_visible_logs,
         )
         self.copy_logs_button.grid(row=0, column=1, padx=18, pady=(16, 6), sticky="e")
+        self.log_view_menu = ctk.CTkSegmentedButton(
+            logs,
+            values=[self.t("log_operational"), self.t("log_technical")],
+            command=self._on_log_view_change,
+            selected_color="#374151",
+            selected_hover_color="#4B5563",
+            unselected_color="#1F2937",
+            unselected_hover_color="#4B5563",
+            height=32,
+        )
+        self.log_view_menu.grid(row=1, column=0, columnspan=2, padx=18, pady=(0, 6), sticky="ew")
         self.logs_hint_label = ctk.CTkLabel(logs, text_color="#94A3B8", font=ctk.CTkFont(size=12))
-        self.logs_hint_label.grid(row=1, column=0, columnspan=2, padx=18, pady=(0, 8), sticky="w")
+        self.logs_hint_label.grid(row=2, column=0, columnspan=2, padx=18, pady=(0, 8), sticky="w")
         self.log_box = ctk.CTkTextbox(
             logs,
-            height=220,
             wrap="word",
             fg_color="#020617",
             text_color="#D1FAE5",
             border_width=1,
             border_color="#1F2937",
             font=ctk.CTkFont(family="Consolas", size=12),
+            activate_scrollbars=True,
         )
-        self.log_box.grid(row=2, column=0, columnspan=2, padx=18, pady=(0, 18), sticky="nsew")
+        self.log_box.grid(row=3, column=0, columnspan=2, padx=18, pady=(0, 18), sticky="nsew")
         self.log_box.configure(state="disabled")
+        self._bind_log_mousewheel()
 
         self.footer = ctk.CTkLabel(self, textvariable=self.status_var, text_color="#9CA3AF")
         self.footer.grid(row=4, column=0, padx=24, pady=(0, 14), sticky="w")
+
+        self.bind("<Configure>", self._sync_panel_heights, add="+")
+        self.after(50, self._sync_panel_heights)
+
+    def _sync_panel_heights(self, event=None):
+        if event is not None and event.widget is not self:
+            return
+        total = max(self.winfo_height(), self.minsize()[1])
+        if total < 400:
+            return
+        header_band = 130
+        status_band = 110
+        footer_band = 40
+        chrome = 70
+        logs_min = 280
+        logs_target = max(logs_min, int(total * 0.40))
+        controls_h = total - header_band - status_band - footer_band - chrome - logs_target
+        controls_h = max(200, min(400, controls_h))
+        try:
+            current = int(self.controls_scroll.cget("height"))
+            if current != controls_h:
+                self.controls_scroll.configure(height=controls_h)
+        except Exception:
+            pass
+
+    def _bind_log_mousewheel(self):
+        def _on_wheel(event):
+            delta = -1 * int(event.delta / 120) if event.delta else 0
+            if delta:
+                self.log_box._textbox.yview_scroll(delta, "units")
+            return "break"
+
+        for widget in (self.log_box, self._logs_frame):
+            widget.bind("<MouseWheel>", _on_wheel, add="+")
+            widget.bind("<Enter>", lambda _e: self.log_box._textbox.focus_set(), add="+")
 
     def _metric(self, parent, column, title, variable):
         frame = ctk.CTkFrame(parent, fg_color="#111827", corner_radius=18, border_width=1, border_color="#1F2937")
@@ -492,14 +665,106 @@ class InversoriaLauncher(ctk.CTk):
         self.api_card["title"].configure(text=self.t("api_status"))
         self.mode_menu.configure(values=[self.t("simulation"), self.t("real")])
         self.mode_var.set(self.t("simulation") if current_is_sim else self.t("real"))
+        self._update_sim_profile_visibility()
         self.refresh_profile_menu()
         self.status_var.set(self.t("ready"))
+        self.summary_title.configure(text=self.t("pre_start_summary"))
+        self.strategy_label.configure(text=self.t("strategy_title"))
+        self.apply_preset_button.configure(text=self.t("apply_preset"))
+        self.prepare_button.configure(text=self.t("prepare"))
+        self.startup_plan_menu.configure(
+            values=[self.t("plan_web_only"), self.t("plan_paused"), self.t("plan_active")]
+        )
+        if not self.startup_plan_var.get():
+            self.startup_plan_var.set(self.t("plan_paused"))
+        self.log_view_menu.configure(values=[self.t("log_operational"), self.t("log_technical")])
+        self._refresh_preset_menu()
+        self._update_sim_profile_visibility()
+        self._refresh_pre_start_summary()
         self.refresh_status()
 
     def change_language(self, value):
         self.lang = "en" if value == "English" else "es"
         self._set_system_status("language", self.lang)
         self.refresh_texts()
+
+    def _on_mode_segment_change(self, _value=None):
+        self._update_sim_profile_visibility()
+        self._refresh_pre_start_summary()
+
+    def _refresh_preset_menu(self):
+        from config_presets import get_active_preset_id, get_preset
+        from launcher_startup import list_builtin_preset_ids
+
+        labels = [self.t("preset_keep")]
+        mapping = {labels[0]: "__keep__"}
+        active = get_active_preset_id()
+        for pid in list_builtin_preset_ids():
+            preset = get_preset(pid) or {}
+            name = preset.get("name") or pid
+            label = f"{name} ({pid})"
+            labels.append(label)
+            mapping[label] = pid
+            if pid == active:
+                self.preset_var.set(label)
+        if not self.preset_var.get() or self.preset_var.get() not in labels:
+            self.preset_var.set(labels[0])
+        self._preset_id_by_label = mapping
+        self.preset_menu.configure(values=labels)
+
+    def _selected_preset_id(self) -> str:
+        return self._preset_id_by_label.get(self.preset_var.get(), "__keep__")
+
+    def _startup_plan_id(self) -> str:
+        value = self.startup_plan_var.get()
+        if value in {self.t("plan_web_only"), TEXT["en"]["plan_web_only"]}:
+            return "web_only"
+        if value in {self.t("plan_active"), TEXT["en"]["plan_active"]}:
+            return "active"
+        return "paused"
+
+    def apply_preset_from_launcher(self):
+        is_sim = self.mode_var.get() == self.t("simulation")
+        pid = self._selected_preset_id()
+        if pid == "__keep__":
+            self.status_var.set(self.t("ready"))
+            return
+        if not is_sim:
+            if not messagebox.askyesno(self.t("real_title"), self.t("real_warning")):
+                return
+        try:
+            from launcher_startup import apply_preset_for_launcher
+
+            apply_preset_for_launcher(pid, confirm_real=True)
+            self._restart_runtime_after_profile_change()
+            self.status_var.set(self.t("preset_applied"))
+            self._refresh_pre_start_summary()
+        except Exception as exc:
+            messagebox.showerror(self.t("db_error"), str(exc))
+
+    def prepare_startup(self):
+        if not self._validate_project():
+            self.set_status("project_missing")
+            return
+        is_sim = self.mode_var.get() == self.t("simulation")
+        self._apply_mode(is_sim)
+        pid = self._selected_preset_id()
+        if pid != "__keep__":
+            if not is_sim and not messagebox.askyesno(self.t("real_title"), self.t("real_warning")):
+                return
+            try:
+                from launcher_startup import apply_preset_for_launcher
+
+                apply_preset_for_launcher(pid, confirm_real=True)
+            except Exception as exc:
+                messagebox.showerror(self.t("db_error"), str(exc))
+                return
+        self._refresh_pre_start_summary()
+        self.status_var.set(self.t("prepared"))
+
+    def _on_log_view_change(self, value):
+        self._log_view = "technical" if value in {self.t("log_technical"), TEXT["en"]["log_technical"]} else "operational"
+        self._refresh_logs()
 
     def _profile_display(self, profile):
         return f"{profile.get('name', profile.get('id'))} · {profile.get('initial_capital', 0):.2f} USDT"
@@ -662,19 +927,40 @@ class InversoriaLauncher(ctk.CTk):
                 return
 
         self._apply_mode(is_sim)
+        pid = self._selected_preset_id()
+        if pid != "__keep__":
+            try:
+                from launcher_startup import apply_preset_for_launcher
+
+                apply_preset_for_launcher(pid, confirm_real=True)
+            except Exception as exc:
+                messagebox.showerror(self.t("db_error"), str(exc))
+                self.set_status("ready")
+                return
         self.set_status("mode_saved")
         threading.Thread(target=self._start_system_worker, daemon=True).start()
 
     def _start_system_worker(self):
         self._prevent_sleep()
-        self._set_system_status("launcher_start_armed_until", str(time.time() + 300))
-        self._set_system_status("is_running", "true")
+        plan = self._startup_plan_id()
+        is_sim = self._current_simulation_mode()
+
+        if plan == "active":
+            self._set_system_status("launcher_start_armed_until", str(time.time() + 300))
+            self._set_system_status("is_running", "true")
+        else:
+            self._set_system_status("is_running", "false")
+            self._set_system_status("launcher_start_armed_until", "0")
+
         self._start_streamlit()
-        self._set_system_status("is_running", "true")
-        self._start_daemon()
+        if plan != "web_only":
+            if is_sim or self._has_real_keys():
+                self._start_daemon()
+            else:
+                self.set_status("missing_keys")
+        if plan == "active":
+            self._set_system_status("is_running", "true")
         self._open_web_when_ready()
-        self._set_system_status("launcher_start_armed_until", str(time.time() + 300))
-        self._set_system_status("is_running", "true")
         self.after(0, self.refresh_status)
         self.after(750, self._refresh_logs)
         self.after(2500, self._refresh_logs)
@@ -725,9 +1011,18 @@ class InversoriaLauncher(ctk.CTk):
             self.set_status("python_missing")
             return
         LOG_DIR.mkdir(exist_ok=True)
-        self._daemon_log_handle = open(LOG_DIR / "daemon.log", "w", encoding="utf-8", buffering=1)
+        daemon_log = LOG_DIR / "daemon.log"
+        rotated = LOG_DIR / "daemon.log.1"
+        if daemon_log.exists():
+            try:
+                if rotated.exists():
+                    rotated.unlink()
+                daemon_log.replace(rotated)
+            except OSError:
+                pass
+        self._daemon_log_handle = open(daemon_log, "a", encoding="utf-8", buffering=1)
         self._daemon_log_handle.write(
-            f"[LAUNCHER] Nueva sesión daemon · {time.strftime('%Y-%m-%d %H:%M:%S')}\n"
+            f"\n[LAUNCHER] Nueva sesión daemon · {time.strftime('%Y-%m-%d %H:%M:%S')}\n"
         )
         if self._current_simulation_mode():
             try:
@@ -738,10 +1033,10 @@ class InversoriaLauncher(ctk.CTk):
                 )
             except Exception:
                 pass
-        self._set_system_status("launcher_start_armed_until", str(time.time() + 300))
-        self._set_system_status("is_running", "true")
         daemon_env = self._child_env()
-        daemon_env["INVERSORIA_LAUNCHER_ARM_UNTIL"] = str(time.time() + 300)
+        if self._startup_plan_id() == "active":
+            arm_until = str(time.time() + 300)
+            daemon_env["INVERSORIA_LAUNCHER_ARM_UNTIL"] = arm_until
         self.daemon_process = subprocess.Popen(
             [python, "-u", str(ROOT / "bot_daemon.py")],
             cwd=str(ROOT),
@@ -804,7 +1099,59 @@ class InversoriaLauncher(ctk.CTk):
         self.refresh_status()
         self.after(1500, self.refresh_status_loop)
 
+    def _update_sim_profile_visibility(self):
+        show_sim = self.mode_var.get() in {TEXT["es"]["simulation"], TEXT["en"]["simulation"]}
+        for widget in getattr(self, "_sim_profile_widgets", []):
+            if show_sim:
+                widget.grid()
+            else:
+                widget.grid_remove()
+
+    def _refresh_pre_start_summary(self):
+        lines = []
+        try:
+            db_path = self._current_db_path()
+            lines.append(f"{self.t('summary_db')}: {db_path}")
+        except Exception:
+            lines.append(f"{self.t('summary_db')}: {self.t('summary_none')}")
+        try:
+            from config_presets import get_active_preset_id
+
+            preset = get_active_preset_id() or self.t("summary_none")
+            lines.append(f"{self.t('summary_preset')}: {preset}")
+        except Exception:
+            pass
+        try:
+            from launcher_startup import effective_config_summary
+
+            lines.append(f"{self.t('summary_effective')}: {effective_config_summary()}")
+        except Exception:
+            pass
+        plan = self._startup_plan_id()
+        lines.append(f"{self.t('startup_plan')}: {plan}")
+        try:
+            import json
+
+            raw = self._get_system_status("evaluation_views", "{}") or "{}"
+            views = json.loads(raw) if isinstance(raw, str) else {}
+            is_sim = self._current_simulation_mode()
+            if is_sim:
+                profile_id = self._profile_display_to_id.get(self.profile_var.get(), "default")
+                key = f"sim:{profile_id}"
+            else:
+                key = "real"
+            active_id = views.get(key)
+            if active_id:
+                lines.append(f"{self.t('summary_checkpoint')}: {active_id[:8]}…")
+            else:
+                lines.append(f"{self.t('summary_checkpoint')}: {self.t('summary_global_view')}")
+        except Exception:
+            pass
+        self.summary_label.configure(text="\n".join(lines))
+
     def refresh_status(self):
+        self._update_sim_profile_visibility()
+        self._refresh_pre_start_summary()
         web_active = self._is_port_open(PORT)
         daemon_active, daemon_label = self._daemon_health()
         trading_active = self._system_flag("is_running")
@@ -834,38 +1181,65 @@ class InversoriaLauncher(ctk.CTk):
         self._refresh_logs()
 
     def _refresh_logs(self):
+        from launcher_startup import (
+            filter_operational_log_lines,
+            read_health_json,
+            read_log_file,
+        )
+
         lines = []
         daemon_log = LOG_DIR / "daemon.log"
-        if daemon_log.exists():
-            try:
-                lines = daemon_log.read_text(encoding="utf-8", errors="replace").splitlines()[-220:]
-            except OSError as exc:
-                lines = [f"{self.t('db_error')}: {exc}"]
+        streamlit_log = LOG_DIR / "streamlit.log"
+        health_path = LOG_DIR / "health.json"
 
-        # If this launcher has not started the daemon yet, fall back to persisted DB events.
-        # External daemons cannot have their stdout captured retroactively.
-        if not lines:
-            try:
-                db_path = self._current_db_path()
-                if db_path.exists():
-                    with sqlite3.connect(db_path, timeout=2) as conn:
-                        rows = conn.execute("SELECT message FROM logs ORDER BY id DESC LIMIT 80").fetchall()
-                        lines = [row[0] for row in reversed(rows)]
-            except Exception as exc:
-                lines = [f"{self.t('db_error')}: {exc}"]
-
-        if not lines:
-            streamlit_log = LOG_DIR / "streamlit.log"
-            if streamlit_log.exists():
+        if getattr(self, "_log_view", "operational") == "technical":
+            chunks = [
+                "=== daemon.log ===",
+                *read_log_file(daemon_log, limit=300),
+                "",
+                "=== streamlit.log ===",
+                *read_log_file(streamlit_log, limit=200),
+            ]
+            health = read_health_json(health_path)
+            if health:
+                chunks.extend(["", "=== health.json ===", health])
+            lines = chunks
+            source = "launcher_logs/ (técnico)"
+        else:
+            if daemon_log.exists():
                 try:
-                    lines = streamlit_log.read_text(encoding="utf-8", errors="replace").splitlines()[-80:]
+                    raw = daemon_log.read_text(encoding="utf-8", errors="replace").splitlines()
+                    lines = filter_operational_log_lines(raw, limit=220)
+                except OSError as exc:
+                    lines = [f"{self.t('db_error')}: {exc}"]
+
+            if not lines:
+                try:
+                    db_path = self._current_db_path()
+                    if db_path.exists():
+                        with sqlite3.connect(db_path, timeout=2) as conn:
+                            rows = conn.execute("SELECT message FROM logs ORDER BY id DESC LIMIT 80").fetchall()
+                            lines = filter_operational_log_lines(
+                                [row[0] for row in reversed(rows)], limit=80
+                            )
+                except Exception as exc:
+                    lines = [f"{self.t('db_error')}: {exc}"]
+
+            if not lines and streamlit_log.exists():
+                try:
+                    raw = streamlit_log.read_text(encoding="utf-8", errors="replace").splitlines()
+                    lines = raw[-80:]
                 except OSError:
                     pass
+            source = daemon_log if daemon_log.exists() else streamlit_log
 
         text = "\n".join(lines) if lines else self.t("ready")
-        source = daemon_log if daemon_log.exists() else LOG_DIR / "streamlit.log"
+        line_word = "líneas" if self.lang == "es" else "lines"
         self.logs_hint_label.configure(
-            text=f"{self.t('logs_hint')} · {len(lines)} líneas · {source}"
+            text=(
+                f"{self.t('logs_hint')} · {self.t('logs_scroll_hint')} "
+                f"· {len(lines)} {line_word} · {source}"
+            )
         )
         self.log_box.configure(state="normal")
         self.log_box.delete("1.0", "end")

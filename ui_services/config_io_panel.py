@@ -17,6 +17,8 @@ from config_importer import (
 )
 from diagnostic_utils import build_safe_diagnostic_package
 from i18n import _, format_config_error
+from ui_services.checkpoint_dialog import offer_checkpoint_after_event
+from ui_services import checkpoint_service as cs
 
 
 def _render_diagnostic_expander():
@@ -165,6 +167,21 @@ def render_config_io_panel():
                 if a1.button(_("CONFIG_APPLY"), type="primary", use_container_width=True):
                     backup = apply_config_changes(changes)
                     st.session_state.pop("pending_config_import", None)
+                    db = st.session_state.get("db")
+                    exchange = st.session_state.get("exchange")
+                    if (
+                        db is not None
+                        and exchange is not None
+                        and cs.should_offer_import_checkpoint(changes)
+                    ):
+                        offer_checkpoint_after_event(
+                            db,
+                            exchange,
+                            event_type="config_import",
+                            label=_("CHK_EVENT_IMPORT"),
+                            config_diff=changes,
+                            default_primary="save_only",
+                        )
                     if backup:
                         st.success(_("CONFIG_APPLIED_BACKUP").format(backup))
                     else:

@@ -375,7 +375,14 @@ class BotDaemon:
         entry_decision_id = entry_extra.get('entry_decision_id')
         entry_price = float(pos.get('entry_price') or executed_price)
         realized_pnl = ((float(executed_price) - entry_price) / entry_price) * 100 if entry_price else 0.0
-        closed = self.db.close_position(symbol, executed_price, sell_res['reason'], sold_amount=sold)
+        sync_journal = not (decision_journal_id or entry_decision_id)
+        closed = self.db.close_position(
+            symbol,
+            executed_price,
+            sell_res['reason'],
+            sold_amount=sold,
+            sync_journal=sync_journal,
+        )
         if not closed:
             self.log_message(f"[WARN] {symbol} SELL executed but DB position was not found")
             return False

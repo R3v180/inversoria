@@ -49,3 +49,16 @@ python -m unittest discover -s tests -v
 Aplicar una plantilla **no** cambia de perfil de simulación ni API keys.
 
 PR a `main`: cuando el usuario lo solicite.
+
+## Fase 6 — Checkpoints y launcher v2 (mayo 2026)
+
+Ver diseño en **[`docs/PLAN_MAESTRO.md`](docs/PLAN_MAESTRO.md)**.
+
+- [x] Tabla `strategy_checkpoints` + vista activa por universo (sim/real + perfil).
+- [x] Hooks: reset global, plantilla, cambio modo, import JSON, reset perfil sim.
+- [x] UI Historial: barra global/checkpoint, checkpoints manuales con nombre, PnL periodo desde checkpoint activo.
+- [x] Dashboard: PnL global vs PnL estrategia (desde checkpoint activo).
+- [x] Asistente: contexto de checkpoints (`assistant_runtime` providers).
+- [x] Launcher v2: plantillas, modos de arranque, resumen pre-arranque, logs operativo/técnico, UI scrollable.
+- [x] Journal vs backtest: consulta de cierres journal, backfill idempotente desde `trades`, sync en `close_position`.
+- [x] Tests: `test_checkpoints.py`, `test_journal_backtest_compare.py`.

@@ -172,6 +172,21 @@ def log_message(msg):
 
 # --- ENRUTADOR UI ---
 from ui_onboarding import render_onboarding, is_onboarding_done
+from ui_services.checkpoint_dialog import offer_checkpoint_after_event, render_pending_checkpoint_dialog
+
+
+def _revert_mode_change():
+    state = st.session_state.pop("_mode_change_revert_state", None)
+    if not state:
+        return
+    prev_sim = bool(state.get("prev_sim"))
+    was_running = bool(state.get("was_running"))
+    save_settings({"MODO_SIMULACION": prev_sim})
+    st.session_state.current_mode = prev_sim
+    st.session_state.db = new_database_manager()
+    st.session_state.db.set_system_status("is_running", "true" if was_running else "false")
+    st.session_state.db.set_system_status("simulacion", "true" if prev_sim else "false")
+    st.session_state.exchange = ExchangeHelper(modo_simulacion=prev_sim)
 
 # --- CONTROL DE FLUJO (ONBOARDING) ---
 if not is_onboarding_done():
@@ -183,6 +198,9 @@ st.session_state.sentiment.set_user_context(
     st.session_state.get('user_name', 'User'),
     st.session_state.get('language', 'es')
 )
+
+if "db" in st.session_state and "exchange" in st.session_state:
+    render_pending_checkpoint_dialog(st.session_state.db, st.session_state.exchange)
 
 with st.sidebar:
     if os.path.exists(APP_LOGO):
@@ -307,24 +325,47 @@ with st.sidebar:
                     st.session_state.db = new_database_manager()
                     st.session_state.exchange = ExchangeHelper(modo_simulacion=True)
                     st.session_state.current_mode = True
+                    offer_checkpoint_after_event(
+                        st.session_state.db,
+                        st.session_state.exchange,
+                        event_type="profile_reset",
+                        label=_("CHK_EVENT_PROFILE_RESET"),
+                        default_primary="activate",
+                    )
                     st.rerun()
         except Exception as exc:
             st.caption(f"{_('SIM_PROFILE_UNAVAILABLE')}: {exc}")
         
     # Detectar cambio de modo
     if st.session_state.current_mode != is_simulacion:
+        prev_sim = bool(st.session_state.current_mode)
         was_running = str(st.session_state.db.get_system_status('is_running', 'false')).lower() == 'true'
         try:
             armed_until = float(st.session_state.db.get_system_status('launcher_start_armed_until', '0') or 0)
             was_running = was_running or armed_until > time.time()
         except (TypeError, ValueError):
             pass
+        st.session_state["_mode_change_revert_state"] = {
+            "prev_sim": prev_sim,
+            "was_running": was_running,
+        }
         st.session_state.current_mode = is_simulacion
         save_settings({"MODO_SIMULACION": bool(is_simulacion)})
         st.session_state.db = new_database_manager()
         st.session_state.db.set_system_status('is_running', 'true' if was_running else 'false')
         st.session_state.db.set_system_status('simulacion', 'true' if is_simulacion else 'false')
         st.session_state.exchange = ExchangeHelper(modo_simulacion=is_simulacion)
+        mode_label = _("MODE_SIM") if is_simulacion else _("MODE_REAL")
+        offer_checkpoint_after_event(
+            st.session_state.db,
+            st.session_state.exchange,
+            event_type="mode_change",
+            label=_("CHK_EVENT_MODE") + f" → {mode_label}",
+            default_primary="activate",
+            allow_cancel=True,
+            on_cancel_key="_mode_change_revert_handler",
+        )
+        st.session_state["_mode_change_revert_handler"] = _revert_mode_change
         st.rerun()
         
     with st.expander(f"⚠️ { _('EMERGENCY_ACTIONS') }", expanded=False):

@@ -59,6 +59,30 @@ class TestConfigPresetAssistant(unittest.TestCase):
             "recommended",
         )
 
+    def test_consultive_execution_signals_only(self):
+        self.assertEqual(
+            suggest_preset_id(
+                real_mode=True,
+                risk_tolerance="low",
+                activity_level="low",
+                account_size="large",
+                execution_mode="consultive",
+            ),
+            "signals_only",
+        )
+
+    def test_small_account_high_activity_not_conservative(self):
+        self.assertEqual(
+            suggest_preset_id(
+                real_mode=True,
+                risk_tolerance="high",
+                activity_level="high",
+                account_size="small",
+                execution_mode="auto",
+            ),
+            "aggressive",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

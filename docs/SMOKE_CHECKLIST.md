@@ -24,6 +24,9 @@ Incluye `test_config_parity` (schema = defaults) y `test_config_presets` (builti
 7. Asistente: preguntar "muéstrame los logs" y verificar respuesta con contexto de logs (no genérico vacío).
 8. Cambio ES/EN en sidebar: revisar Ajustes (etiquetas de parámetros), Historial y Dashboard en ambos idiomas.
 9. `python scripts/audit_i18n.py` sin claves `CFG_KEY_*` faltantes.
+10. **Checkpoints:** Ajustes → Reset global → diálogo «Usar ahora» / «Solo guardarlo»; Historial → vista Global / Desde checkpoint; PnL coherente con equity del checkpoint.
+11. Aplicar plantilla → checkpoint ofrecido (default «Solo guardarlo»); Dashboard muestra línea PnL estrategia si hay checkpoint activo.
+12. Asistente: «¿cómo voy con esta estrategia?» incluye sección CHECKPOINTS.
 
 ## Daemon (simulación)
 

@@ -11,6 +11,8 @@ from ui_services.performance_period import (
     performance_preset_label,
     preset_start_datetime,
 )
+from ui_services.checkpoint_ui import render_checkpoint_manager, render_evaluation_view_bar
+from ui_services import checkpoint_service as cs
 from ui_services.page_cache import install_page_autorefresh, page_cache_ttl, render_stale_while_revalidate
 from ui_services.ui_status import render_cache_status, render_page_refresh_intro
 from ui_services.journal_backtest_compare import build_journal_vs_backtest_rows
@@ -113,36 +115,54 @@ def _render_audit_replay(db):
                 st.warning(_("HISTORY_REPLAY_LOAD_FAIL").format(exc))
 
 
-def _render_period_performance(db, exchange):
+def _render_period_performance(db, exchange, *, view_mode: str = "global"):
     st.markdown(f"### {_('HISTORY_PERIOD_TITLE')}")
     st.caption(_("HISTORY_PERIOD_CAPTION"))
+    render_checkpoint_manager(db, exchange, key_prefix="hist_cp")
+
+    active_cp = cs.get_active_checkpoint(db, exchange) if view_mode == "checkpoint" else None
+    preset_ids = list(PERFORMANCE_PRESET_IDS)
+    if view_mode == "checkpoint" and active_cp and "from_active_checkpoint" in preset_ids:
+        default_preset = "from_active_checkpoint"
+    else:
+        default_preset = "today"
+    preset_index = preset_ids.index(default_preset) if default_preset in preset_ids else 0
+
     p1, p2, p3 = st.columns([1, 1, 2])
     preset = p1.selectbox(
         _("HISTORY_PERIOD_LABEL"),
-        PERFORMANCE_PRESET_IDS,
+        preset_ids,
+        index=preset_index,
         format_func=performance_preset_label,
         key="perf_period_preset",
     )
-    start_dt = preset_start_datetime(preset)
+    start_dt = preset_start_datetime(preset, active_checkpoint=active_cp)
+    fixed_equity = float(active_cp["equity_usdt"]) if preset == "from_active_checkpoint" and active_cp else None
     if preset == "custom":
         selected_date = p2.date_input(_("HISTORY_PERIOD_FROM_DATE"), value=datetime.now().date(), key="perf_period_date")
         selected_time = p3.time_input(_("HISTORY_PERIOD_FROM_TIME"), value=datetime.min.time(), key="perf_period_time")
         start_dt = datetime.combine(selected_date, selected_time)
+        fixed_equity = None
     else:
         p2.caption(_("HIST_PERIOD_START"))
         p2.write(start_dt.strftime("%Y-%m-%d %H:%M") if start_dt else _("HIST_PERIOD_FIRST_DATA"))
 
     current_equity = float(exchange.get_balance() or 0.0)
-    perf = compute_period_performance(db, current_equity, start_dt)
+    perf = compute_period_performance(
+        db,
+        current_equity,
+        start_dt,
+        start_equity=fixed_equity,
+    )
     if not perf.get("ok"):
         st.info(perf.get("reason", "Sin datos de rendimiento."))
         return
 
     c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Equity inicio periodo", f"${perf['start_equity']:.2f}")
-    c2.metric("Equity actual", f"${perf['current_equity']:.2f}")
-    c3.metric("PnL periodo", f"${perf['pnl_usd']:+.2f}", f"{perf['pnl_pct']:+.2f}%")
-    c4.metric("Puntos equity", perf.get("points", 0))
+    c1.metric(_("HIST_METRIC_START_EQUITY"), f"${perf['start_equity']:.2f}")
+    c2.metric(_("HIST_METRIC_CURRENT_EQUITY"), f"${perf['current_equity']:.2f}")
+    c3.metric(_("HIST_METRIC_PERIOD_PNL"), f"${perf['pnl_usd']:+.2f}", f"{perf['pnl_pct']:+.2f}%")
+    c4.metric(_("HIST_METRIC_EQUITY_POINTS"), perf.get("points", 0))
     st.caption(f"Inicio real usado: {pd.to_datetime(perf['start_ts']).strftime('%Y-%m-%d %H:%M:%S')}")
 
     curve = perf.get("period_df")
@@ -253,6 +273,8 @@ def _render_journal_vs_backtest(db):
             st.caption(_("HISTORY_JOURNAL_BT_EMPTY"))
             return
         st.caption(_("HISTORY_JOURNAL_BT_CAPTION"))
+        if any(r.get("backtest_win_rate") is None for r in rows):
+            st.caption(_("HISTORY_JOURNAL_BT_PARTIAL"))
         jb_df = pd.DataFrame(rows)
         jb_df = jb_df.rename(
             columns={
@@ -299,8 +321,12 @@ def render_history(trades_df=None, *, stale=False, age_sec=0):
     render_page_refresh_intro(HISTORY_AUTO_REFRESH_SEC)
     render_cache_status(stale=stale, age_sec=age_sec, refresh_sec=HISTORY_AUTO_REFRESH_SEC)
 
+    hist_view_mode = "global"
     if "exchange" in st.session_state:
-        _render_period_performance(st.session_state.db, st.session_state.exchange)
+        db = st.session_state.db
+        exchange = st.session_state.exchange
+        hist_view_mode = render_evaluation_view_bar(db, exchange, key_prefix="hist_main")
+        _render_period_performance(db, exchange, view_mode=hist_view_mode)
     else:
         st.info(_("HISTORY_EXCHANGE_NOT_READY"))
 
@@ -314,6 +340,14 @@ def render_history(trades_df=None, *, stale=False, age_sec=0):
         st.info(_('HISTORY_EMPTY'))
         return
     df['Date'] = pd.to_datetime(df['Date'])
+    exchange = st.session_state.get("exchange")
+    if exchange is not None:
+        active_cp = cs.get_active_checkpoint(st.session_state.db, exchange)
+        if active_cp and st.session_state.get("hist_main_eval_view_resolved") == "checkpoint":
+            df = cs.filter_trades_since_checkpoint(df, active_cp)
+            if df.empty:
+                st.info(_("HISTORY_EMPTY"))
+                return
     pnl_col = 'PnL_%' if 'PnL_%' in df.columns else 'Pnl_Pct' if 'Pnl_Pct' in df.columns else None
     if pnl_col is None:
         df['PnL_%'] = 0.0
