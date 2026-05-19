@@ -1532,7 +1532,7 @@ class BotDaemon:
 
             amount_coin = amount_usdt / price
             local_order_id = self._new_local_order_id(sym, "buy")
-            res = self.exchange.execute_order(sym, 'buy', amount_coin, price)
+            res = self.exchange.execute_order(sym, 'buy', amount_coin, price, client_order_id=local_order_id)
             self._record_order_event(local_order_id, sym, "buy", amount_coin, price, res, decision_journal_id)
             if self._is_filled_order_status(res):
                 executed_amount, executed_price = self._order_execution_details(res, amount_coin, price)
@@ -1701,7 +1701,7 @@ class BotDaemon:
 
             add_amount_coin = amount_usdt / current_price
             local_order_id = self._new_local_order_id(symbol, "add")
-            res = self.exchange.execute_order(symbol, "buy", add_amount_coin, current_price)
+            res = self.exchange.execute_order(symbol, "buy", add_amount_coin, current_price, client_order_id=local_order_id)
             self._record_order_event(local_order_id, symbol, "buy_add", add_amount_coin, current_price, res, decision_journal_id)
             if not self._is_filled_order_status(res):
                 if str(res.get("status") or "").lower() == "open":
@@ -1935,7 +1935,7 @@ class BotDaemon:
                         )
                         continue
                     local_order_id = self._new_local_order_id(symbol, "sell")
-                    order_result = self.exchange.execute_order(symbol, 'sell', requested_sell, current_price)
+                    order_result = self.exchange.execute_order(symbol, 'sell', requested_sell, current_price, client_order_id=local_order_id)
                     self._record_order_event(
                         local_order_id,
                         symbol,
@@ -2236,7 +2236,7 @@ class BotDaemon:
 
                 rot_order_id = self._new_local_order_id(sym_sac, "rotation_sell")
                 rot_amount = self._safe_float(sac_pos.get('amount'), 0.0)
-                rot_res = self.exchange.execute_order(sym_sac, 'sell', rot_amount, sac_price)
+                rot_res = self.exchange.execute_order(sym_sac, 'sell', rot_amount, sac_price, client_order_id=rot_order_id)
                 self._record_order_event(rot_order_id, sym_sac, "rotation_sell", rot_amount, sac_price, rot_res)
                 if not self._is_filled_order_status(rot_res):
                     if str(rot_res.get("status") or "").lower() == "open":

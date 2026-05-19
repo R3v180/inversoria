@@ -293,6 +293,8 @@ def render_settings():
                 order_reconcile_timeout = st.number_input("Timeout reconciliación orden (s)", min_value=5, max_value=600, value=get_setting('ORDER_RECONCILE_TIMEOUT_SECONDS', 30, int), step=5)
                 order_max_pending = st.number_input("Máximo tiempo orden pendiente (s)", min_value=10, max_value=3600, value=get_setting('ORDER_MAX_PENDING_SECONDS', 120, int), step=10)
             with col_o2:
+                order_client_id_enabled = st.checkbox("Enviar clientOrderId experimental", value=get_setting('ORDER_CLIENT_ID_ENABLED', False, bool), help="Mantener apagado hasta validar soporte Crypto.com/CCXT.")
+                order_client_id_param = st.text_input("Parámetro clientOrderId", value=get_setting('ORDER_CLIENT_ID_PARAM', 'client_oid'))
                 buy_fee_buffer_pct = st.number_input("Buffer fee compra (%)", min_value=0.0, max_value=5.0, value=get_setting('BUY_FEE_BUFFER_PCT', 0.5, float), step=0.1)
                 orderbook_depth_levels = st.number_input("Niveles orderbook para validar", min_value=1, max_value=50, value=get_setting('ORDERBOOK_DEPTH_LEVELS', 5, int), step=1)
 
@@ -323,6 +325,8 @@ def render_settings():
                 backtest_hard_veto_min_trades = st.number_input("Trades mínimos veto backtest", min_value=5, max_value=200, value=get_setting('BACKTEST_HARD_VETO_MIN_TRADES', 20, int), step=1)
                 backtest_min_bucket_trades = st.number_input("Trades mínimos por bucket", min_value=3, max_value=200, value=get_setting('BACKTEST_MIN_TRADES_PER_BUCKET', 5, int), step=1)
                 backtest_min_sample_trades = st.number_input("Trades muestra completa fiable", min_value=5, max_value=1000, value=get_setting('BACKTEST_MIN_SAMPLE_TRADES', 30, int), step=1)
+                backtest_bootstrap_samples = st.number_input("Muestras bootstrap backtest", min_value=0, max_value=10000, value=get_setting('BACKTEST_BOOTSTRAP_SAMPLES', 300, int), step=50)
+                backtest_oos_fraction = st.slider("Fracción out-of-sample", 0.05, 0.80, get_setting('BACKTEST_OOS_FRACTION', 0.30, float), step=0.05)
 
             st.markdown("##### Presupuesto IA")
             col_i1, col_i2 = st.columns(2)
@@ -429,6 +433,8 @@ def render_settings():
                 "ORDER_RECONCILE_ENABLED": bool(order_reconcile_enabled),
                 "ORDER_RECONCILE_TIMEOUT_SECONDS": int(order_reconcile_timeout),
                 "ORDER_MAX_PENDING_SECONDS": int(order_max_pending),
+                "ORDER_CLIENT_ID_ENABLED": bool(order_client_id_enabled),
+                "ORDER_CLIENT_ID_PARAM": order_client_id_param,
                 "BUY_FEE_BUFFER_PCT": float(buy_fee_buffer_pct),
                 "ORDERBOOK_DEPTH_LEVELS": int(orderbook_depth_levels),
                 "KILL_SWITCH_ENABLED": bool(kill_switch_enabled),
@@ -447,6 +453,8 @@ def render_settings():
                 "BACKTEST_HARD_VETO_MIN_TRADES": int(backtest_hard_veto_min_trades),
                 "BACKTEST_MIN_TRADES_PER_BUCKET": int(backtest_min_bucket_trades),
                 "BACKTEST_MIN_SAMPLE_TRADES": int(backtest_min_sample_trades),
+                "BACKTEST_BOOTSTRAP_SAMPLES": int(backtest_bootstrap_samples),
+                "BACKTEST_OOS_FRACTION": float(backtest_oos_fraction),
                 "AI_MAX_REQUESTS_PER_CYCLE": int(ai_max_requests_cycle),
                 "AI_MAX_REQUESTS_PER_DAY": int(ai_max_requests_day),
                 "AI_MAX_EST_TOKENS_PER_DAY": int(ai_max_tokens_day),
