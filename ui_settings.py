@@ -351,6 +351,7 @@ def render_settings():
             with col_obs1:
                 alerts_enabled = st.checkbox("Alertas externas", value=get_setting('ALERTS_ENABLED', False, bool))
                 alert_webhook_url = st.text_input("Webhook de alertas", value=get_setting('ALERT_WEBHOOK_URL', ''), type="password")
+                alert_timeout_seconds = st.number_input("Timeout alertas (s)", min_value=1, max_value=60, value=get_setting('ALERT_TIMEOUT_SECONDS', 5, int), step=1)
             with col_obs2:
                 health_export_enabled = st.checkbox("Exportar health/status", value=get_setting('HEALTH_EXPORT_ENABLED', True, bool))
                 structured_logs_enabled = st.checkbox("Logs estructurados", value=get_setting('STRUCTURED_LOGS_ENABLED', True, bool))
@@ -448,6 +449,7 @@ def render_settings():
                 "PARTIAL_TAKE_PROFIT_PCT": float(partial_tp_pct),
                 "ALERTS_ENABLED": bool(alerts_enabled),
                 "ALERT_WEBHOOK_URL": alert_webhook_url,
+                "ALERT_TIMEOUT_SECONDS": int(alert_timeout_seconds),
                 "HEALTH_EXPORT_ENABLED": bool(health_export_enabled),
                 "STRUCTURED_LOGS_ENABLED": bool(structured_logs_enabled),
                 "AUDIT_EVENTS_ENABLED": bool(audit_events_enabled),

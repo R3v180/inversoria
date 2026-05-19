@@ -3,6 +3,7 @@ import os
 import json
 import sys
 import uuid
+import requests
 import config 
 from exchange_helper import ExchangeHelper
 from sentiment_engine import SentimentEngine
@@ -144,6 +145,21 @@ class BotDaemon:
             payload["ai_usage_24h"] = self.db.get_ai_usage_summary(time.time() - 86400)
         except Exception:
             payload["ai_usage_24h"] = {}
+        try:
+            stale_seconds = int(getattr(config, "ORDER_MAX_PENDING_SECONDS", 120) or 120)
+            pending_orders = self.db.get_unreconciled_order_events(max_age_seconds=stale_seconds, limit=10)
+            payload["unreconciled_orders_count"] = len(pending_orders)
+            payload["unreconciled_orders"] = [
+                {
+                    "local_order_id": row.get("local_order_id"),
+                    "symbol": row.get("symbol"),
+                    "side": row.get("side"),
+                    "status": row.get("status"),
+                }
+                for row in pending_orders
+            ]
+        except Exception:
+            payload["unreconciled_orders_count"] = 0
         if state == "cycle_done":
             payload["cycle_ts"] = payload["state_ts"]
         payload.update(extra)
@@ -184,7 +200,42 @@ class BotDaemon:
         self.db.set_system_status("kill_switch_last", json.dumps(payload, ensure_ascii=False))
         self.update_daemon_status("kill_switch", kill_switch=payload)
         self.log_message(f"[KILL_SWITCH] Trading pausado | reason={reason} | details={details or {}}")
+        self._send_alert("kill_switch", f"Trading pausado: {reason}", payload)
         return True
+
+    def _send_alert(self, event_type, message, payload=None):
+        if not bool(getattr(config, "ALERTS_ENABLED", False)):
+            return False
+        webhook = str(getattr(config, "ALERT_WEBHOOK_URL", "") or "").strip()
+        if not webhook:
+            return False
+        body = {
+            "app": "InversorIA",
+            "event_type": str(event_type),
+            "message": str(message),
+            "timestamp": time.time(),
+            "payload": payload or {},
+        }
+        try:
+            response = requests.post(
+                webhook,
+                json=body,
+                timeout=int(getattr(config, "ALERT_TIMEOUT_SECONDS", 5) or 5),
+            )
+            if response.status_code >= 400:
+                self.log_message(f"[WARN] alerta externa falló | status={response.status_code}")
+                return False
+            return True
+        except Exception as exc:
+            self.log_message(f"[WARN] alerta externa falló | error={self._safe_alert_error(exc)}")
+            return False
+
+    def _safe_alert_error(self, error):
+        message = str(error)
+        webhook = str(getattr(config, "ALERT_WEBHOOK_URL", "") or "")
+        if webhook:
+            message = message.replace(webhook, "[REDACTED_WEBHOOK]")
+        return message[:300]
 
     def _new_local_order_id(self, symbol, side):
         base = str(symbol or "").replace("/", "")
