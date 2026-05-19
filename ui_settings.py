@@ -327,6 +327,7 @@ def render_settings():
             with col_i1:
                 ai_batch_decisions_enabled = st.checkbox("Batch IA de decisiones", value=get_setting('AI_BATCH_DECISIONS_ENABLED', True, bool))
                 ai_rules_only_budget = st.checkbox("Pasar a rules-only si se agota presupuesto IA", value=get_setting('AI_RULES_ONLY_ON_BUDGET_EXHAUSTED', True, bool))
+                ai_invalid_rules_fallback = st.checkbox("Rules-only si IA devuelve JSON inválido", value=get_setting('AI_INVALID_RESPONSE_RULES_FALLBACK', True, bool))
                 ai_max_requests_cycle = st.number_input("Máx. requests IA por ciclo", min_value=0, max_value=100, value=get_setting('AI_MAX_REQUESTS_PER_CYCLE', 2, int), step=1)
             with col_i2:
                 ai_max_requests_day = st.number_input("Máx. requests IA por día", min_value=0, max_value=10000, value=get_setting('AI_MAX_REQUESTS_PER_DAY', 80, int), step=5)
@@ -444,6 +445,7 @@ def render_settings():
                 "AI_MAX_REQUESTS_PER_DAY": int(ai_max_requests_day),
                 "AI_MAX_EST_TOKENS_PER_DAY": int(ai_max_tokens_day),
                 "AI_RULES_ONLY_ON_BUDGET_EXHAUSTED": bool(ai_rules_only_budget),
+                "AI_INVALID_RESPONSE_RULES_FALLBACK": bool(ai_invalid_rules_fallback),
                 "AI_MAX_OUTPUT_TOKENS": int(ai_max_output_tokens),
                 "AI_PROVIDER_TIMEOUT_SECONDS": int(ai_provider_timeout_seconds),
                 "AI_MAX_POSITION_SIZE_MULTIPLIER": float(ai_max_position_size_multiplier),
