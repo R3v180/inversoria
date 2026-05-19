@@ -666,6 +666,25 @@ class DatabaseManager:
             )
             conn.commit()
 
+    def get_unreconciled_order_events(self, max_age_seconds=0, limit=100):
+        params = []
+        where = "LOWER(status) IN ('open', 'submitted', 'pending')"
+        if max_age_seconds and float(max_age_seconds) > 0:
+            where += " AND updated_at <= ?"
+            params.append(time.time() - float(max_age_seconds))
+        params.append(max(1, min(int(limit), 1000)))
+        with self._get_connection() as conn:
+            rows = conn.execute(
+                f'''
+                SELECT * FROM exchange_order_events
+                WHERE {where}
+                ORDER BY updated_at ASC
+                LIMIT ?
+                ''',
+                tuple(params),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
     def add_audit_event(self, event_type, message='', symbol='', severity='info', payload=None, timestamp=None):
         ts = time.time() if timestamp is None else float(timestamp)
         with self._get_connection() as conn:
