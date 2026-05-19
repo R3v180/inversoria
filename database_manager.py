@@ -5,6 +5,8 @@ import re
 import json
 import pandas as pd
 from simulation_profiles import get_database_path_for_current_mode
+from database_services.audit import get_audit_events as fetch_audit_events
+from database_services.audit import get_cycle_replay_snapshots as fetch_cycle_replay_snapshots
 
 class DatabaseManager:
     def __init__(self, db_path=None):
@@ -726,34 +728,10 @@ class DatabaseManager:
             return cursor.lastrowid
 
     def get_audit_events(self, limit=200, event_type=None, symbol=None):
-        where = []
-        params = []
-        if event_type:
-            where.append('event_type = ?')
-            params.append(str(event_type))
-        if symbol:
-            where.append('symbol = ?')
-            params.append(str(symbol))
-        params.append(max(1, min(int(limit), 1000)))
-        sql = 'SELECT * FROM audit_events'
-        if where:
-            sql += ' WHERE ' + ' AND '.join(where)
-        sql += ' ORDER BY timestamp DESC LIMIT ?'
-        with self._get_connection() as conn:
-            rows = conn.execute(sql, tuple(params)).fetchall()
-        return [dict(row) for row in rows]
+        return fetch_audit_events(self._get_connection, limit=limit, event_type=event_type, symbol=symbol)
 
     def get_cycle_replay_snapshots(self, limit=100, cycle_id=None):
-        params = []
-        sql = 'SELECT * FROM cycle_replay_snapshots'
-        if cycle_id:
-            sql += ' WHERE cycle_id = ?'
-            params.append(str(cycle_id))
-        sql += ' ORDER BY timestamp DESC LIMIT ?'
-        params.append(max(1, min(int(limit), 1000)))
-        with self._get_connection() as conn:
-            rows = conn.execute(sql, tuple(params)).fetchall()
-        return [dict(row) for row in rows]
+        return fetch_cycle_replay_snapshots(self._get_connection, limit=limit, cycle_id=cycle_id)
 
     def update_highest_price(self, symbol, highest_price):
         with self._get_connection() as conn:

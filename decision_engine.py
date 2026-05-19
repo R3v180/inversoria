@@ -11,6 +11,7 @@ from multi_timeframe import MultiTimeframeAnalyzer
 from backtest_engine import BacktestEngine
 from database_manager import DatabaseManager
 from i18n import _
+from decision_runtime.ai_fallback import build_invalid_ai_fallback_decision as build_invalid_ai_fallback_payload
 
 
 def _safe_float(value, default=0.0):
@@ -561,16 +562,7 @@ class DecisionEngine:
 
     def build_invalid_ai_fallback_decision(self, score, components, indicators, strategy, macro_regime, provider, error):
         result = self.build_rules_decision(score, components, indicators, strategy, macro_regime)
-        result["provider"] = "RulesFallback"
-        result["ai_provider"] = provider or "unknown"
-        result["ai_action"] = "INVALID"
-        result["decision_mode"] = "rules_fallback"
-        result["reasoning"] = (
-            f"[AI_INVALID_RESPONSE] rules-only fallback: {result.get('reasoning', '')} "
-            f"(provider={provider or 'unknown'}, error={str(error)[:120]})"
-        )
-        result["fallback_reason"] = "AI_INVALID_RESPONSE"
-        return result
+        return build_invalid_ai_fallback_payload(result, provider, error)
         
     def quick_technical_filter(self, indicators, current_price):
         if not indicators: return False, _('FILTER_SIN_DATOS', lang=self.current_lang)

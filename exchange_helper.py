@@ -13,8 +13,12 @@ from config import (
     get_setting,
 )
 from simulation_profiles import get_active_account_path
+from exchange_runtime.orders import attach_client_order_id, build_client_order_params
 
 EXCHANGE_TIMEOUT_MS = 20000
+UI_BALANCE_CACHE_TTL = 20
+UI_TICKER_CACHE_TTL = 15
+UI_TICKERS_BATCH_CACHE_TTL = 15
 
 
 class ExchangeHelper:
@@ -39,6 +43,7 @@ class ExchangeHelper:
                 self._log_exchange_warning("Aviso: credenciales Crypto.com incompletas; operaciones reales deshabilitadas")
         except Exception as e:
             print(f"Error al inicializar Exchange: {self._sanitize_error(e)}")
+        self.invalidate_ui_cache()
 
     def _get_private_credentials(self):
         api_key = (get_setting('CRYPTO_API_KEY', '') or '').strip()
@@ -86,6 +91,87 @@ class ExchangeHelper:
         if not self.public_exchange.markets:
             self.public_exchange.load_markets()
         return self.public_exchange.markets
+
+    def invalidate_ui_cache(self):
+        """Limpia caché de balance/tickers usada por la UI (tras órdenes o cambios)."""
+        self._ui_balance_cache = None
+        self._ui_ticker_cache = {}
+        self._ui_tickers_batch = {}
+        self._ui_tickers_batch_ts = 0.0
+
+    def _get_cached_balance(self):
+        now = time.time()
+        entry = getattr(self, "_ui_balance_cache", None)
+        if entry and now - float(entry.get("ts") or 0) < UI_BALANCE_CACHE_TTL:
+            return entry["data"]
+        if self.modo_simulacion:
+            self._refresh_simulated_state()
+            free = {"USDT": float(self.virtual_balance or 0)}
+            total = dict(free)
+            for sym, amt in (self.virtual_portfolio or {}).items():
+                coin = str(sym).split("/")[0]
+                total[coin] = float(amt or 0)
+            balance = {"free": free, "total": total}
+        else:
+            balance = self._call_private(lambda ex: ex.fetch_balance())
+        self._ui_balance_cache = {"ts": now, "data": balance}
+        return balance
+
+    def _fetch_ticker_uncached(self, symbol):
+        try:
+            self._ensure_public_markets()
+            if symbol not in self.public_exchange.markets:
+                return None
+        except Exception as e:
+            self._log_exchange_warning("Aviso: no se pudieron validar mercados públicos", e)
+
+        for attempt in range(2):
+            try:
+                ticker = self.public_exchange.fetch_ticker(symbol)
+                return ticker.get("last")
+            except Exception as e:
+                if attempt == 1:
+                    print(f"Error obteniendo ticker para {symbol}: {self._sanitize_error(e)}")
+                    return None
+                time.sleep(1)
+        return None
+
+    def prefetch_tickers(self, symbols):
+        """Precarga precios (y % 24h si está) para varios símbolos con pocas llamadas."""
+        symbols = list(dict.fromkeys(s for s in (symbols or []) if s))
+        if not symbols:
+            return {}
+        now = time.time()
+        cache = getattr(self, "_ui_ticker_cache", None) or {}
+        batch = getattr(self, "_ui_tickers_batch", None) or {}
+        batch_ts = float(getattr(self, "_ui_tickers_batch_ts", 0) or 0)
+        if batch and now - batch_ts < UI_TICKERS_BATCH_CACHE_TTL:
+            cache.update(batch)
+        missing = [
+            s for s in symbols
+            if s not in cache or now - float(cache.get(s, {}).get("ts") or 0) >= UI_TICKER_CACHE_TTL
+        ]
+        if missing:
+            try:
+                self._ensure_public_markets()
+                all_tickers = self.public_exchange.fetch_tickers()
+                for sym in missing:
+                    row = all_tickers.get(sym) or {}
+                    cache[sym] = {
+                        "ts": now,
+                        "price": row.get("last"),
+                        "change_24h": row.get("percentage"),
+                        "vol_24h": row.get("quoteVolume"),
+                    }
+                self._ui_tickers_batch = {k: cache[k] for k in missing if k in cache}
+                self._ui_tickers_batch_ts = now
+            except Exception as e:
+                self._log_exchange_warning("Aviso: fetch_tickers batch falló; fallback individual", e)
+                for sym in missing:
+                    price = self._fetch_ticker_uncached(sym)
+                    cache[sym] = {"ts": now, "price": price}
+        self._ui_ticker_cache = cache
+        return {sym: cache.get(sym, {}).get("price") for sym in symbols}
 
     def _copy_public_markets_to_private(self):
         if not self.private_exchange:
@@ -182,84 +268,93 @@ class ExchangeHelper:
         if self.modo_simulacion:
             self._refresh_simulated_state()
             return self.virtual_balance
-        else:
-            try:
-                balance = self._call_private(lambda ex: ex.fetch_balance())
-                return balance['free'].get('USDT', 0.0)
-            except Exception as e:
-                print(f"Error obteniendo balance USDT: {self._sanitize_error(e)}")
-                return 0.0
+        try:
+            balance = self._get_cached_balance()
+            return float(balance.get("free", {}).get("USDT", 0.0) or 0.0)
+        except Exception as e:
+            print(f"Error obteniendo balance USDT: {self._sanitize_error(e)}")
+            return 0.0
 
     def get_balance(self):
         """Retorna la Equity Total (Cash + Valor de Criptos)"""
         if self.modo_simulacion:
             self._refresh_simulated_state()
-            total = self.virtual_balance
+            symbols = list(self.virtual_portfolio.keys())
+            prices = self.prefetch_tickers(symbols)
+            total = float(self.virtual_balance or 0)
             for sym, amount in self.virtual_portfolio.items():
-                price = self.get_ticker(sym)
-                if price: total += amount * price
+                price = prices.get(sym)
+                if price:
+                    total += float(amount) * float(price)
             return total
-        else:
-            try:
-                balance = self._call_private(lambda ex: ex.fetch_balance())
-                total_equity = 0.0
-
-                # Sumar valor de cada moneda en USDT
-                for coin, amt in balance['total'].items():
-                    if amt <= 0: continue
-                    if coin in ['USDT', 'USD']:
-                        total_equity += amt
-                    else:
-                        symbol = f"{coin}/USDT"
-                        price = self.get_ticker(symbol)
-                        if price:
-                            total_equity += amt * price
-                return total_equity
-            except Exception as e:
-                print(f"Error calculando equity total real: {self._sanitize_error(e)}")
-                return 0.0
+        try:
+            balance = self._get_cached_balance()
+            total_equity = 0.0
+            symbols = []
+            amounts = []
+            for coin, amt in (balance.get("total") or {}).items():
+                amt = float(amt or 0)
+                if amt <= 0:
+                    continue
+                if coin in ["USDT", "USD"]:
+                    total_equity += amt
+                else:
+                    symbols.append(f"{coin}/USDT")
+                    amounts.append(amt)
+            prices = self.prefetch_tickers(symbols)
+            for sym, amt in zip(symbols, amounts):
+                price = prices.get(sym)
+                if price:
+                    total_equity += amt * float(price)
+            return total_equity
+        except Exception as e:
+            print(f"Error calculando equity total real: {self._sanitize_error(e)}")
+            return 0.0
 
     def get_coin_balance(self, symbol):
         coin = symbol.split('/')[0]
         if self.modo_simulacion:
             self._refresh_simulated_state()
             return self.virtual_portfolio.get(symbol, 0.0)
-        else:
-            try:
-                balance = self._call_private(lambda ex: ex.fetch_balance())
-                return balance['total'].get(coin, 0.0)
-            except Exception as e:
-                print(f"Error obteniendo balance de {coin}: {self._sanitize_error(e)}")
-                return 0.0
+        try:
+            balance = self._get_cached_balance()
+            return float(balance.get("total", {}).get(coin, 0.0) or 0.0)
+        except Exception as e:
+            print(f"Error obteniendo balance de {coin}: {self._sanitize_error(e)}")
+            return 0.0
 
     def get_ticker(self, symbol):
-        try:
-            self._ensure_public_markets()
-            if symbol not in self.public_exchange.markets:
-                return None # Ignorar silenciosamente polvo sin mercado
-        except Exception as e:
-            self._log_exchange_warning("Aviso: no se pudieron validar mercados públicos", e)
-                
-        for attempt in range(2):
-            try:
-                ticker = self.public_exchange.fetch_ticker(symbol)
-                return ticker['last']
-            except Exception as e:
-                if attempt == 1:
-                    print(f"Error obteniendo ticker para {symbol}: {self._sanitize_error(e)}")
-                    return None
-                time.sleep(1) # Esperar un momento antes de reintentar
+        if not symbol:
+            return None
+        now = time.time()
+        cache = getattr(self, "_ui_ticker_cache", None) or {}
+        entry = cache.get(symbol)
+        if entry and now - float(entry.get("ts") or 0) < UI_TICKER_CACHE_TTL:
+            return entry.get("price")
+        price = self._fetch_ticker_uncached(symbol)
+        cache[symbol] = {"ts": now, "price": price}
+        self._ui_ticker_cache = cache
+        return price
 
     def get_market_stats(self, symbol):
+        if not symbol:
+            return {}
+        self.prefetch_tickers([symbol])
+        entry = (getattr(self, "_ui_ticker_cache", None) or {}).get(symbol) or {}
+        if entry:
+            return {
+                "change_24h": entry.get("change_24h"),
+                "vol_24h": entry.get("vol_24h"),
+            }
         for attempt in range(2):
             try:
                 self._ensure_public_markets()
                 ticker = self.public_exchange.fetch_ticker(symbol)
                 return {
-                    'change_24h': ticker.get('percentage'),
-                    'vol_24h': ticker.get('quoteVolume')
+                    "change_24h": ticker.get("percentage"),
+                    "vol_24h": ticker.get("quoteVolume"),
                 }
-            except Exception as e:
+            except Exception:
                 time.sleep(1)
         return {}
 
@@ -337,6 +432,7 @@ class ExchangeHelper:
                     self.virtual_balance -= cost
                     self.virtual_portfolio[symbol] = self.virtual_portfolio.get(symbol, 0) + amount
                     self._save_simulated_state()
+                    self.invalidate_ui_cache()
                     return {"status": "simulated", "side": side, "price": price, "amount": amount, "cost": cost}
                 else:
                     return {"status": "failed", "reason": "Saldo virtual insuficiente"}
@@ -347,6 +443,7 @@ class ExchangeHelper:
                     self.virtual_balance += revenue
                     self.virtual_portfolio[symbol] -= amount
                     self._save_simulated_state()
+                    self.invalidate_ui_cache()
                     return {"status": "simulated", "side": side, "price": price, "amount": amount, "filled": amount, "revenue": revenue}
                 else:
                     return {"status": "failed", "reason": "Cantidad virtual insuficiente para vender"}
@@ -410,20 +507,16 @@ class ExchangeHelper:
                                 return {"status": "failed", "reason": f"Slippage demasiado alto ({slippage*100:.2f}%)"}
 
                     # Ejecutar orden real
-                    order_params = {}
-                    if bool(getattr(config, "ORDER_CLIENT_ID_ENABLED", False)) and client_order_id:
-                        param_name = str(getattr(config, "ORDER_CLIENT_ID_PARAM", "client_oid") or "client_oid")
-                        order_params[param_name] = str(client_order_id)
+                    order_params = build_client_order_params(config, client_order_id)
                     order = self._call_private(
                         lambda ex: ex.create_market_order(symbol, side, formatted_amount, order_params)
                     )
-                    order = order or {}
-                    if client_order_id:
-                        order.setdefault("clientOrderId", str(client_order_id))
+                    order = attach_client_order_id(order, client_order_id)
                     order = self._reconcile_created_order(exchange, symbol, order)
                     
                     # Validar estado
                     if order.get('status') in ['closed', 'partial', 'open']:
+                        self.invalidate_ui_cache()
                         return order
                     else:
                         return {"status": "failed", "reason": f"Order status fallido: {order.get('status')}"}
@@ -467,6 +560,7 @@ class ExchangeHelper:
             # Eliminar monedas con saldo 0
             self.virtual_portfolio = {k: v for k, v in self.virtual_portfolio.items() if v > 0}
             self._save_simulated_state()
+            self.invalidate_ui_cache()
         else:
             try:
                 exchange = self._get_private_exchange()
@@ -497,7 +591,8 @@ class ExchangeHelper:
             except Exception as e:
                 print(f"Error obteniendo balances para liquidar: {self._sanitize_error(e)}")
                 results["fallos"].append({"symbol": "ALL", "reason": f"Fallo al obtener balance: {self._sanitize_error(e)}"})
-                
+
+        self.invalidate_ui_cache()
         return results
 
     def get_top_volume_symbols(self, limit=30):
@@ -538,12 +633,14 @@ class ExchangeHelper:
                 "usd_free": float(self.virtual_balance),
                 "usd_total": float(self.virtual_balance),
             })
+            sym_list = [sym for sym, amt in self.virtual_portfolio.items() if float(amt or 0) > 0]
+            prices = self.prefetch_tickers(sym_list)
             for sym, amt in self.virtual_portfolio.items():
                 amt = float(amt or 0)
                 if amt <= 0:
                     continue
                 coin = sym.split("/")[0]
-                px = self.get_ticker(sym) or 0.0
+                px = float(prices.get(sym) or 0.0)
                 usd = amt * px
                 rows.append({
                     "coin": coin,
@@ -556,11 +653,12 @@ class ExchangeHelper:
             return sorted(rows, key=lambda x: -x["usd_total"])
 
         try:
-            exchange = self._get_private_exchange()
-            balance = exchange.fetch_balance()
+            balance = self._get_cached_balance()
             free_d = balance.get("free", {}) or {}
             tot_d = balance.get("total", {}) or {}
             coins = sorted(set(list(free_d.keys()) + list(tot_d.keys())))
+            symbols = [f"{coin}/USDT" for coin in coins if coin not in ("USDT", "USD")]
+            self.prefetch_tickers(symbols)
             for coin in coins:
                 free_c = float(free_d.get(coin) or 0)
                 tot_c = float(tot_d.get(coin) or 0)
@@ -571,7 +669,7 @@ class ExchangeHelper:
                     px = 1.0
                 else:
                     sym = f"{coin}/USDT"
-                    px = self.get_ticker(sym) or 0.0
+                    px = float(self.get_ticker(sym) or 0.0)
                     if not px and sym not in (self.public_exchange.markets or {}):
                         sym = None
                 usd_tot = tot_c * px

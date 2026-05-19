@@ -13,6 +13,8 @@ from database_manager import DatabaseManager
 from decision_engine import DecisionEngine
 from market_context import MarketContext
 from i18n import _
+from bot_runtime.balance_mismatch import position_balance_mismatches
+from bot_runtime.risk_sizing import cap_size_to_capacity
 
 
 def _configure_console_encoding():
@@ -495,36 +497,13 @@ class BotDaemon:
             return None
 
     def _position_balance_mismatches(self, open_positions):
-        mismatches = []
-        if self.exchange.modo_simulacion:
-            return mismatches
-        for symbol, pos in (open_positions or {}).items():
-            expected = self._safe_float(pos.get("amount"), 0.0)
-            if expected <= 0:
-                continue
-            try:
-                actual = self._safe_float(self.exchange.get_coin_balance(symbol), 0.0)
-            except Exception as exc:
-                mismatches.append({"symbol": symbol, "reason": f"BALANCE_ERROR:{exc}"})
-                continue
-            diff = max(0.0, expected - actual)
-            tolerance_pct = max(0.0, self._safe_float(getattr(config, "DB_EXCHANGE_MISMATCH_TOLERANCE_PCT", 1.0), 1.0)) / 100.0
-            tolerance = max(1e-8, expected * tolerance_pct)
-            min_usdt = max(0.0, self._safe_float(getattr(config, "DB_EXCHANGE_MISMATCH_MIN_USDT", 0.25), 0.25))
-            if min_usdt > 0:
-                price = self._safe_float(self.exchange.get_ticker(symbol), 0.0)
-                if price > 0:
-                    tolerance = max(tolerance, min_usdt / price)
-            if diff > tolerance:
-                mismatches.append({
-                    "symbol": symbol,
-                    "db_amount": round(expected, 10),
-                    "exchange_amount": round(actual, 10),
-                    "diff_amount": round(diff, 10),
-                    "tolerance_amount": round(tolerance, 10),
-                    "diff_pct": round((diff / expected) * 100, 4) if expected > 0 else 0.0,
-                })
-        return mismatches
+        return position_balance_mismatches(
+            open_positions,
+            self.exchange,
+            self._safe_float,
+            tolerance_pct=getattr(config, "DB_EXCHANGE_MISMATCH_TOLERANCE_PCT", 1.0),
+            min_usdt=getattr(config, "DB_EXCHANGE_MISMATCH_MIN_USDT", 0.25),
+        )
 
     def evaluate_operational_kill_switches(self, total_value, open_positions):
         if not getattr(config, "KILL_SWITCH_ENABLED", True):
@@ -991,23 +970,19 @@ class BotDaemon:
             return 0.0, {}
         exposures = self.portfolio_exposures(open_positions)
         bucket = self.portfolio_bucket(symbol)
-        capacities = {
-            "portfolio": max(0.0, (total_value * config.MAX_PORTFOLIO_EXPOSURE_PCT) - exposures["total"]),
-            "symbol": max(0.0, (total_value * config.MAX_SYMBOL_EXPOSURE_PCT) - exposures["symbols"].get(symbol, 0.0)),
-            "bucket": max(0.0, (total_value * config.MAX_BUCKET_EXPOSURE_PCT) - exposures["buckets"].get(bucket, 0.0)),
-        }
-        if bucket not in {"BTC", "ETH"}:
-            capacities["alt"] = max(0.0, (total_value * config.MAX_ALT_EXPOSURE_PCT) - exposures["alt"])
-        raw_capped = min(amount_usdt, *capacities.values())
-        # Tiny buffer only when a real cap applies; otherwise exact min-order sizes must stay tradable.
-        capped = max(0.0, raw_capped * 0.999) if raw_capped + 1e-8 < amount_usdt else amount_usdt
-        return capped, {
-            "bucket": bucket,
-            "capacities": {key: round(value, 8) for key, value in capacities.items()},
-            "original_amount_usdt": round(amount_usdt, 8),
-            "capped_amount_usdt": round(capped, 8),
-            "capped": capped + 1e-8 < amount_usdt,
-        }
+        return cap_size_to_capacity(
+            symbol,
+            amount_usdt,
+            total_value,
+            exposures,
+            bucket,
+            {
+                "max_portfolio": config.MAX_PORTFOLIO_EXPOSURE_PCT,
+                "max_symbol": config.MAX_SYMBOL_EXPOSURE_PCT,
+                "max_bucket": config.MAX_BUCKET_EXPOSURE_PCT,
+                "max_alt": config.MAX_ALT_EXPOSURE_PCT,
+            },
+        )
 
     def _record_adopted_position(self, symbol, price, amount, notional, open_positions):
         mode_label = "simulated" if self.exchange.modo_simulacion else "real"
