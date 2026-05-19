@@ -6,8 +6,9 @@ from datetime import datetime
 from i18n import _
 from ui_theme import apply_plotly_theme
 from ui_services.performance_period import (
-    PERFORMANCE_PRESETS,
+    PERFORMANCE_PRESET_IDS,
     compute_period_performance,
+    performance_preset_label,
     preset_start_datetime,
 )
 from ui_services.page_cache import install_page_autorefresh, page_cache_ttl, render_stale_while_revalidate
@@ -82,9 +83,9 @@ def _render_audit_replay(db):
         tab_events, tab_snapshots = st.tabs([_("HISTORY_AUDIT_EVENTS"), _("HISTORY_CYCLE_REPLAY")])
         with tab_events:
             c1, c2, c3 = st.columns([1, 1, 2])
-            limit = int(c1.selectbox("Eventos", [50, 100, 200, 500, 1000], index=2, key="audit_limit"))
-            event_type = c2.text_input("Tipo evento", value="", key="audit_event_type").strip()
-            symbol = c3.text_input("Símbolo", value="", key="audit_symbol").strip()
+            limit = int(c1.selectbox(_("HIST_AUDIT_LIMIT"), [50, 100, 200, 500, 1000], index=2, key="audit_limit"))
+            event_type = c2.text_input(_("HIST_AUDIT_EVENT_TYPE"), value="", key="audit_event_type").strip()
+            symbol = c3.text_input(_("HIST_AUDIT_SYMBOL"), value="", key="audit_symbol").strip()
             try:
                 rows = db.get_audit_events(limit=limit, event_type=event_type or None, symbol=symbol or None)
                 df = _audit_rows_to_df(rows)
@@ -98,8 +99,8 @@ def _render_audit_replay(db):
 
         with tab_snapshots:
             c1, c2 = st.columns([1, 3])
-            limit = int(c1.selectbox("Snapshots", [25, 50, 100, 250, 500], index=2, key="replay_limit"))
-            cycle_id = c2.text_input("Cycle ID", value="", key="replay_cycle_id").strip()
+            limit = int(c1.selectbox(_("HIST_REPLAY_LIMIT"), [25, 50, 100, 250, 500], index=2, key="replay_limit"))
+            cycle_id = c2.text_input(_("HIST_REPLAY_CYCLE_ID"), value="", key="replay_cycle_id").strip()
             try:
                 rows = db.get_cycle_replay_snapshots(limit=limit, cycle_id=cycle_id or None)
                 df = _audit_rows_to_df(rows)
@@ -116,15 +117,20 @@ def _render_period_performance(db, exchange):
     st.markdown(f"### {_('HISTORY_PERIOD_TITLE')}")
     st.caption(_("HISTORY_PERIOD_CAPTION"))
     p1, p2, p3 = st.columns([1, 1, 2])
-    preset = p1.selectbox(_("HISTORY_PERIOD_LABEL"), PERFORMANCE_PRESETS, key="perf_period_preset")
+    preset = p1.selectbox(
+        _("HISTORY_PERIOD_LABEL"),
+        PERFORMANCE_PRESET_IDS,
+        format_func=performance_preset_label,
+        key="perf_period_preset",
+    )
     start_dt = preset_start_datetime(preset)
-    if preset == "Personalizado":
+    if preset == "custom":
         selected_date = p2.date_input(_("HISTORY_PERIOD_FROM_DATE"), value=datetime.now().date(), key="perf_period_date")
         selected_time = p3.time_input(_("HISTORY_PERIOD_FROM_TIME"), value=datetime.min.time(), key="perf_period_time")
         start_dt = datetime.combine(selected_date, selected_time)
     else:
-        p2.caption("Inicio")
-        p2.write(start_dt.strftime("%Y-%m-%d %H:%M") if start_dt else "Primer dato disponible")
+        p2.caption(_("HIST_PERIOD_START"))
+        p2.write(start_dt.strftime("%Y-%m-%d %H:%M") if start_dt else _("HIST_PERIOD_FIRST_DATA"))
 
     current_equity = float(exchange.get_balance() or 0.0)
     perf = compute_period_performance(db, current_equity, start_dt)
@@ -247,11 +253,20 @@ def _render_journal_vs_backtest(db):
             st.caption(_("HISTORY_JOURNAL_BT_EMPTY"))
             return
         st.caption(_("HISTORY_JOURNAL_BT_CAPTION"))
-        st.dataframe(
-            pd.DataFrame(rows),
-            use_container_width=True,
-            hide_index=True,
+        jb_df = pd.DataFrame(rows)
+        jb_df = jb_df.rename(
+            columns={
+                "symbol": _("HISTORY_SYMBOL"),
+                "live_trades": _("JB_COL_LIVE_TRADES"),
+                "live_win_rate": _("JB_COL_LIVE_WR"),
+                "live_expectancy_pct": _("JB_COL_LIVE_EXP"),
+                "backtest_win_rate": _("JB_COL_BT_WR"),
+                "backtest_pf": _("JB_COL_BT_PF"),
+                "backtest_trades": _("JB_COL_LIVE_TRADES"),
+                "wr_gap_live_minus_bt": _("JB_COL_WR_GAP"),
+            }
         )
+        st.dataframe(jb_df, use_container_width=True, hide_index=True)
 
 
 HISTORY_AUTO_REFRESH_SEC = 45
@@ -375,12 +390,12 @@ def render_history(trades_df=None, *, stale=False, age_sec=0):
         rolling_dd = 0.0
     
     c1, c2, c3, c4, c5, c6 = st.columns(6)
-    c1.metric("Win Rate", f"{win_rate:.1f}%")
-    c2.metric("Profit Factor", f"{profit_factor:.2f}")
+    c1.metric(_("HIST_METRIC_WIN_RATE"), f"{win_rate:.1f}%")
+    c2.metric(_("HIST_METRIC_PROFIT_FACTOR"), f"{profit_factor:.2f}")
     c3.metric(_('TRADES_CLOSED'), total_trades)
     c4.metric(_('BEST_TRADE'), f"{ventas[pnl_col].max() if not ventas.empty else 0:.2f}%")
-    c5.metric("Expectancy", f"{expectancy:.2f}%")
-    c6.metric("Rolling DD", f"{rolling_dd:.2f}%")
+    c5.metric(_("HIST_METRIC_EXPECTANCY"), f"{expectancy:.2f}%")
+    c6.metric(_("HIST_METRIC_ROLLING_DD"), f"{rolling_dd:.2f}%")
 
     st.caption(_('HISTORY_ROLLING_PF').format(f"{rolling_pf:.2f}"))
     if total_trades == 0:
@@ -407,9 +422,12 @@ def render_history(trades_df=None, *, stale=False, age_sec=0):
         if edge.get("enabled") and edge.get("global"):
             g = edge.get("global", {})
             st.caption(
-                f"Adaptive edge: expectancy {g.get('expectancy_pct', 0):.2f}% · "
-                f"PF {g.get('profit_factor', 0):.2f} · ajuste base {g.get('adjustment', 0):+.3f} · "
-                f"decay {edge.get('edge_decay_pct', 0):+.2f}%"
+                _("HIST_ADAPTIVE_EDGE").format(
+                    g.get("expectancy_pct", 0),
+                    g.get("profit_factor", 0),
+                    g.get("adjustment", 0),
+                    edge.get("edge_decay_pct", 0),
+                )
             )
     except Exception:
         pass
@@ -488,7 +506,7 @@ def render_history(trades_df=None, *, stale=False, age_sec=0):
     for (row_idx, row), context in zip(page_df.iterrows(), contexts):
         action_color = "🟢" if row['Side'] == 'buy' else "🔴"
         action_text = _('BUY') if row['Side'] == 'buy' else _('SELL')
-        pnl_text = f" | PNL: {row.get(pnl_col, 0):.2f}%" if row['Side'] == 'sell' else ""
+        pnl_text = f" | {_('HIST_TRADE_PNL')} {row.get(pnl_col, 0):.2f}%" if row['Side'] == 'sell' else ""
         price_text = _fmt_trade_price(row["Price"])
         
         with st.expander(f"{action_color} {action_text} | {row['Date'].strftime('%Y-%m-%d %H:%M')} | {row['Symbol']} a ${price_text}{pnl_text}"):
@@ -497,19 +515,19 @@ def render_history(trades_df=None, *, stale=False, age_sec=0):
             if context:
                 meta = []
                 if context.get("provider"):
-                    meta.append(f"Provider: `{context.get('provider')}`")
+                    meta.append(f"{_('HIST_TRADE_PROVIDER')} `{context.get('provider')}`")
                 if context.get("regime"):
-                    meta.append(f"Régimen: `{context.get('regime')}`")
+                    meta.append(f"{_('HIST_TRADE_REGIME')} `{context.get('regime')}`")
                 if context.get("best_strategy"):
-                    meta.append(f"Estrategia: `{context.get('best_strategy')}`")
+                    meta.append(f"{_('HIST_TRADE_STRATEGY')} `{context.get('best_strategy')}`")
                 if context.get("decision_score") is not None:
                     try:
-                        meta.append(f"Score: `{float(context.get('decision_score')):.2f}`")
+                        meta.append(f"{_('HIST_TRADE_SCORE')} `{float(context.get('decision_score')):.2f}`")
                     except (TypeError, ValueError):
                         pass
                 if context.get("confidence") is not None:
                     try:
-                        meta.append(f"Confianza: `{float(context.get('confidence')):.2f}`")
+                        meta.append(f"{_('HIST_TRADE_CONFIDENCE')} `{float(context.get('confidence')):.2f}`")
                     except (TypeError, ValueError):
                         pass
                 if meta:

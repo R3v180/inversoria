@@ -4,6 +4,7 @@ import json
 from ui_services.page_cache import install_page_autorefresh, page_cache_ttl, render_stale_while_revalidate
 from ui_services.ui_status import render_cache_status
 from ui_services.technical_chart import build_technical_chart
+from ui_services.log_display import translate_log_line
 from ui_services.terminal_data import build_terminal_snapshot
 
 TERMINAL_AUTO_REFRESH_SEC = 30
@@ -135,10 +136,12 @@ def render_terminal(snapshot=None, *, stale=False, age_sec=0, refresh_sec=TERMIN
         log_html = "<div class='log-container iv-log-box'>"
         logs = snapshot.get("important_logs") or []
         if symbol != snapshot.get("symbol"):
+            from ui_services.log_display import log_line_matches_noise
+
             raw_logs = st.session_state.db.get_logs()
-            logs = [line for line in raw_logs if "Escaneo" not in line and "Ciclo" not in line][-20:]
+            logs = [line for line in raw_logs if not log_line_matches_noise(line)][-20:]
         for log in logs:
-            log_html += f"<span class='iv-positive'>>></span> <span>{log}</span><br/>"
+            log_html += f"<span class='iv-positive'>>></span> <span>{translate_log_line(log)}</span><br/>"
         log_html += "</div>"
 
         st.markdown(log_html, unsafe_allow_html=True)

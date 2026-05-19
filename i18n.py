@@ -243,7 +243,7 @@ TRANSLATIONS = {
     'RESET_HELP': {'es': 'Restaurar toda la configuración sugerida por InversorIA', 'en': 'Restore all settings suggested by InversorIA'},
     'SUCCESS_SETTINGS': {'es': '¡Configuración actualizada!', 'en': 'Settings updated!'},
     'CONFIG_IO_TITLE': {'es': 'Importar / Exportar configuración segura', 'en': 'Import / Export safe configuration'},
-    'CONFIG_IO_HELP': {'es': 'Pega un JSON recomendado por una IA o descarga un ejemplo limpio para compartir. Las claves API y secretos se bloquean siempre.', 'en': 'Paste JSON recommended by an AI or download a clean example to share. API keys and secrets are always blocked.'},
+    'CONFIG_IO_HELP': {'es': 'Pega un JSON completo o usa modo Parche para cambiar solo las claves que indiques. Las API keys y secretos se bloquean siempre.', 'en': 'Paste a full JSON or use Patch mode to change only the keys you specify. API keys and secrets are always blocked.'},
     'CONFIG_DOWNLOAD_EXAMPLE': {'es': 'Descargar ejemplo para IA', 'en': 'Download AI example'},
     'CONFIG_DOWNLOAD_CURRENT': {'es': 'Descargar config actual segura', 'en': 'Download current safe config'},
     'CONFIG_IMPORT_LABEL': {'es': 'Pegar configuración JSON', 'en': 'Paste JSON configuration'},
@@ -282,10 +282,15 @@ TRANSLATIONS = {
     'DAEMON_OPEN_POS': {'es': 'Posiciones', 'en': 'Positions'},
     'DAEMON_TOP_HOLDS': {'es': 'Principales motivos HOLD', 'en': 'Top HOLD reasons'},
     'DAEMON_NO_DIAG': {'es': 'Sin diagnóstico todavía. Aparecerá tras el próximo ciclo del daemon.', 'en': 'No diagnostics yet. It will appear after the daemon next cycle.'},
-    'INVESTMENT': {'es': 'Inversión', 'en': 'Investment'},
+    'INVESTMENT': {'es': 'Inversión (coste)', 'en': 'Investment (cost)'},
+    'CURRENT_VALUE': {'es': 'Valor actual', 'en': 'Current value'},
+    'POSITION_QTY': {'es': 'Cantidad', 'en': 'Quantity'},
+    'POSITION_AMOUNT_SYNC_HINT': {
+        'es': 'La cantidad en exchange difiere de la registrada en el bot; se muestra el saldo del exchange.',
+        'en': 'Exchange balance differs from bot records; showing exchange balance.',
+    },
     'REGIME_LABEL': {'es': 'RÉGIMEN', 'en': 'REGIME'},
     'BEST_STRATEGY': {'es': 'Mejor', 'en': 'Best'},
-    'NO_BACKTEST_DATA': {'es': 'Sin datos de backtest. El daemon los genera automáticamente.', 'en': 'No backtest data. The daemon generates them automatically.'},
     'NO_BACKTEST_DATA': {'es': 'Sin datos de backtest. El daemon los genera automáticamente.', 'en': 'No backtest data. The daemon generates them automatically.'},
     
     # --- Terminal ---
@@ -339,9 +344,28 @@ TRANSLATIONS = {
     'SELL': {'es': 'VENTA', 'en': 'SELL'},
     
     # --- Settings Tabs ---
+    'TAB_OPERATION': {'es': '⚡ Operación', 'en': '⚡ Operation'},
+    'TAB_RISK_LIMITS': {'es': '🛡️ Riesgo y límites', 'en': '🛡️ Risk & limits'},
+    'TAB_ADVANCED': {'es': '🔧 Avanzado', 'en': '🔧 Advanced'},
     'TAB_CONNECTIONS': {'es': '🔑 Conexiones', 'en': '🔑 Connections'},
     'TAB_RISK': {'es': '🛡️ Riesgo & Rotación', 'en': '🛡️ Risk & Rotation'},
     'TAB_AI': {'es': '🧠 Inteligencia (Prompts)', 'en': '🧠 Intelligence (Prompts)'},
+    'CFG_TAB_OPERATION_CAPTION': {
+        'es': 'Modo, universo de monedas, filtros de liquidez e inteligencia artificial.',
+        'en': 'Mode, coin universe, liquidity filters and artificial intelligence.',
+    },
+    'CFG_TAB_RISK_CAPTION': {
+        'es': 'Posiciones abiertas, exposición, stops y rotación de cartera.',
+        'en': 'Open positions, exposure, stops and portfolio rotation.',
+    },
+    'CFG_TAB_ADVANCED_CAPTION': {
+        'es': 'Motor, macro, prompts, backtest y parámetros expertos. Usa la búsqueda para filtrar.',
+        'en': 'Engine, macro, prompts, backtest and expert parameters. Use search to filter.',
+    },
+    'PRESETS_FORM_HINT': {
+        'es': 'Las plantillas se aplican al instante (vista previa → aplicar). Los campos del formulario de abajo se guardan con «Guardar configuración».',
+        'en': 'Presets apply immediately (preview → apply). Form fields below are saved with «Save settings».',
+    },
     'API_CREDENTIALS': {'es': 'APIs y Credenciales', 'en': 'APIs & Credentials'},
     'CAPITAL_MGMT': {'es': 'Gestión de Capital', 'en': 'Capital Management'},
     'EXECUTION_MODE_L': {'es': 'Modo de ejecución', 'en': 'Execution mode'},
@@ -560,7 +584,194 @@ TRANSLATIONS = {
     'SETTINGS_SECTION_POSITION': {'es': 'Gestión avanzada de posiciones', 'en': 'Advanced position management'},
     'SETTINGS_SECTION_OBS': {'es': 'Observabilidad y alertas', 'en': 'Observability and alerts'},
     'SETTINGS_SECTION_EDGE': {'es': 'Edge GH-P2/P3', 'en': 'GH-P2/P3 edge'},
+    'TAB_MOTOR': {'es': 'Motor', 'en': 'Engine'},
+    'TAB_ALL_CONFIG': {'es': '⚙️ Configuración completa', 'en': '⚙️ Full configuration'},
+    'CFG_COMPLETE_CAPTION': {
+        'es': 'Todos los parámetros del bot (mismo contrato que importador y plantillas). Usa la búsqueda para filtrar por nombre de clave.',
+        'en': 'All bot parameters (same contract as importer and presets). Use search to filter by key name.',
+    },
+    'CFG_SCHEMA_COUNT': {'es': '{0} parámetros editables (sin API keys).', 'en': '{0} editable parameters (excluding API keys).'},
+    'CFG_SEARCH_LABEL': {'es': 'Buscar parámetro', 'en': 'Search parameter'},
+    'CFG_SEARCH_PLACEHOLDER': {'es': 'Ej. PROTECTION, PROMPT, RISK, WEBHOOK…', 'en': 'E.g. PROTECTION, PROMPT, RISK, WEBHOOK…'},
+    'CFG_SEARCH_EMPTY': {'es': 'Ningún parámetro coincide con la búsqueda.', 'en': 'No parameters match the search.'},
+    'CFG_SAVED_KEYS': {'es': 'Guardados {0} campos: {1}', 'en': 'Saved {0} fields: {1}'},
+    'CFG_SEC_ESSENTIAL': {'es': 'Habitual — modo, capital y universo', 'en': 'Common — mode, capital and universe'},
+    'CFG_SEC_OPERATION': {'es': 'Operación — modo, capital y universo', 'en': 'Operation — mode, capital and universe'},
+    'CFG_SEC_POSITIONS_LIMITS': {'es': 'Posiciones y tamaño por trade', 'en': 'Positions and per-trade size'},
+    'CFG_SEC_AI': {'es': 'Inteligencia artificial', 'en': 'Artificial intelligence'},
+    'CFG_SEC_RISK': {'es': 'Habitual — riesgo y exposición', 'en': 'Common — risk and exposure'},
+    'CFG_SEC_STOPS': {'es': 'Habitual — stops y salidas', 'en': 'Common — stops and exits'},
+    'CFG_SEC_ROTATION': {'es': 'Rotación de cartera', 'en': 'Portfolio rotation'},
+    'CFG_SEC_PROMPTS': {'es': 'Prompts del cerebro lingüístico', 'en': 'Linguistic brain prompts'},
+    'CFG_SEC_MACRO': {'es': 'Macro, MTF y vetos', 'en': 'Macro, MTF and vetoes'},
+    'CFG_SEC_BACKTEST': {'es': 'Backtest y muestras', 'en': 'Backtest and samples'},
+    'CFG_SEC_DAEMON': {'es': 'Daemon, dust y órdenes', 'en': 'Daemon, dust and orders'},
+    'CFG_SEC_SAFETY': {'es': 'Kill-switches y alertas', 'en': 'Kill-switches and alerts'},
+    'CFG_SEC_POSITION': {'es': 'Posiciones avanzadas', 'en': 'Advanced positions'},
+    'CFG_SEC_OTHER': {'es': 'Otros parámetros', 'en': 'Other parameters'},
+    'CONFIG_IMPORT_MODE': {'es': 'Tipo de importación', 'en': 'Import type'},
+    'CONFIG_IMPORT_MODE_PATCH': {'es': 'Parche (solo las claves que pegues)', 'en': 'Patch (only keys you paste)'},
+    'CONFIG_IMPORT_MODE_FULL': {'es': 'Completo (objeto grande)', 'en': 'Full (large object)'},
+    'CONFIG_DOWNLOAD_PARTIAL': {'es': 'Ejemplo parche (2–3 claves)', 'en': 'Patch example (2–3 keys)'},
+    'CONFIG_IMPORT_HELP_PATCH': {
+        'es': 'Pega solo las claves que quieras cambiar, p. ej. {"MIN_AUTO_DECISION_SCORE": 0.65}. El resto no se toca.',
+        'en': 'Paste only the keys you want to change, e.g. {"MIN_AUTO_DECISION_SCORE": 0.65}. Everything else stays unchanged.',
+    },
+    'CONFIG_PATCH_APPLY_HINT': {'es': 'Se aplicarán {0} clave(s) tras confirmar.', 'en': '{0} key(s) will be applied after confirmation.'},
+    'CFG_GROUP_SYMBOLS': {'es': 'Símbolos y buckets', 'en': 'Symbols and buckets'},
+    'CFG_GROUP_FEES': {'es': 'Comisiones y slippage', 'en': 'Fees and slippage'},
+    'CFG_GROUP_MOTOR_GH1': {'es': 'Motor GH-P1 (protecciones, salidas, liquidez)', 'en': 'GH-P1 engine (protections, exits, liquidity)'},
+    'CFG_GROUP_EDGE_GH2': {'es': 'Edge GH-P2/P3 (webhook, Ollama, skew)', 'en': 'GH-P2/P3 edge (webhook, Ollama, skew)'},
+    'PRESETS_TITLE': {'es': 'Plantillas de configuración', 'en': 'Configuration presets'},
+    'PRESETS_CAPTION': {
+        'es': 'Plantillas completas (mismo formato que el importador JSON). No incluyen API keys.',
+        'en': 'Full templates (same format as JSON importer). API keys are excluded.',
+    },
+    'PRESETS_SELECT': {'es': 'Plantilla', 'en': 'Preset'},
+    'PRESETS_PREVIEW': {'es': 'Vista previa de cambios', 'en': 'Preview changes'},
+    'PRESETS_APPLY': {'es': 'Aplicar plantilla', 'en': 'Apply preset'},
+    'PRESETS_DISCARD': {'es': 'Descartar', 'en': 'Discard'},
+    'PRESETS_PENDING_APPLY': {'es': 'Revisa el diff antes de aplicar la plantilla.', 'en': 'Review the diff before applying the preset.'},
+    'PRESETS_CONFIRM_REAL': {'es': 'Confirmo aplicar en modo REAL', 'en': 'I confirm applying in REAL mode'},
+    'PRESETS_REAL_REQUIRED': {'es': 'Marca la confirmación para modo real.', 'en': 'Check the confirmation for real mode.'},
+    'PRESETS_SAVE_CURRENT': {'es': 'Guardar configuración actual como plantilla', 'en': 'Save current settings as preset'},
+    'PRESETS_SAVE_NAME': {'es': 'Nombre de la plantilla', 'en': 'Preset name'},
+    'PRESETS_SAVE_DESC': {'es': 'Descripción', 'en': 'Description'},
+    'PRESETS_SAVED': {'es': 'Plantilla guardada.', 'en': 'Preset saved.'},
+    'PRESETS_NAME_REQUIRED': {'es': 'Indica un nombre.', 'en': 'Enter a name.'},
+    'PRESETS_DUPLICATE': {'es': 'Duplicar plantilla', 'en': 'Duplicate preset'},
+    'PRESETS_DUP_NAME': {'es': 'Nombre de la copia', 'en': 'Copy name'},
+    'PRESETS_DUPLICATED': {'es': 'Plantilla duplicada.', 'en': 'Preset duplicated.'},
+    'PRESETS_EXPORT': {'es': 'Exportar plantilla', 'en': 'Export preset'},
+    'PRESETS_DELETE': {'es': 'Eliminar plantilla personalizada', 'en': 'Delete custom preset'},
+    'PRESETS_DELETED': {'es': 'Plantilla eliminada.', 'en': 'Preset deleted.'},
+    'PRESETS_IMPORT': {'es': 'Importar plantilla', 'en': 'Import preset'},
+    'PRESETS_IMPORT_LABEL': {'es': 'JSON de plantilla (objeto con settings)', 'en': 'Preset JSON (object with settings)'},
+    'PRESETS_IMPORT_BTN': {'es': 'Importar', 'en': 'Import'},
+    'PRESETS_IMPORTED': {'es': 'Plantilla importada.', 'en': 'Preset imported.'},
+    'PRESETS_EMPTY': {'es': 'Sin plantillas.', 'en': 'No presets.'},
+    'PRESETS_BUILTIN_SUFFIX': {'es': ' (integrada)', 'en': ' (built-in)'},
+    'PRESETS_COPY_SUFFIX': {'es': ' copia', 'en': ' copy'},
+    'PRESETS_ERROR_GENERIC': {'es': 'Error en plantilla: {0}', 'en': 'Preset error: {0}'},
+    'PRESETS_MANAGE_EXPANDER': {'es': 'Gestionar plantillas (guardar, duplicar, importar…)', 'en': 'Manage presets (save, duplicate, import…)'},
+    'PRESETS_USER_SECTION': {'es': 'Tus plantillas', 'en': 'Your presets'},
+    'PRESETS_BUILTIN_RECOMMENDED_NAME': {'es': 'Recomendado', 'en': 'Recommended'},
+    'PRESETS_BUILTIN_RECOMMENDED_DESC': {
+        'es': 'Equilibrio entre supervivencia, IA y frecuencia operativa.',
+        'en': 'Balance between survival, AI and trading frequency.',
+    },
+    'PRESETS_BUILTIN_CONSERVATIVE_NAME': {'es': 'Conservador', 'en': 'Conservative'},
+    'PRESETS_BUILTIN_CONSERVATIVE_DESC': {
+        'es': 'Menor riesgo, más filtros y modo consultivo por defecto.',
+        'en': 'Lower risk, more filters and consultive mode by default.',
+    },
+    'PRESETS_BUILTIN_AGGRESSIVE_NAME': {'es': 'Agresivo', 'en': 'Aggressive'},
+    'PRESETS_BUILTIN_AGGRESSIVE_DESC': {
+        'es': 'Más señales y exposición; solo si aceptas mayor volatilidad.',
+        'en': 'More signals and exposure; only if you accept higher volatility.',
+    },
+    'PRESETS_ASSISTANT_TITLE': {'es': '¿Qué perfil soy?', 'en': 'What profile fits me?'},
+    'PRESETS_ASSISTANT_CAPTION': {
+        'es': 'Responde unas preguntas y te sugerimos una plantilla integrada (puedes previsualizarla antes).',
+        'en': 'Answer a few questions and we suggest a built-in preset (you can preview before applying).',
+    },
+    'PRESETS_ASSISTANT_REAL': {'es': '¿Operas en modo real?', 'en': 'Trading in real mode?'},
+    'PRESETS_ASSISTANT_SIM': {'es': 'Simulación / paper', 'en': 'Simulation / paper'},
+    'PRESETS_ASSISTANT_REAL_YES': {'es': 'Sí, dinero real', 'en': 'Yes, real money'},
+    'PRESETS_ASSISTANT_ACCOUNT': {'es': 'Tamaño aproximado de la cuenta', 'en': 'Approximate account size'},
+    'PRESETS_ASSISTANT_ACCOUNT_SMALL': {'es': 'Pequeña (< 100 USDT)', 'en': 'Small (< 100 USDT)'},
+    'PRESETS_ASSISTANT_ACCOUNT_MEDIUM': {'es': 'Media (100–1000 USDT)', 'en': 'Medium (100–1000 USDT)'},
+    'PRESETS_ASSISTANT_ACCOUNT_LARGE': {'es': 'Grande (> 1000 USDT)', 'en': 'Large (> 1000 USDT)'},
+    'PRESETS_ASSISTANT_RISK': {'es': 'Tolerancia al riesgo', 'en': 'Risk tolerance'},
+    'PRESETS_ASSISTANT_RISK_LOW': {'es': 'Baja — priorizo no perder', 'en': 'Low — capital preservation first'},
+    'PRESETS_ASSISTANT_RISK_MED': {'es': 'Media — equilibrio', 'en': 'Medium — balanced'},
+    'PRESETS_ASSISTANT_RISK_HIGH': {'es': 'Alta — acepto volatilidad', 'en': 'High — I accept volatility'},
+    'PRESETS_ASSISTANT_ACTIVITY': {'es': 'Frecuencia de operaciones deseada', 'en': 'Desired trading frequency'},
+    'PRESETS_ASSISTANT_ACTIVITY_LOW': {'es': 'Pocas — calidad sobre cantidad', 'en': 'Low — quality over quantity'},
+    'PRESETS_ASSISTANT_ACTIVITY_MED': {'es': 'Moderada', 'en': 'Moderate'},
+    'PRESETS_ASSISTANT_ACTIVITY_HIGH': {'es': 'Alta — más oportunidades', 'en': 'High — more opportunities'},
+    'PRESETS_ASSISTANT_RESULT': {'es': 'Te recomendamos: **{0}** — {1}', 'en': 'We recommend: **{0}** — {1}'},
+    'PRESETS_ASSISTANT_PREVIEW': {'es': 'Previsualizar plantilla sugerida', 'en': 'Preview suggested preset'},
+    'SETTINGS_IO_EXPANDER': {
+        'es': 'Importar / exportar configuración (JSON)',
+        'en': 'Import / export configuration (JSON)',
+    },
+    'SETTINGS_IO_INTENT': {'es': '¿Qué quieres hacer?', 'en': 'What do you want to do?'},
+    'SETTINGS_IO_INTENT_APPLY': {'es': 'Aplicar JSON pegado', 'en': 'Apply pasted JSON'},
+    'SETTINGS_IO_INTENT_DOWNLOAD': {'es': 'Descargar copia de seguridad', 'en': 'Download backup'},
+    'SETTINGS_IO_DOWNLOAD_KIND': {'es': 'Tipo de archivo', 'en': 'File type'},
+    'SETTINGS_IO_DOWNLOAD_BTN': {'es': 'Descargar JSON', 'en': 'Download JSON'},
+    'SETTINGS_DIAG_EXPANDER': {'es': 'Paquete de diagnóstico para IA', 'en': 'AI diagnostic package'},
+    # --- App shell ---
+    'APP_PAGE_TITLE': {'es': 'InversorIA Terminal', 'en': 'InversorIA Terminal'},
+    'APP_BRAND': {'es': 'InversorIA', 'en': 'InversorIA'},
+    'APP_NAV_HIDDEN': {'es': 'NAVEGACIÓN', 'en': 'NAVIGATION'},
+    'APP_LANG_RADIO': {'es': 'IDIOMA / LANGUAGE', 'en': 'LANGUAGE'},
+    'APP_LANG_ES': {'es': 'Español', 'en': 'Spanish'},
+    'APP_LANG_EN': {'es': 'English', 'en': 'English'},
+    'APP_SIM_PROFILE_DEFAULT': {'es': 'Sim {0}', 'en': 'Sim {0}'},
+    # --- Log tags (terminal viewer) ---
+    'LOG_TAG_SKIP': {'es': '[OMITIDO]', 'en': '[SKIP]'},
+    'LOG_TAG_BUY': {'es': '[COMPRA]', 'en': '[BUY]'},
+    'LOG_TAG_SELL': {'es': '[VENTA]', 'en': '[SELL]'},
+    'LOG_TAG_ERROR': {'es': '[ERROR]', 'en': '[ERROR]'},
+    'LOG_TAG_WARN': {'es': '[AVISO]', 'en': '[WARN]'},
+    'LOG_TAG_BLOCK': {'es': '[BLOQUEO]', 'en': '[BLOCK]'},
+    'LOG_TAG_ROTATION': {'es': '[ROTACIÓN]', 'en': '[ROTATION]'},
+    'LOG_FILTER_SCAN': {'es': 'Escaneo', 'en': 'Scan'},
+    'LOG_FILTER_CYCLE': {'es': 'Ciclo', 'en': 'Cycle'},
+    # --- Config errors ---
+    'ERR_CFG_EMPTY': {'es': 'La configuración está vacía.', 'en': 'Configuration is empty.'},
+    'ERR_CFG_NOT_OBJECT': {'es': 'La configuración debe ser un objeto JSON.', 'en': 'Configuration must be a JSON object.'},
+    'ERR_CFG_BOOL': {'es': '{0}: debe ser true/false.', 'en': '{0}: must be true/false.'},
+    'ERR_CFG_INVALID_SYMBOL': {'es': '{0}: símbolo inválido: {1}', 'en': '{0}: invalid symbol: {1}'},
+    'ERR_CFG_BUCKET_OBJECT': {'es': '{0}: debe ser un objeto con buckets y listas de símbolos.', 'en': '{0}: must be an object with buckets and symbol lists.'},
+    'ERR_CFG_SYMBOLS_MIN': {'es': '{0}: debe contener al menos un símbolo.', 'en': '{0}: must contain at least one symbol.'},
+    'ERR_CFG_BUCKET_OBJECT': {'es': '{0}: debe ser un objeto con buckets y listas de símbolos.', 'en': '{0}: must be an object with buckets and symbol lists.'},
+    'ERR_CFG_BUCKET_LIST': {'es': '{0}: debe ser lista o texto separado por comas.', 'en': '{0}: must be a list or comma-separated text.'},
+    'ERR_CFG_BUCKET_SYMBOL': {'es': '{0}: símbolo inválido {1}', 'en': '{0}: invalid symbol {1}'},
+    'ERR_CFG_BUCKET_MIN': {'es': '{0}: debe contener al menos un bucket.', 'en': '{0}: must contain at least one bucket.'},
+    'ERR_CFG_EMPTY_FIELD': {'es': '{0}: no puede estar vacío.', 'en': '{0}: cannot be empty.'},
+    'ERR_CFG_TOO_LONG': {'es': '{0}: texto demasiado largo.', 'en': '{0}: text too long.'},
+    'ERR_CFG_CHOICE': {'es': '{0}: debe ser uno de: {1}', 'en': '{0}: must be one of: {1}'},
+    'ERR_CFG_JSON_LIST': {'es': '{0}: debe ser una lista JSON.', 'en': '{0}: must be a JSON list.'},
+    'ERR_CFG_LIST_MIN': {'es': '{0}: debe tener al menos {1} elementos.', 'en': '{0}: must have at least {1} items.'},
+    'ERR_CFG_LIST_MAX': {'es': '{0}: debe tener como máximo {1} elementos.', 'en': '{0}: must have at most {1} items.'},
+    'ERR_CFG_UNSUPPORTED_TYPE': {'es': '{0}: tipo no soportado.', 'en': '{0}: unsupported type.'},
+    'ERR_CFG_MIN': {'es': '{0}: debe ser >= {1}.', 'en': '{0}: must be >= {1}.'},
+    'ERR_CFG_MAX': {'es': '{0}: debe ser <= {1}.', 'en': '{0}: must be <= {1}.'},
+    'ERR_CFG_GENERIC': {'es': '{0}: {1}', 'en': '{0}: {1}'},
 }
+
+try:
+    from i18n_config_labels import CFG_LABELS
+
+    TRANSLATIONS.update(CFG_LABELS)
+except ImportError:
+    CFG_LABELS = {}
+
+try:
+    from i18n_ui_extra import UI_EXTRA
+
+    TRANSLATIONS.update(UI_EXTRA)
+except ImportError:
+    UI_EXTRA = {}
+
+
+def format_config_error(code: str, key: str | None = None, lang: str | None = None, **kwargs) -> str:
+    """Translate config validation error codes for UI display."""
+    template = _(code, lang=lang)
+    args = []
+    if key is not None:
+        args.append(key)
+    args.extend(kwargs.values())
+    try:
+        return template.format(*args)
+    except (IndexError, KeyError):
+        if key:
+            return f"{key}: {template}"
+        return template
+
 
 def _(key, lang=None):
     """Retorna la traducción según el idioma (Streamlit o Manual)"""

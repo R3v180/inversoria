@@ -28,8 +28,10 @@ APP_LOGO = os.path.join(APP_ROOT, "assets", "inversoria_logo.png")
 if os.path.exists(APP_LOGO) and "_brand_logo_b64" not in st.session_state:
     with open(APP_LOGO, "rb") as logo_file:
         st.session_state["_brand_logo_b64"] = base64.b64encode(logo_file.read()).decode("ascii")
+from i18n import _
+
 st.set_page_config(
-    page_title="InversorIA Terminal",
+    page_title=_("APP_PAGE_TITLE"),
     layout="wide",
     page_icon=APP_LOGO if os.path.exists(APP_LOGO) else "📈",
 )
@@ -169,7 +171,6 @@ def log_message(msg):
     logging.info(msg)
 
 # --- ENRUTADOR UI ---
-from i18n import _
 from ui_onboarding import render_onboarding, is_onboarding_done
 
 # --- CONTROL DE FLUJO (ONBOARDING) ---
@@ -190,7 +191,7 @@ with st.sidebar:
             <div class="iversoria-brand">
                 <img src="data:image/png;base64,{st.session_state.get('_brand_logo_b64', '')}" />
                 <div>
-                    <div class="iversoria-brand-title">InversorIA</div>
+                    <div class="iversoria-brand-title">{_('APP_BRAND')}</div>
                     <div class="iversoria-brand-subtitle">{_('WELCOME_SUBTITLE')}</div>
                 </div>
             </div>
@@ -198,7 +199,7 @@ with st.sidebar:
             unsafe_allow_html=True,
         )
     else:
-        st.markdown("### InversorIA")
+        st.markdown(f"### {_('APP_BRAND')}")
     st.markdown("---")
 
     nav_items = [
@@ -216,7 +217,7 @@ with st.sidebar:
     if st.session_state.get("main_nav_route") not in nav_routes:
         st.session_state.main_nav_route = "dashboard"
     selected_route = st.radio(
-        "NAVEGACIÓN",
+        _("APP_NAV_HIDDEN"),
         nav_routes,
         format_func=lambda route: nav_labels.get(route, route),
         key="main_nav_route",
@@ -247,10 +248,10 @@ with st.sidebar:
     st.subheader(f"⚙️ { _('NAV_SETTINGS') }")
     
     # Selector de Idioma v7.0
-    lang_options = ["Español 🇪🇸", "English 🇺🇸"]
+    lang_options = [_("APP_LANG_ES"), _("APP_LANG_EN")]
     current_lang_idx = 0 if st.session_state.get('language') == 'es' else 1
-    new_lang_sel = st.radio("IDIOMA / LANGUAGE", lang_options, index=current_lang_idx, horizontal=True)
-    new_lang_code = 'es' if "Español" in new_lang_sel else 'en'
+    new_lang_sel = st.radio(_("APP_LANG_RADIO"), lang_options, index=current_lang_idx, horizontal=True)
+    new_lang_code = 'es' if new_lang_sel == _("APP_LANG_ES") else 'en'
     
     if st.session_state.get('language') != new_lang_code:
         st.session_state.language = new_lang_code

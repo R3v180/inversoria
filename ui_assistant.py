@@ -357,10 +357,14 @@ def _render_pending_config_changes():
                 st.rerun()
 
 
-def _build_assistant_context(db, exchange):
+def _build_assistant_context(db, exchange, user_message: str = ""):
+    from assistant_runtime.intent import detect_intent_sections, parse_fetch_context_block
+
     saved_watchlist = db.get_system_status('dynamic_watchlist', '')
     watchlist = [s.strip() for s in saved_watchlist.split(',') if s.strip()] or list(config.SYMBOLS)
     focus_symbols = list(dict.fromkeys(list(db.get_open_positions().keys()) + watchlist[:12]))
+    priority = detect_intent_sections(user_message) | parse_fetch_context_block(user_message)
+    max_chars = 24000 if priority else 16000
     runtime_ctx = RuntimeContext(
         db=db,
         exchange=exchange,
@@ -368,9 +372,18 @@ def _build_assistant_context(db, exchange):
         language=st.session_state.get("language", "es"),
         user_name=st.session_state.get("user_name", "User"),
         focus_symbols=focus_symbols,
-        max_chars=16000,
+        max_chars=max_chars,
     )
-    context = build_runtime_assistant_context(runtime_ctx)
+    context = build_runtime_assistant_context(
+        runtime_ctx,
+        priority_sections=priority if priority else None,
+    )
+    fetch_hint = ""
+    if priority:
+        fetch_hint = (
+            "\n- Contexto ampliado por petición del usuario: "
+            + ", ".join(sorted(priority))
+        )
     return f"""{context}
 
 REGLAS DE SEGURIDAD:
@@ -380,6 +393,8 @@ REGLAS DE SEGURIDAD:
 - Diferencia siempre entre posiciones del bot (open_positions) y saldos/retales del exchange.
 - Si hablas de comprar, considera macro, diagnóstico daemon, slippage, riesgo por trade, posiciones disponibles y noticias.
 - Prioriza primero riesgos/bloqueos actuales, después señales, después recomendaciones generales.
+- Si necesitas más datos (logs, noticias, journal, webhooks), puedes pedir al usuario confirmación o emitir [FETCH_CONTEXT] sections=logs,news [/FETCH_CONTEXT] en tu respuesta; el siguiente turno incluirá ese contexto.{fetch_hint}
+- Las claves de configuración permitidas son las de CONFIG_SCHEMA (importador/plantillas); no inventes claves nuevas.
 """.strip()
 
 
@@ -410,7 +425,7 @@ def render_assistant():
         if history:
             st.session_state.messages = history
         else:
-            welcome_msg = f"Hello {user_name}! I am your trading copilot. How can I help you today?" if st.session_state.get('language') == 'en' else f"¡Hola {user_name}! Soy tu copiloto de trading. ¿En qué puedo ayudarte hoy?"
+            welcome_msg = _("ASSIST_WELCOME").format(user_name)
             st.session_state.messages = [
                 {"role": "assistant", "content": welcome_msg}
             ]
@@ -423,8 +438,7 @@ def render_assistant():
                 st.caption(f"🕒 {msg['timestamp']}")
 
     # Entrada de usuario
-    input_placeholder = "Escribe tu consulta aquí..." if st.session_state.get('language') == 'es' else "Type your query here..."
-    if prompt := st.chat_input(input_placeholder):
+    if prompt := st.chat_input(_("ASSIST_CHAT_PLACEHOLDER")):
         # Guardar y mostrar mensaje de usuario
         current_time = time.strftime('%Y-%m-%d %H:%M:%S')
         st.session_state.messages.append({"role": "user", "content": prompt, "timestamp": current_time})
@@ -437,10 +451,10 @@ def render_assistant():
         with st.chat_message("assistant"):
             with st.spinner(_("ASSISTANT_THINKING")):
                 # 1. Preparar contexto compacto con cartera, macro, diagnóstico, noticias y decisiones.
-                context = _build_assistant_context(db, exchange)
+                context = _build_assistant_context(db, exchange, prompt)
                 
                 # 2. Llamada a la IA (Conversacional)
-                lang_name = "Spanish" if st.session_state.get('language') == 'es' else "English"
+                lang_name = _("ASSIST_LANG_NAME_ES") if st.session_state.get('language') == 'es' else _("ASSIST_LANG_NAME_EN")
                 system_prompt = f"""
                 Actúa como un asesor de trading experto. Tu cliente se llama {user_name}.
                 DEBES responder SIEMPRE en idioma {lang_name}.

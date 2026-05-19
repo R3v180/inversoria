@@ -4,23 +4,33 @@ from datetime import datetime, time as dt_time, timedelta
 
 import pandas as pd
 
+from i18n import _
 
-PERFORMANCE_PRESETS = (
-    "Hoy 00:00",
-    "Última hora",
-    "Últimas 24h",
-    "Inicio disponible",
-    "Personalizado",
+PERFORMANCE_PRESET_IDS = (
+    "today",
+    "last_hour",
+    "last_24h",
+    "earliest",
+    "custom",
 )
 
+# Backward compatibility
+PERFORMANCE_PRESETS = PERFORMANCE_PRESET_IDS
 
-def preset_start_datetime(preset: str, now: datetime | None = None) -> datetime | None:
+
+def performance_preset_label(preset_id: str) -> str:
+    key = f"HIST_PRESET_{preset_id.upper()}"
+    text = _(key)
+    return text if text != key else preset_id
+
+
+def preset_start_datetime(preset_id: str, now: datetime | None = None) -> datetime | None:
     now = now or datetime.now()
-    if preset == "Hoy 00:00":
+    if preset_id == "today":
         return datetime.combine(now.date(), dt_time.min)
-    if preset == "Última hora":
+    if preset_id == "last_hour":
         return now - timedelta(hours=1)
-    if preset == "Últimas 24h":
+    if preset_id == "last_24h":
         return now - timedelta(hours=24)
     return None
 
@@ -45,7 +55,7 @@ def compute_period_performance(db, current_equity: float, start_dt: datetime | N
     if df.empty:
         return {
             "ok": False,
-            "reason": "Sin historial de equity todavía.",
+            "reason": _("HIST_PERF_NO_EQUITY_HISTORY"),
             "current_equity": current_equity,
             "period_df": df,
         }
@@ -84,4 +94,3 @@ def compute_period_performance(db, current_equity: float, start_dt: datetime | N
         "points": len(curve_df),
         "period_df": curve_df,
     }
-

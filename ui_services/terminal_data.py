@@ -39,7 +39,9 @@ def build_terminal_snapshot(db, exchange, symbol: str | None = None):
         decision = {}
 
     raw_logs = db.get_logs()
-    important_logs = [line for line in raw_logs if "Escaneo" not in line and "Ciclo" not in line][-20:]
+    from ui_services.log_display import log_line_matches_noise
+
+    important_logs = [line for line in raw_logs if not log_line_matches_noise(line)][-20:]
 
     return {
         "current_symbols": current_symbols,
