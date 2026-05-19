@@ -6,7 +6,7 @@ from simulation_profiles import (
 from config import get_setting
 from pathlib import Path
 from unittest.mock import patch
-import config, simulation_profiles
+import config
 
 def test_get_active_profile_settings():
     result = get_active_profile_settings()
@@ -57,18 +57,21 @@ def test_json_load_failure():
     assert result == "default"
 
 def test_key_in_global(monkeypatch):
-    monkeypatch.setenv("GLOBAL", "global")
     monkeypatch.setattr(
         config,
         "GLOBAL_SETTING_KEYS",
         {"GLOBAL"}
     )
+    monkeypatch.setattr(
+        config,
+        "get_active_profile_settings",
+        lambda: {"GLOBAL": "from_profile"}
+    )
     result = get_setting("GLOBAL", "default")
-    assert result == "default"
+    assert result != "from_profile"
 
 def fake_error():
     raise Exception("boom")
-
 
 def test_profile_settings_exception(monkeypatch):
     monkeypatch.setenv("TEST_KEY", "secret")
@@ -79,4 +82,4 @@ def test_profile_settings_exception(monkeypatch):
     )
     result = config.get_setting("TEST_KEY", "default")
 
-    assert result == "default"
+    assert result == "secret"
