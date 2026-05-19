@@ -314,6 +314,8 @@ def render_settings():
                 macro_altseason_btc_dom = st.number_input("BTC dominance ALTSEASON máx. (%)", min_value=35.0, max_value=60.0, value=get_setting('MACRO_ALTSEASON_BTC_DOM', 48.0, float), step=0.5)
                 macro_risk_on_max_btc_dom = st.number_input("BTC dominance máx. para RISK_ON alts (%)", min_value=45.0, max_value=75.0, value=get_setting('MACRO_RISK_ON_MAX_BTC_DOM', 55.0, float), step=0.5)
                 macro_caution_risk_off_btc_dom = st.number_input("BTC dominance RISK_OFF en caídas (%)", min_value=45.0, max_value=80.0, value=get_setting('MACRO_CAUTION_RISK_OFF_BTC_DOM', 55.0, float), step=0.5)
+                macro_regime_hysteresis_cycles = st.number_input("Ciclos histeresis régimen macro", min_value=1, max_value=12, value=get_setting('MACRO_REGIME_HYSTERESIS_CYCLES', 2, int), step=1)
+                macro_btc_dom_trend_window = st.number_input("Ventana tendencia BTC dominance", min_value=1, max_value=24, value=get_setting('MACRO_BTC_DOM_TREND_WINDOW', 3, int), step=1)
             with col_m2:
                 mtf_include_15m = st.checkbox("Incluir 15m en MTF", value=get_setting('MTF_INCLUDE_15M', True, bool))
                 mtf_divergence_penalty = st.slider("Penalización divergencia MTF", 0.0, 0.5, get_setting('MTF_DIVERGENCE_PENALTY', 0.15, float), step=0.01)
@@ -437,6 +439,8 @@ def render_settings():
                 "MACRO_ALTSEASON_BTC_DOM": float(macro_altseason_btc_dom),
                 "MACRO_RISK_ON_MAX_BTC_DOM": float(macro_risk_on_max_btc_dom),
                 "MACRO_CAUTION_RISK_OFF_BTC_DOM": float(macro_caution_risk_off_btc_dom),
+                "MACRO_REGIME_HYSTERESIS_CYCLES": int(macro_regime_hysteresis_cycles),
+                "MACRO_BTC_DOM_TREND_WINDOW": int(macro_btc_dom_trend_window),
                 "MTF_INCLUDE_15M": bool(mtf_include_15m),
                 "MTF_DIVERGENCE_PENALTY": float(mtf_divergence_penalty),
                 "BACKTEST_HARD_VETO_WIN_RATE": float(backtest_hard_veto_wr),
