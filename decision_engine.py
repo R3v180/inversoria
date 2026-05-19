@@ -558,6 +558,19 @@ class DecisionEngine:
             "decision_mode": "rules",
             "macro_regime": macro_regime,
         }
+
+    def build_invalid_ai_fallback_decision(self, score, components, indicators, strategy, macro_regime, provider, error):
+        result = self.build_rules_decision(score, components, indicators, strategy, macro_regime)
+        result["provider"] = "RulesFallback"
+        result["ai_provider"] = provider or "unknown"
+        result["ai_action"] = "INVALID"
+        result["decision_mode"] = "rules_fallback"
+        result["reasoning"] = (
+            f"[AI_INVALID_RESPONSE] rules-only fallback: {result.get('reasoning', '')} "
+            f"(provider={provider or 'unknown'}, error={str(error)[:120]})"
+        )
+        result["fallback_reason"] = "AI_INVALID_RESPONSE"
+        return result
         
     def quick_technical_filter(self, indicators, current_price):
         if not indicators: return False, _('FILTER_SIN_DATOS', lang=self.current_lang)
@@ -894,6 +907,17 @@ Si la confluencia MTF es fuerte ({confluence_score:.0%}), puedes aumentar positi
                 return self._remember_decision(symbol, result, now, persist=True)
             except Exception as e:
                 print(f"[DecisionEngine] Error parseando respuesta IA para {symbol}: {e}")
+                if bool(getattr(config, "AI_INVALID_RESPONSE_RULES_FALLBACK", True)):
+                    fallback = self.build_invalid_ai_fallback_decision(
+                        decision_score,
+                        score_components,
+                        indicators,
+                        mtf_recommended_strategy,
+                        macro_regime,
+                        provider,
+                        e,
+                    )
+                    return self._remember_decision(symbol, fallback, now, persist=False)
 
         return self.decision_cache.get(symbol)
 
