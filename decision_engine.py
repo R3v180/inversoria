@@ -374,6 +374,13 @@ class DecisionEngine:
         rsi = _safe_float(indicators.get('rsi'), 50.0)
         adx = _safe_float(indicators.get('adx'), 0.0)
         trend = indicators.get('trend', 'BEAR')
+        volume_ratio = _safe_float(indicators.get('volume_ratio'), 1.0)
+        macd_hist = _safe_float(indicators.get('macd_hist'), 0.0)
+        macd = _safe_float(indicators.get('macd'), 0.0)
+        macd_signal = _safe_float(indicators.get('macd_signal'), 0.0)
+        bb_percent = _safe_float(indicators.get('bb_percent'), 0.5)
+        stoch_k = _safe_float(indicators.get('stochrsi_k'), 50.0)
+        obv_slope = _safe_float(indicators.get('obv_slope'), 0.0)
 
         trend_score = 1.0 if trend == 'BULL' else 0.25
         if 45 <= rsi <= 62:
@@ -396,7 +403,39 @@ class DecisionEngine:
         else:
             adx_score = 0.70
 
-        technical_score = _clamp((trend_score * 0.45) + (rsi_score * 0.35) + (adx_score * 0.20))
+        if volume_ratio >= 1.5:
+            volume_score = 0.90
+        elif volume_ratio >= 1.0:
+            volume_score = 0.70
+        elif volume_ratio >= 0.7:
+            volume_score = 0.45
+        else:
+            volume_score = 0.25
+
+        macd_score = 0.75 if macd_hist > 0 and macd >= macd_signal else 0.35
+        if macd_hist > 0 and obv_slope > 0:
+            macd_score = min(0.95, macd_score + 0.10)
+        if 0.20 <= bb_percent <= 0.85:
+            bb_score = 0.70
+        elif bb_percent < 0.20:
+            bb_score = 0.55
+        else:
+            bb_score = 0.35
+        if 20 <= stoch_k <= 80:
+            stoch_score = 0.65
+        elif stoch_k < 20:
+            stoch_score = 0.50
+        else:
+            stoch_score = 0.30
+        momentum_score = _clamp((macd_score * 0.45) + (bb_score * 0.25) + (stoch_score * 0.20) + ((0.75 if obv_slope > 0 else 0.35) * 0.10))
+
+        technical_score = _clamp(
+            (trend_score * 0.30)
+            + (rsi_score * 0.20)
+            + (adx_score * 0.15)
+            + (volume_score * 0.15)
+            + (momentum_score * 0.20)
+        )
         macro_score = {
             'ALTSEASON': 0.95,
             'RISK_ON': 0.80,
@@ -434,6 +473,8 @@ class DecisionEngine:
             'mtf': round(mtf_score, 3),
             'historical': round(historical_score, 3),
             'macro': round(macro_score, 3),
+            'volume': round(volume_score, 3),
+            'momentum': round(momentum_score, 3),
             'adaptive': round(adaptive_score, 3),
             'adaptive_adjustment': round(adaptive_adjustment, 4),
             'weights': {key: round(value, 3) for key, value in weights.items()},

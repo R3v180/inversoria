@@ -11,9 +11,11 @@ class TradingLogic:
             return None
         
         df = pd.DataFrame(ohlcv_data, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
+        df['open'] = pd.to_numeric(df['open'], errors='coerce')
         df['close'] = pd.to_numeric(df['close'], errors='coerce')
         df['high'] = pd.to_numeric(df['high'], errors='coerce')
         df['low'] = pd.to_numeric(df['low'], errors='coerce')
+        df['volume'] = pd.to_numeric(df['volume'], errors='coerce')
         
         # Repainting Fix
         df_closed = df.iloc[:-1].copy()
@@ -22,9 +24,30 @@ class TradingLogic:
             return None
 
         df_closed['RSI_14'] = ta.rsi(df_closed['close'], length=14)
+        df_closed['EMA_21'] = ta.ema(df_closed['close'], length=21)
         df_closed['EMA_50'] = ta.ema(df_closed['close'], length=50)
         df_closed['EMA_200'] = ta.ema(df_closed['close'], length=200)
         df_closed['ATR_14'] = ta.atr(df_closed['high'], df_closed['low'], df_closed['close'], length=14)
+        df_closed['VOLUME_SMA_20'] = ta.sma(df_closed['volume'], length=20)
+
+        macd_df = ta.macd(df_closed['close'], fast=12, slow=26, signal=9)
+        if macd_df is not None and not macd_df.empty:
+            for col in macd_df.columns:
+                df_closed[col] = macd_df[col]
+
+        bb_df = ta.bbands(df_closed['close'], length=20, std=2)
+        if bb_df is not None and not bb_df.empty:
+            for col in bb_df.columns:
+                df_closed[col] = bb_df[col]
+
+        stochrsi_df = ta.stochrsi(df_closed['close'], length=14)
+        if stochrsi_df is not None and not stochrsi_df.empty:
+            for col in stochrsi_df.columns:
+                df_closed[col] = stochrsi_df[col]
+
+        obv = ta.obv(df_closed['close'], df_closed['volume'])
+        if obv is not None:
+            df_closed['OBV'] = obv
         
         adx_df = ta.adx(df_closed['high'], df_closed['low'], df_closed['close'], length=14)
         if adx_df is not None and not adx_df.empty:
@@ -38,12 +61,40 @@ class TradingLogic:
         ema50 = df_closed['EMA_50'].iloc[-1]
         ema200 = df_closed['EMA_200'].iloc[-1]
         
+        def latest(col, default=0.0):
+            try:
+                value = df_closed[col].iloc[-1]
+                if pd.isna(value):
+                    return default
+                return float(value)
+            except Exception:
+                return default
+
+        volume_sma = latest('VOLUME_SMA_20', 0.0)
+        volume_ratio = latest('volume', 0.0) / volume_sma if volume_sma > 0 else 1.0
+        obv_now = latest('OBV', 0.0)
+        try:
+            obv_prev = float(df_closed['OBV'].iloc[-6])
+        except Exception:
+            obv_prev = obv_now
+        obv_slope = 0.0 if obv_prev == 0 else (obv_now - obv_prev) / abs(obv_prev)
+
         return {
             'rsi': df_closed['RSI_14'].iloc[-1],
+            'ema21': latest('EMA_21', ema50),
             'ema50': ema50,
             'ema200': ema200,
             'atr': df_closed['ATR_14'].iloc[-1],
             'adx': df_closed['ADX_14'].iloc[-1],
+            'volume_ratio': volume_ratio,
+            'macd': latest('MACD_12_26_9', 0.0),
+            'macd_signal': latest('MACDs_12_26_9', 0.0),
+            'macd_hist': latest('MACDh_12_26_9', 0.0),
+            'bb_percent': latest('BBP_20_2.0', 0.5),
+            'bb_width': latest('BBB_20_2.0', 0.0),
+            'stochrsi_k': latest('STOCHRSIk_14_14_3_3', 50.0),
+            'stochrsi_d': latest('STOCHRSId_14_14_3_3', 50.0),
+            'obv_slope': obv_slope,
             'trend': "BULL" if ema50 > ema200 else "BEAR"
         }
 
