@@ -427,6 +427,19 @@ def render_dashboard():
                     st.caption("Providers: " + ", ".join(f"{k}: {v}" for k, v in diag["providers"].items()))
                 if diag.get("skipped"):
                     st.caption("Skipped: " + ", ".join(f"{k}: {v}" for k, v in diag["skipped"].items()))
+                if diag.get("unreconciled_orders_count", 0):
+                    st.warning(f"Órdenes pendientes/no reconciliadas: {diag.get('unreconciled_orders_count')}")
+                    rows = diag.get("unreconciled_orders") or []
+                    if rows:
+                        st.dataframe(rows, width="stretch", hide_index=True)
+                if diag.get("order_reconcile"):
+                    rec = diag.get("order_reconcile") or {}
+                    st.caption(
+                        "Reconciliación órdenes: "
+                        f"checked={rec.get('checked', 0)} · "
+                        f"updated={rec.get('updated', 0)} · "
+                        f"applied={rec.get('applied', 0)}"
+                    )
                 if diag.get("risk_guards"):
                     rg = diag.get("risk_guards") or {}
                     status = "OK" if rg.get("ok", True) else _('DASH_RISK_BLOCKING')
