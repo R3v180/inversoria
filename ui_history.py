@@ -2,8 +2,15 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 import json
+from datetime import datetime
 from i18n import _
 from ui_theme import apply_plotly_theme
+from ui_services.performance_period import (
+    PERFORMANCE_PRESETS,
+    compute_period_performance,
+    preset_start_datetime,
+)
+from ui_services.page_cache import install_page_autorefresh, page_cache_ttl, render_stale_while_revalidate
 
 
 def _fmt_trade_price(value):
@@ -102,6 +109,40 @@ def _render_audit_replay(db):
                 st.warning(f"No se pudieron cargar snapshots: {exc}")
 
 
+def _render_period_performance(db, exchange):
+    st.markdown("### Rendimiento por periodo")
+    st.caption("Calcula equity flotante desde una fecha/hora sin borrar ni alterar el histórico.")
+    p1, p2, p3 = st.columns([1, 1, 2])
+    preset = p1.selectbox("Periodo", PERFORMANCE_PRESETS, key="perf_period_preset")
+    start_dt = preset_start_datetime(preset)
+    if preset == "Personalizado":
+        selected_date = p2.date_input("Desde fecha", value=datetime.now().date(), key="perf_period_date")
+        selected_time = p3.time_input("Desde hora", value=datetime.min.time(), key="perf_period_time")
+        start_dt = datetime.combine(selected_date, selected_time)
+    else:
+        p2.caption("Inicio")
+        p2.write(start_dt.strftime("%Y-%m-%d %H:%M") if start_dt else "Primer dato disponible")
+
+    current_equity = float(exchange.get_balance() or 0.0)
+    perf = compute_period_performance(db, current_equity, start_dt)
+    if not perf.get("ok"):
+        st.info(perf.get("reason", "Sin datos de rendimiento."))
+        return
+
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Equity inicio periodo", f"${perf['start_equity']:.2f}")
+    c2.metric("Equity actual", f"${perf['current_equity']:.2f}")
+    c3.metric("PnL periodo", f"${perf['pnl_usd']:+.2f}", f"{perf['pnl_pct']:+.2f}%")
+    c4.metric("Puntos equity", perf.get("points", 0))
+    st.caption(f"Inicio real usado: {pd.to_datetime(perf['start_ts']).strftime('%Y-%m-%d %H:%M:%S')}")
+
+    curve = perf.get("period_df")
+    if curve is not None and not curve.empty:
+        fig = px.line(curve, x="timestamp", y="pnl_usd", title="PnL flotante del periodo", markers=True)
+        apply_plotly_theme(fig)
+        st.plotly_chart(fig, width="stretch")
+
+
 def _open_position_context(db):
     try:
         positions = db.get_open_positions()
@@ -196,16 +237,49 @@ def _display_reason(row, context):
     return f"{prefix} | {reason}" if prefix and reason else reason or str(row.get("Reason", ""))
 
 
-def render_history():
+HISTORY_AUTO_REFRESH_SEC = 45
+
+
+def render_history_page():
+    install_page_autorefresh("history")
+
+    def _build():
+        db = st.session_state.db
+        exchange = st.session_state.get("exchange")
+        return {
+            "trades_df": db.get_trades_history(),
+            "has_exchange": exchange is not None,
+        }
+
+    def _render(data, stale=False, age_sec=0):
+        render_history(data.get("trades_df"), stale=stale, age_sec=age_sec)
+
+    render_stale_while_revalidate("history", _build, _render, ttl_sec=page_cache_ttl("history"))
+
+
+def render_history(trades_df=None, *, stale=False, age_sec=0):
     st.title(f"🧾 { _('NAV_HISTORY') }")
     
     if 'db' not in st.session_state:
         st.warning(_('DB_NOT_INIT'))
         return
 
+    st.caption(
+        f"Auto-actualización cada {int(HISTORY_AUTO_REFRESH_SEC)}s "
+        f"(trades/journal desde BD; rendimiento por periodo usa equity del exchange)."
+    )
+    if stale and age_sec is not None:
+        remaining = max(0, int(HISTORY_AUTO_REFRESH_SEC - age_sec))
+        st.caption(f"Datos de hace {int(age_sec)}s (caché). Actualización automática en ~{remaining}s.")
+
+    if "exchange" in st.session_state:
+        _render_period_performance(st.session_state.db, st.session_state.exchange)
+    else:
+        st.info("Exchange no inicializado; el rendimiento por periodo se mostrará cuando la sesión esté lista.")
+
     _render_audit_replay(st.session_state.db)
 
-    df = st.session_state.db.get_trades_history()
+    df = trades_df if trades_df is not None else st.session_state.db.get_trades_history()
     if df.empty:
         st.info(_('HISTORY_EMPTY'))
         return

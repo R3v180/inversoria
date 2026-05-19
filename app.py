@@ -12,6 +12,7 @@ from config import SYMBOLS, MODO_SIMULACION, save_settings
 from exchange_helper import ExchangeHelper
 from sentiment_engine import SentimentEngine
 from trading_logic import TradingLogic
+from ui_services.emergency_actions import liquidate_all_with_accounting
 from simulation_profiles import (
     create_profile,
     get_active_profile,
@@ -170,13 +171,6 @@ def log_message(msg):
 # --- ENRUTADOR UI ---
 from i18n import _
 from ui_onboarding import render_onboarding, is_onboarding_done
-from ui_dashboard import render_dashboard
-from ui_terminal import render_terminal
-from ui_wallet import render_wallet
-from ui_news import render_news
-from ui_history import render_history
-from ui_settings import render_settings
-from ui_assistant import render_assistant
 
 # --- CONTROL DE FLUJO (ONBOARDING) ---
 if not is_onboarding_done():
@@ -334,46 +328,41 @@ with st.sidebar:
     with st.expander(f"⚠️ { _('EMERGENCY_ACTIONS') }", expanded=False):
         if st.button(_('SELL_ALL_USDT')):
             with st.spinner(_('LIQUIDATING_MSG')):
-                resultados = st.session_state.exchange.liquidate_all_to_usdt()
-                
-                # Procesar éxitos
+                resultados = liquidate_all_with_accounting(
+                    st.session_state.db,
+                    st.session_state.exchange,
+                    trade_reason="Liquidación Manual",
+                    log_fn=log_message,
+                )
                 for exito in resultados.get("exitos", []):
-                    sym = exito['symbol']
-                    qty = exito['amount']
-                    price = exito['price']
-                    st.session_state.db.save_trade(sym, 'sell', price, qty, "Liquidación Manual", 0.0)
-                    st.session_state.db.remove_open_position(sym)
-                    log_message(f"✅ Liquidado: {qty:.4f} {sym} a {price:.2f}")
-                    st.success(f"Liquidado: {sym}")
-                
-                # Procesar fallos
+                    st.success(f"Liquidado: {exito['symbol']}")
                 for fallo in resultados.get("fallos", []):
-                    sym = fallo['symbol']
-                    razon = fallo['reason']
+                    sym = fallo["symbol"]
+                    razon = fallo["reason"]
                     log_message(f"❌ Fallo al liquidar {sym}: {razon}")
                     st.error(f"Fallo en {sym}: {razon}")
-                
                 time.sleep(2)
                 st.rerun()
 
-# RENDERIZAR VISTAS
+# RENDERIZAR VISTAS (imports diferidos para acelerar cambio de pestaña)
 if selected_route == "dashboard":
-    from streamlit_autorefresh import st_autorefresh
-    # Refresca cada 30 segundos (30000 ms), máximo 1000 veces
-    st_autorefresh(interval=30_000, limit=1000, key="dashboard_refresh")
-    render_dashboard()
+    from ui_dashboard import render_dashboard_page
+    render_dashboard_page()
 elif selected_route == "wallet":
-    render_wallet()
+    from ui_wallet import render_wallet_page
+    render_wallet_page()
 elif selected_route == "news":
+    from ui_news import render_news
     render_news()
 elif selected_route == "terminal":
-    if st.session_state.get('terminal_refresh', False):
-        from streamlit_autorefresh import st_autorefresh
-        st_autorefresh(interval=30_000, limit=1000, key="terminal_refresh_timer")
-    render_terminal()
+    from ui_terminal import render_terminal_page
+    render_terminal_page()
 elif selected_route == "assistant":
+    from ui_assistant import render_assistant
     render_assistant()
 elif selected_route == "history":
-    render_history()
+    from ui_history import render_history_page
+    render_history_page()
 elif selected_route == "settings":
+    from ui_settings import render_settings
     render_settings()

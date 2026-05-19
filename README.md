@@ -1375,7 +1375,7 @@ python -m streamlit run app.py
 
 ### Dashboard
 
-Muestra primero estado operativo, modo, daemon, posiciones activas y eventos recientes. Después muestra gráfico técnico, curva de patrimonio, inteligencia del sistema, diagnóstico, distribución, radar y acciones de emergencia. En posiciones activas, el botón **Vender** funciona como venta rápida de todo lo posible y el desplegable de opciones permite vender total o parcialmente.
+Funciona como cockpit operativo: equity actual, disponible, posiciones, modo, estado del daemon, posiciones activas, eventos recientes, salud resumida, macro/radar compacto y acciones de emergencia. El PnL del cockpit se calcula contra el baseline operativo y el análisis por fecha/hora vive en Historial para no mezclar evaluación temporal con estado en vivo.
 
 ### Cartera Exchange
 
@@ -1399,11 +1399,11 @@ Gráfico técnico por activo, indicadores, decisión reciente y logs.
 
 ### Asistente IA
 
-Chat contextual con cartera, posiciones, macro, backtests, diagnóstico del daemon, modos de ejecución/decisión, guardrails, `decision_score`, métricas del `decision_journal` y, cuando existe, contexto compacto de logs locales recientes saneados. Las órdenes propuestas pasan a una tarjeta pendiente y requieren botón de confirmación. Los cambios de configuración propuestos por IA siguen el mismo modelo: se muestran como tarjeta pendiente con diff y solo se aplican si el usuario confirma. Las órdenes confirmadas desde el asistente también quedan auditadas en `decision_journal`.
+Chat contextual con cartera, posiciones, wallet/dust, rendimiento por periodo, macro, backtests, diagnóstico del daemon, audit/replay, modos de ejecución/decisión, guardrails, `decision_score`, métricas del `decision_journal` y logs recientes saneados. El contexto se construye mediante `assistant_runtime` y providers independientes de Streamlit, así reorganizar pantallas no rompe lo que ve el asistente. Las órdenes y cambios de configuración propuestos pasan a tarjetas pendientes y requieren botón de confirmación.
 
 ### Historial
 
-Trades con filtros por símbolo, tipo, resultado y fechas; paginación para historiales grandes; tabla compacta con formato adaptativo para precios/cantidades pequeñas como PEPE; tarjetas detalladas opcionales por página; aviso de que win rate, profit factor, mejor trade y expectancy son métricas realizadas basadas en cierres; justificación enriquecida con provider, score, confianza, régimen, estrategia y razonamiento IA cuando existe; drawdown rolling, profit factor rolling, métricas por provider/régimen, curva aproximada y journal. También incluye vista de `audit_events` y `cycle_replay_snapshots` para revisar eventos operativos y reconstruir ciclos.
+Trades con filtros por símbolo, tipo, resultado y fechas; paginación para historiales grandes; tabla compacta con formato adaptativo para precios/cantidades pequeñas como PEPE; tarjetas detalladas opcionales por página; aviso de que win rate, profit factor, mejor trade y expectancy son métricas realizadas basadas en cierres; justificación enriquecida con provider, score, confianza, régimen, estrategia y razonamiento IA cuando existe; drawdown rolling, profit factor rolling, métricas por provider/régimen, curva aproximada y journal. Incluye rendimiento por periodo basado en `equity_history` con presets como hoy 00:00, última hora, 24h, inicio disponible y personalizado, sin borrar ni alterar histórico. También incluye vista de `audit_events` y `cycle_replay_snapshots` para revisar eventos operativos y reconstruir ciclos.
 
 ### Configuración
 

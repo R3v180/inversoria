@@ -233,4 +233,8 @@ Siguientes issues utiles, no obsoletas:
 2. `dynamic-slippage-backtest`: slippage dinamico por liquidez/orderbook en backtest.
 3. `decision-calibration`: calibrar confianza predicha vs win rate posterior y revisar mezcla IA/determinista.
 4. `advanced-edge-research`: Kelly, correlacion, breadth, funding/open interest y OCO/limit orders, siempre detras de gates.
+5. `macro-worker`: sacar refresco macro a worker si vuelve a bloquear UI o daemon.
+6. `local-ai-provider`: proveedor local OpenAI-compatible/Ollama cuando toque reducir dependencia externa.
+
+La limpieza UI/refactor/asistente queda separada de estos pendientes estrategicos: primero se ordenan responsabilidades, servicios compartidos y fachadas compatibles; despues se atacan las mejoras de trading/backtest/edge en PRs pequenos.
 

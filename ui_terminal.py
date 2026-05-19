@@ -1,14 +1,42 @@
 import streamlit as st
 from i18n import _
-import pandas as pd
 import json
-import plotly.graph_objects as go
-from plotly.subplots import make_subplots
-import pandas_ta as ta
-from config import SYMBOLS
-from ui_theme import apply_plotly_theme, plotly_theme_values
+from ui_services.page_cache import install_page_autorefresh, page_cache_ttl, render_stale_while_revalidate
+from ui_services.technical_chart import build_technical_chart
+from ui_services.terminal_data import build_terminal_snapshot
 
-def render_terminal():
+TERMINAL_AUTO_REFRESH_SEC = 30
+
+
+def render_terminal_page():
+    col_t1, col_t2 = st.columns([4, 1])
+    with col_t2:
+        terminal_refresh = st.toggle(
+            "Auto-Refresh",
+            value=st.session_state.get("terminal_refresh", True),
+            key="terminal_refresh_toggle",
+        )
+        st.session_state.terminal_refresh = terminal_refresh
+
+    if terminal_refresh:
+        interval = install_page_autorefresh("terminal") or TERMINAL_AUTO_REFRESH_SEC
+    else:
+        interval = TERMINAL_AUTO_REFRESH_SEC
+
+    def _build():
+        return build_terminal_snapshot(
+            st.session_state.db,
+            st.session_state.exchange,
+            symbol=st.session_state.get("terminal_chart_symbol"),
+        )
+
+    def _render(data, stale=False, age_sec=0):
+        render_terminal(data, stale=stale, age_sec=age_sec, refresh_sec=interval)
+
+    render_stale_while_revalidate("terminal", _build, _render, ttl_sec=page_cache_ttl("terminal"))
+
+
+def render_terminal(snapshot=None, *, stale=False, age_sec=0, refresh_sec=TERMINAL_AUTO_REFRESH_SEC):
     st.markdown("""
         <style>
         .stSelectbox div[data-baseweb="select"] {
@@ -25,140 +53,94 @@ def render_terminal():
         </style>
     """, unsafe_allow_html=True)
     st.title(f"⚡ { _('NAV_TERMINAL') }")
-    
-    # Interruptor de auto-refresco (v3.5)
-    col_t1, col_t2 = st.columns([4, 1])
-    with col_t2:
-        terminal_refresh = st.toggle("Auto-Refresh", value=st.session_state.get('terminal_refresh', False))
-        st.session_state.terminal_refresh = terminal_refresh
 
-    if 'exchange' not in st.session_state:
-        st.warning(_('TERMINAL_NOT_INITIALIZED'))
+    if st.session_state.get("terminal_refresh", True):
+        st.caption(f"Auto-actualización cada {int(refresh_sec)} segundos (toggle activado).")
+    else:
+        st.caption("Auto-actualización desactivada. Activa el toggle para refresco cada 30s.")
+
+    if stale and age_sec is not None:
+        remaining = max(0, int(refresh_sec - age_sec))
+        st.caption(f"Datos de hace {int(age_sec)}s (caché). Próxima actualización en ~{remaining}s.")
+
+    if "exchange" not in st.session_state:
+        st.warning(_("TERMINAL_NOT_INITIALIZED"))
         return
 
-    # Cargar monedas del radar dinámico (v3.5)
-    saved_watchlist = st.session_state.db.get_system_status('dynamic_watchlist')
-    if saved_watchlist:
-        current_symbols = [s.strip() for s in saved_watchlist.split(',') if s.strip()]
-    else:
-        current_symbols = SYMBOLS
+    if snapshot is None:
+        snapshot = build_terminal_snapshot(
+            st.session_state.db,
+            st.session_state.exchange,
+            symbol=st.session_state.get("terminal_chart_symbol"),
+        )
 
-    # Determinar moneda con más inversión para el default (v4.5)
-    open_positions = st.session_state.db.get_open_positions()
-    default_index = 0
-    if open_positions:
-        max_value = -1
-        max_symbol = current_symbols[0]
-        for sym, pos in open_positions.items():
-            price = st.session_state.exchange.get_ticker(sym) or pos['entry_price']
-            value = pos['amount'] * price
-            if value > max_value:
-                max_value = value
-                max_symbol = sym
-        
-        if max_symbol not in current_symbols:
-            current_symbols.insert(0, max_symbol)
-        
-        default_index = current_symbols.index(max_symbol)
+    current_symbols = list(snapshot.get("current_symbols") or [])
+    default_index = int(snapshot.get("default_index") or 0)
 
-    # Selector de activo con default inteligente
-    symbol = st.selectbox(_('SELECT_ASSET'), current_symbols, index=default_index)
-    
+    if "terminal_chart_symbol" not in st.session_state:
+        st.session_state.terminal_chart_symbol = snapshot.get("symbol") or (current_symbols[0] if current_symbols else "BTC/USDT")
+
+    symbol = st.selectbox(
+        _("SELECT_ASSET"),
+        current_symbols,
+        index=default_index if default_index < len(current_symbols) else 0,
+        key="terminal_chart_symbol",
+    )
+
     col_chart, col_ai = st.columns([3, 1])
-    
+
     with col_chart:
         st.subheader(f"{ _('TECH_ANALYSIS') }: {symbol}")
-        with st.spinner(_('LOADING_DATA')):
+        ohlcv = snapshot.get("ohlcv")
+        if symbol != snapshot.get("symbol"):
             ohlcv = st.session_state.exchange.get_historical_data(symbol, limit=300)
-            if not ohlcv:
-                st.error(_('DATA_ERROR'))
-                return
-                
-            df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
-            df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
-            df.set_index('timestamp', inplace=True)
-            df['close'] = pd.to_numeric(df['close'])
-            df['high'] = pd.to_numeric(df['high'])
-            df['low'] = pd.to_numeric(df['low'])
-            
-            # Calcular indicadores para el gráfico
-            df['EMA_50'] = ta.ema(df['close'], length=50)
-            df['EMA_200'] = ta.ema(df['close'], length=200)
-            df['RSI_14'] = ta.rsi(df['close'], length=14)
-            df['ATR_14'] = ta.atr(df['high'], df['low'], df['close'], length=14)
-            
-            # Filtrar para no mostrar las 300 velas, solo las últimas 100 para mejor visibilidad
-            df = df.tail(100)
-            theme_values = plotly_theme_values()
-            
-            # Crear Subplots
-            fig = make_subplots(rows=3, cols=1, shared_xaxes=True, 
-                                vertical_spacing=0.03,
-                                row_heights=[0.6, 0.2, 0.2])
-                                
-            # Velas
-            fig.add_trace(go.Candlestick(x=df.index,
-                                        open=df['open'], high=df['high'],
-                                        low=df['low'], close=df['close'],
-                                        name=_('PRICE')), row=1, col=1)
-                                        
-            # EMAs
-            fig.add_trace(go.Scatter(x=df.index, y=df['EMA_50'], line=dict(color='orange', width=1.5), name='EMA 50'), row=1, col=1)
-            fig.add_trace(go.Scatter(x=df.index, y=df['EMA_200'], line=dict(color=theme_values["ema_slow"], width=2), name='EMA 200'), row=1, col=1)
-            
-            # RSI
-            fig.add_trace(go.Scatter(x=df.index, y=df['RSI_14'], line=dict(color='purple', width=1.5), name='RSI 14'), row=2, col=1)
-            fig.add_hline(y=70, line_dash="dash", line_color="red", row=2, col=1)
-            fig.add_hline(y=30, line_dash="dash", line_color="green", row=2, col=1)
-            
-            # ATR
-            fig.add_trace(go.Scatter(x=df.index, y=df['ATR_14'], line=dict(color='cyan', width=1.5), name='ATR 14'), row=3, col=1)
-            
-            apply_plotly_theme(
-                fig,
-                height=700,
-                margin=dict(l=0, r=0, t=30, b=0),
-                xaxis_rangeslider_visible=False,
-            )
-                              
-            fig.update_yaxes(title_text=_('PRICE'), row=1, col=1)
-            fig.update_yaxes(title_text="RSI", row=2, col=1)
-            fig.update_yaxes(title_text="ATR", row=3, col=1)
-            
-            st.plotly_chart(fig, width="stretch")
-            
+        if not ohlcv:
+            st.error(_("DATA_ERROR"))
+            return
+        fig = build_technical_chart(ohlcv, height=700, rows="full")
+        if fig is None:
+            st.error(_("DATA_ERROR"))
+            return
+        fig.update_yaxes(title_text=_("PRICE"), row=1, col=1)
+        fig.update_yaxes(title_text="RSI", row=2, col=1)
+        fig.update_yaxes(title_text="ATR", row=3, col=1)
+        st.plotly_chart(fig, width="stretch")
+
     with col_ai:
         st.subheader(f"🤖 { _('AI_CONSOLE') }")
         st.markdown("---")
-        
-        # Cargar decisión específica para el símbolo seleccionado (Sincronización v2.3)
-        last_decision_raw = st.session_state.db.get_system_status(f'decision_{symbol}', '{}')
-        try:
-            decision = json.loads(last_decision_raw)
-        except:
-            decision = {}
 
-        last_reason = decision.get('reasoning', _('NO_ANALYSIS'))
-        
+        decision = snapshot.get("decision") or {}
+        if symbol != snapshot.get("symbol"):
+            try:
+                raw = st.session_state.db.get_system_status(f"decision_{symbol}", "{}")
+                decision = json.loads(raw or "{}")
+            except Exception:
+                decision = {}
+
+        last_reason = decision.get("reasoning", _("NO_ANALYSIS"))
+
         if decision:
             with st.container(border=True):
                 st.markdown(f"**🎯 { _('REGIME') }:** `{decision.get('regime', 'N/A')}`")
                 st.markdown(f"**🧠 { _('STRATEGY') }:** `{decision.get('best_strategy', 'N/A')}`")
-                conf = decision.get('confidence', 0)
+                conf = decision.get("confidence", 0)
                 st.progress(conf, text=f"{ _('CONFIDENCE') }: {conf*100:.0f}%")
-        
+
         with st.container(border=True):
             st.caption(f"{ _('LAST_INTERPRETATION') } ({symbol}):")
             st.write(last_reason)
-            
+
         st.markdown("---")
         st.markdown(f"**{ _('LIVE_LOGS') }:**")
-        
+
         log_html = "<div class='log-container iv-log-box'>"
-        raw_logs = st.session_state.db.get_logs()
-        logs_to_show = [l for l in raw_logs if "Escaneo" not in l and "Ciclo" not in l][-20:]
-        for log in logs_to_show:
+        logs = snapshot.get("important_logs") or []
+        if symbol != snapshot.get("symbol"):
+            raw_logs = st.session_state.db.get_logs()
+            logs = [line for line in raw_logs if "Escaneo" not in line and "Ciclo" not in line][-20:]
+        for log in logs:
             log_html += f"<span class='iv-positive'>>></span> <span>{log}</span><br/>"
         log_html += "</div>"
-        
+
         st.markdown(log_html, unsafe_allow_html=True)

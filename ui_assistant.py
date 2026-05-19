@@ -3,6 +3,7 @@ import time
 import json
 import sqlite3
 import config
+from assistant_runtime import RuntimeContext, build_assistant_context as build_runtime_assistant_context
 from config_importer import (
     CONFIG_SCHEMA,
     apply_config_changes,
@@ -12,6 +13,7 @@ from config_importer import (
 )
 from diagnostic_utils import read_recent_log_summary
 from i18n import _
+from ui_services.manual_trading import execute_manual_buy, execute_manual_sell
 
 
 def _pending_orders():
@@ -83,38 +85,6 @@ def _position_extra(pos: dict) -> dict:
         return json.loads(raw)
     except Exception:
         return {}
-
-
-def _add_or_update_buy_position(db, symbol: str, price: float, amount: float, reason: str, decision_id=None):
-    positions = db.get_open_positions()
-    existing = positions.get(symbol)
-    existing_extra = _position_extra(existing) if existing else {}
-    if existing:
-        old_amount = float(existing.get("amount") or 0)
-        old_entry = float(existing.get("entry_price") or price)
-        total_amount = old_amount + amount
-        entry = ((old_entry * old_amount) + (price * amount)) / total_amount if total_amount > 0 else price
-        highest = max(float(existing.get("highest_price") or price), price)
-        entry_time = existing.get("entry_time")
-        amount_to_store = total_amount
-    else:
-        entry = price
-        highest = price
-        entry_time = None
-        amount_to_store = amount
-
-    extra_payload = {
-        **existing_extra,
-        "provider": "Asistente IA",
-        "reason": reason,
-    }
-    if decision_id:
-        extra_payload["entry_decision_id"] = decision_id
-    extra = json.dumps(extra_payload, ensure_ascii=False)
-    db.add_open_position(symbol, entry, highest, amount_to_store, entry_time=entry_time, extra_data=extra)
-    trade_id = db.save_trade(symbol, "buy", price, amount, reason, 0.0)
-    db.add_log(f"{reason}: {symbol} qty={amount} @ {price}")
-    return trade_id
 
 
 def _parse_optional_float(value):
@@ -210,23 +180,25 @@ def _execute_pending_order(order: dict, db, exchange):
                     block_reason=f"sell_amount={sell_amount}",
                 )
             return
-        res = exchange.execute_order(symbol, "sell", sell_amount, current_price, force_market=True)
-        if res.get("status") in ["closed", "open", "simulated"]:
-            try:
-                sold = float(res.get("filled") or 0)
-            except (TypeError, ValueError):
-                sold = 0.0
-            if sold <= 0:
-                sold = float(res.get("amount") or sell_amount)
-            sold = min(sold, float(pos["amount"]))
-            exit_price = float(res.get("average") or res.get("price") or current_price)
+        outcome = execute_manual_sell(
+            db,
+            exchange,
+            symbol,
+            sell_amount,
+            current_price,
+            _("ASSIST_ORDER_SELL_REASON"),
+            in_bot=True,
+            max_qty=float(pos["amount"]),
+        )
+        if outcome.get("ok"):
+            exit_price = float(outcome.get("exit_price") or current_price)
+            sold = float(outcome.get("sold") or sell_amount)
             entry = float(pos.get("entry_price") or exit_price)
             realized_pnl = ((exit_price - entry) / entry) * 100 if entry else 0.0
-            db.close_position(symbol, exit_price, _("ASSIST_ORDER_SELL_REASON"), sold_amount=sold)
             if decision_id:
                 db.update_decision_journal(
                     decision_id,
-                    execution_status=res.get("status", "executed"),
+                    execution_status=outcome.get("status", "executed"),
                     execution_side="sell",
                     executed_price=exit_price,
                     executed_amount=sold,
@@ -245,13 +217,13 @@ def _execute_pending_order(order: dict, db, exchange):
             time.sleep(0.5)
             st.rerun()
         else:
-            st.error(f"{_('ASSIST_ORDER_FAIL')}: {res.get('reason', res)}")
+            st.error(f"{_('ASSIST_ORDER_FAIL')}: {outcome.get('reason', outcome)}")
             if decision_id:
                 db.update_decision_journal(
                     decision_id,
                     execution_status="failed",
                     execution_side="sell",
-                    block_reason=str(res.get('reason', res)),
+                    block_reason=str(outcome.get("reason", outcome)),
                 )
         return
 
@@ -269,27 +241,25 @@ def _execute_pending_order(order: dict, db, exchange):
                     block_reason=f"amount_usdt={amount_usdt:.4f} <= min_position={min_position:.4f}",
                 )
             return
-        amount_coin = amount_usdt / float(current_price)
-        res = exchange.execute_order(symbol, "buy", amount_coin, current_price)
-        if res.get("status") in ["closed", "open", "simulated"]:
-            try:
-                filled = float(res.get("filled") or res.get("amount") or amount_coin)
-            except (TypeError, ValueError):
-                filled = amount_coin
-            trade_id = _add_or_update_buy_position(
-                db,
-                symbol,
-                float(current_price),
-                filled,
-                _("ASSIST_ORDER_BUY_REASON"),
-                decision_id=decision_id,
-            )
+        outcome = execute_manual_buy(
+            db,
+            exchange,
+            symbol,
+            amount_usdt,
+            _("ASSIST_ORDER_BUY_REASON"),
+            price=float(current_price),
+            provider="Asistente IA",
+            decision_id=decision_id,
+        )
+        if outcome.get("ok"):
+            filled = float(outcome.get("filled") or 0)
+            trade_id = outcome.get("trade_id")
             if decision_id:
                 db.update_decision_journal(
                     decision_id,
-                    execution_status=res.get("status", "executed"),
+                    execution_status=outcome.get("order", {}).get("status", "executed"),
                     execution_side="buy",
-                    executed_price=float(current_price),
+                    executed_price=float(outcome.get("price") or current_price),
                     executed_amount=filled,
                     sizing={
                         "amount_usdt": amount_usdt,
@@ -298,18 +268,18 @@ def _execute_pending_order(order: dict, db, exchange):
                     },
                     block_reason=f"trade_id={trade_id}",
                 )
-            st.success(_("ASSIST_ORDER_BUY_OK").format(symbol, f"{current_price:.6g}"))
+            st.success(_("ASSIST_ORDER_BUY_OK").format(symbol, f"{outcome.get('price', current_price):.6g}"))
             _remove_pending_order(order["id"])
             time.sleep(0.5)
             st.rerun()
         else:
-            st.error(f"{_('ASSIST_ORDER_FAIL')}: {res.get('reason', res)}")
+            st.error(f"{_('ASSIST_ORDER_FAIL')}: {outcome.get('reason', outcome)}")
             if decision_id:
                 db.update_decision_journal(
                     decision_id,
                     execution_status="failed",
                     execution_side="buy",
-                    block_reason=str(res.get('reason', res)),
+                    block_reason=str(outcome.get("reason", outcome)),
                 )
 
 
@@ -655,81 +625,20 @@ def _assistant_priority_context(db, exchange, positions, diag, risk_guards):
 
 
 def _build_assistant_context(db, exchange):
-    balance = _safe_float(exchange.get_balance())
-    usdt = _safe_float(exchange.get_usdt_balance())
-    positions = db.get_open_positions()
     saved_watchlist = db.get_system_status('dynamic_watchlist', '')
     watchlist = [s.strip() for s in saved_watchlist.split(',') if s.strip()] or list(config.SYMBOLS)
-    focus_symbols = list(dict.fromkeys(list(positions.keys()) + watchlist[:12]))
-    blocked_radar = "USD, EUR, GBP, AUD, CAD, CHF, JPY, USDT, USDC, DAI, TUSD, FDUSD, PYUSD, BUSD, USDP, EURC"
-
-    try:
-        macro = json.loads(db.get_system_status('macro_context', '{}') or '{}')
-    except Exception:
-        macro = {}
-    try:
-        diag = json.loads(db.get_system_status("daemon_diagnostics", "{}") or "{}")
-    except Exception:
-        diag = {}
-    macro_db = db.get_all_macro_data()
-    macro_lines = []
-    if macro:
-        macro_lines.append(
-            f"Régimen={macro.get('macro_regime')}; BTC dominance={macro.get('btc_dominance')}%; "
-            f"sector líder={macro.get('leading_sector')}; cap24h={macro.get('market_cap_change_24h')}"
-        )
-    if macro_db:
-        macro_lines.append("Global: " + " | ".join(
-            f"{k} {v['price']} ({v['change_24h']:+.2f}%)" for k, v in macro_db.items()
-        ))
-
-    logs = read_recent_log_summary(db=db, tail_lines=60, focus_lines=40)
-    return f"""
-=== CONTEXTO OPERATIVO COMPACTO INVERSORIA ===
-
-PRIORIDAD / ESTADO CRÍTICO:
-{_assistant_priority_context(db, exchange, positions, diag, diag.get('risk_guards', {}))}
-
-MEMORIA RECIENTE DE LA CONVERSACIÓN:
-{_compact_chat_context(db)}
-
-MODO / CONFIG:
-{_compact_settings_context(exchange)}
-
-CARTERA:
-- Equity estimado: {balance:.2f} USDT
-- USDT libre: {usdt:.2f}
-- Posiciones bot: {len(positions)}
-{_compact_positions_context(db, exchange)}
-
-CARTERA EXCHANGE / RETALES:
-{_compact_wallet_context(db, exchange)}
-
-MACRO:
-{chr(10).join(macro_lines) if macro_lines else 'Sin macro_context disponible.'}
-
-BACKTEST:
-{_compact_backtest_context(db)}
-
-DAEMON:
-{_compact_daemon_context(db)}
-
-RADAR / WATCHLIST:
-- Watchlist activa: {', '.join(watchlist[:20]) if watchlist else 'sin radar activo'}
-- El daemon filtra pares no /USDT y bases fiat/stable antes de guardar o cargar radar.
-- Bases bloqueadas del radar: {blocked_radar}
-
-DECISIONES RECIENTES:
-{_compact_decisions_context(db, focus_symbols)}
-
-DECISION JOURNAL / MÉTRICAS:
-{_compact_decision_journal_context(db)}
-
-NOTICIAS RELEVANTES:
-{_compact_news_context(focus_symbols)}
-
-ÚLTIMOS LOGS:
-{logs}
+    focus_symbols = list(dict.fromkeys(list(db.get_open_positions().keys()) + watchlist[:12]))
+    runtime_ctx = RuntimeContext(
+        db=db,
+        exchange=exchange,
+        config=config,
+        language=st.session_state.get("language", "es"),
+        user_name=st.session_state.get("user_name", "User"),
+        focus_symbols=focus_symbols,
+        max_chars=16000,
+    )
+    context = build_runtime_assistant_context(runtime_ctx)
+    return f"""{context}
 
 REGLAS DE SEGURIDAD:
 - No ejecutes órdenes directamente: si el usuario confirma una operación, emite el bloque [EXECUTE_ORDER]; la app creará una orden pendiente con botón de confirmación.
