@@ -507,12 +507,22 @@ class BotDaemon:
             except Exception as exc:
                 mismatches.append({"symbol": symbol, "reason": f"BALANCE_ERROR:{exc}"})
                 continue
-            tolerance = max(1e-8, expected * 0.001)
-            if actual + tolerance < expected:
+            diff = max(0.0, expected - actual)
+            tolerance_pct = max(0.0, self._safe_float(getattr(config, "DB_EXCHANGE_MISMATCH_TOLERANCE_PCT", 1.0), 1.0)) / 100.0
+            tolerance = max(1e-8, expected * tolerance_pct)
+            min_usdt = max(0.0, self._safe_float(getattr(config, "DB_EXCHANGE_MISMATCH_MIN_USDT", 0.25), 0.25))
+            if min_usdt > 0:
+                price = self._safe_float(self.exchange.get_ticker(symbol), 0.0)
+                if price > 0:
+                    tolerance = max(tolerance, min_usdt / price)
+            if diff > tolerance:
                 mismatches.append({
                     "symbol": symbol,
                     "db_amount": round(expected, 10),
                     "exchange_amount": round(actual, 10),
+                    "diff_amount": round(diff, 10),
+                    "tolerance_amount": round(tolerance, 10),
+                    "diff_pct": round((diff / expected) * 100, 4) if expected > 0 else 0.0,
                 })
         return mismatches
 

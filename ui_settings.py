@@ -303,6 +303,8 @@ def render_settings():
             with col_k1:
                 kill_switch_enabled = st.checkbox("Activar kill-switches", value=get_setting('KILL_SWITCH_ENABLED', True, bool))
                 auto_pause_mismatch = st.checkbox("Pausar por discrepancia DB/exchange", value=get_setting('AUTO_PAUSE_ON_DB_EXCHANGE_MISMATCH', True, bool))
+                mismatch_tolerance_pct = st.number_input("Tolerancia mismatch DB/exchange (%)", min_value=0.0, max_value=25.0, value=get_setting('DB_EXCHANGE_MISMATCH_TOLERANCE_PCT', 1.0, float), step=0.1)
+                mismatch_min_usdt = st.number_input("Tolerancia mínima mismatch (USDT)", min_value=0.0, max_value=100.0, value=get_setting('DB_EXCHANGE_MISMATCH_MIN_USDT', 0.25, float), step=0.05)
                 auto_pause_heartbeat = st.checkbox("Pausar por heartbeat vencido", value=get_setting('AUTO_PAUSE_ON_STALE_HEARTBEAT', True, bool))
                 max_portfolio_drawdown_pct = st.number_input("Drawdown máximo portfolio (%)", min_value=1.0, max_value=95.0, value=get_setting('MAX_PORTFOLIO_DRAWDOWN_PCT', 15.0, float), step=1.0)
             with col_k2:
@@ -441,6 +443,8 @@ def render_settings():
                 "MAX_EXCHANGE_ERRORS_PER_CYCLE": int(max_exchange_errors),
                 "MAX_UNRECONCILED_ORDERS": int(max_unreconciled_orders),
                 "AUTO_PAUSE_ON_DB_EXCHANGE_MISMATCH": bool(auto_pause_mismatch),
+                "DB_EXCHANGE_MISMATCH_TOLERANCE_PCT": float(mismatch_tolerance_pct),
+                "DB_EXCHANGE_MISMATCH_MIN_USDT": float(mismatch_min_usdt),
                 "AUTO_PAUSE_ON_STALE_HEARTBEAT": bool(auto_pause_heartbeat),
                 "MACRO_ALTSEASON_BTC_DOM": float(macro_altseason_btc_dom),
                 "MACRO_RISK_ON_MAX_BTC_DOM": float(macro_risk_on_max_btc_dom),

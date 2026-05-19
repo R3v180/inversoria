@@ -4,6 +4,7 @@ import datetime
 import json
 import os
 import threading
+import config
 from config import (
     MODO_SIMULACION,
     PRESUPUESTO_INICIAL,
