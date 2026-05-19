@@ -427,7 +427,7 @@ Shows:
 - Total equity.
 - Available USDT.
 - Open positions vs effective maximum.
-- PnL vs baseline.
+- PnL vs baseline (global) and optional **strategy PnL** since the active evaluation checkpoint, when one is set in History.
 - Mode and daemon state summary.
 - Active positions with invested cost, current market value, quantity (DB vs exchange hint), quick manual sell and partial/max sell options.
 - Recent bot events.
@@ -507,6 +507,7 @@ The assistant has context about:
 - recent backtests,
 - daemon diagnostics, execution mode, decision mode, risk guards and deterministic decision scores,
 - decision journal metrics by provider/regime,
+- active evaluation checkpoints and recent checkpoint history,
 - wallet snapshot when generated.
 
 The assistant **does not execute orders automatically**.
@@ -571,7 +572,7 @@ The settings screen (**Centro de Mandos**) is organized in four tabs:
 
 **Configuration presets** (top of the page, outside the save form so preview/apply buttons work):
 
-- Built-in cards: Recommended, Conservative, Aggressive.
+- Built-in cards: Recommended, Conservative, Aggressive, Signals only (consultive / no auto-execution).
 - Assistant **“What profile fits me?”** suggests a preset from account size, risk and activity.
 - Expandable **Manage presets** for save, duplicate, export, import and delete.
 
@@ -939,7 +940,7 @@ InversorIA.exe
 
 Open `InversorIA.exe` from the project root. It is the main entry point for normal use.
 
-The launcher provides a bilingual Windows control panel. It starts the web app, controls the daemon, opens the dashboard, switches between simulation and real mode, configures local API keys, prevents system sleep while running, shows live daemon logs and can copy the visible logs to the clipboard. **Launcher v2** adds strategy preset selection (apply before start), startup modes (web only / web + paused daemon / web + active bot), a pre-start summary of effective config, operational vs technical log tabs, and a scrollable layout so logs stay readable when maximized. The bot control button toggles between starting and stopping trading depending on the current paused/active state. Real mode requires explicit confirmation and exchange keys in `.env`.
+The launcher provides a bilingual Windows control panel. It starts the web app, controls the daemon, opens the dashboard, switches between simulation and real mode, configures local API keys, prevents system sleep while running, shows live daemon logs and can copy the visible logs to the clipboard. **Launcher v2** adds strategy preset selection (apply before start), startup modes (web only / web + paused daemon / web + active bot), a pre-start summary of effective config, operational vs technical log tabs, a scrollable layout so logs stay readable when maximized, and **session-scoped logs** after **Start system** (markers in `launcher_logs/`, rotation when a new process starts). **Copy logs** copies whichever tab is active (operational or technical). The bot control button toggles between starting and stopping trading depending on the current paused/active state. Real mode requires explicit confirmation and exchange keys in `.env`.
 
 In simulation mode, the launcher and the app can create and switch complete simulation profiles. Each profile has its own initial capital, virtual account, SQLite DB, trades, equity history and `decision_journal`, so experiments with different risk settings do not contaminate each other.
 
@@ -989,6 +990,7 @@ Recommended workflow:
 | `iversoria.db`                   | Local SQLite DB                       | Ignored |
 | `simulated_account.json`         | Paper account state                   | Ignored |
 | `iversoria_bot.log`              | Local log                             | Ignored |
+| `launcher_logs/`                 | Launcher/daemon/streamlit session logs (`daemon.log`, `streamlit.log`, `health.json`) | Ignored |
 | `launcher.py`                    | Windows desktop launcher source       | Tracked |
 | `launcher_startup.py`            | Preset apply, startup modes, log helpers | Tracked |
 | `launcher.spec`                  | PyInstaller build config              | Tracked |
@@ -1055,7 +1057,7 @@ Assistant safety:
 
 InversorIA is licensed under the Apache License 2.0.
 
-Contributions are welcome, but changes to the official repository require maintainer review and explicit approval before merge. Please read [CONTRIBUTING.md](CONTRIBUTING.md) before opening large issues or pull requests.
+Contributions are welcome, but changes to the official repository require maintainer review and explicit approval before merge. Please read [CONTRIBUTING.md](CONTRIBUTING.md) before opening large issues or pull requests. After larger UI or trading changes, use [docs/SMOKE_CHECKLIST.md](docs/SMOKE_CHECKLIST.md) as a manual smoke guide.
 
 The `main` branch is protected. Maintainers and AI agents should work from feature branches and update the official repository through pull requests.
 
@@ -1384,7 +1386,7 @@ python -m streamlit run app.py
 
 ### Dashboard
 
-Funciona como cockpit operativo: equity actual, disponible, posiciones, modo, estado del daemon, posiciones activas, eventos recientes, salud resumida, macro/radar compacto y acciones de emergencia. El PnL del cockpit se calcula contra el baseline operativo y el análisis por fecha/hora vive en Historial para no mezclar evaluación temporal con estado en vivo.
+Funciona como cockpit operativo: equity actual, disponible, posiciones, modo, estado del daemon, posiciones activas, eventos recientes, salud resumida, macro/radar compacto y acciones de emergencia. El PnL del cockpit se calcula contra el baseline operativo; si hay un **checkpoint de evaluación activo** (Historial), también muestra PnL de estrategia desde ese punto. El análisis por fecha/hora vive en Historial para no mezclar evaluación temporal con estado en vivo.
 
 ### Cartera Exchange
 
@@ -1408,7 +1410,7 @@ Gráfico técnico por activo, indicadores, decisión reciente y logs.
 
 ### Asistente IA
 
-Chat contextual con cartera, posiciones, wallet/dust, rendimiento por periodo, macro, backtests, diagnóstico del daemon, audit/replay, modos de ejecución/decisión, guardrails, `decision_score`, métricas del `decision_journal` y logs recientes saneados. El contexto se construye mediante `assistant_runtime` y providers independientes de Streamlit, así reorganizar pantallas no rompe lo que ve el asistente. Las órdenes y cambios de configuración propuestos pasan a tarjetas pendientes y requieren botón de confirmación.
+Chat contextual con cartera, posiciones, wallet/dust, rendimiento por periodo, macro, backtests, diagnóstico del daemon, audit/replay, modos de ejecución/decisión, guardrails, `decision_score`, métricas del `decision_journal`, checkpoints de evaluación activos/recientes y logs recientes saneados. El contexto se construye mediante `assistant_runtime` y providers independientes de Streamlit, así reorganizar pantallas no rompe lo que ve el asistente. Las órdenes y cambios de configuración propuestos pasan a tarjetas pendientes y requieren botón de confirmación.
 
 ### Historial
 
@@ -1427,7 +1429,7 @@ Pantalla **Centro de Mandos** con cuatro pestañas:
 
 **Plantillas** (arriba, fuera del formulario de guardado):
 
-- Tarjetas integradas: Recomendado, Conservador, Agresivo.
+- Tarjetas integradas: Recomendado, Conservador, Agresivo, Solo señales (consultivo / sin ejecución automática).
 - Asistente **«¿Qué perfil soy?»** según tamaño de cuenta, riesgo y actividad.
 - Expander **Gestionar plantillas** para guardar, duplicar, exportar, importar y borrar.
 
@@ -1707,7 +1709,7 @@ InversorIA.exe
 
 Abre `InversorIA.exe` desde la raíz del proyecto. Es el punto de entrada principal para usar la aplicación.
 
-El launcher ofrece un panel bilingüe para Windows. Inicia la web, controla el daemon, abre el dashboard, cambia entre simulación y real, configura las APIs locales, evita la suspensión del sistema mientras está activo, muestra logs vivos del daemon y permite copiar los logs visibles al portapapeles. **Launcher v2** añade selección de plantilla de estrategia, modos de arranque (solo web / web + daemon pausado / web + bot activo), resumen de config efectiva antes de arrancar, pestañas de log operativo vs técnico y layout con scroll para que el log se lea bien maximizado. El botón del bot alterna entre arrancar y detener el trading según esté pausado o activo. El modo real pide confirmación explícita y exige claves de exchange en `.env`.
+El launcher ofrece un panel bilingüe para Windows. Inicia la web, controla el daemon, abre el dashboard, cambia entre simulación y real, configura las APIs locales, evita la suspensión del sistema mientras está activo, muestra logs vivos del daemon y permite copiar los logs visibles al portapapeles. **Launcher v2** añade selección de plantilla de estrategia, modos de arranque (solo web / web + daemon pausado / web + bot activo), resumen de config efectiva antes de arrancar, pestañas de log operativo vs técnico, layout con scroll para que el log se lea bien maximizado, y **logs acotados a la sesión** tras **Iniciar sistema** (marcadores en `launcher_logs/`, rotación al arrancar procesos nuevos). **Copiar logs** copia la pestaña activa (operativo o técnico). El botón del bot alterna entre arrancar y detener el trading según esté pausado o activo. El modo real pide confirmación explícita y exige claves de exchange en `.env`.
 
 En modo simulación, el launcher y la app pueden crear y cambiar perfiles completos de simulación. Cada perfil tiene su propio capital inicial, cuenta virtual, SQLite, trades, equity y `decision_journal`, así que los experimentos con configuraciones distintas no se contaminan entre sí.
 
@@ -1749,6 +1751,7 @@ python bot_daemon.py
 | `iversoria.db`                   | SQLite                                       | Ignorado   |
 | `simulated_account.json`         | Cuenta sim                                   | Ignorado   |
 | `iversoria_bot.log`              | Log local                                    | Ignorado   |
+| `launcher_logs/`                 | Logs de sesión del launcher/daemon/streamlit | Ignorado   |
 | `launcher.py`                    | Código del launcher de escritorio Windows    | Versionado |
 | `launcher_startup.py`            | Plantillas, modos de arranque y logs del launcher | Versionado |
 | `launcher.spec`                  | Configuración PyInstaller                    | Versionado |
@@ -1813,7 +1816,7 @@ InversorIA usa la licencia Apache 2.0.
 
 Mantenido por Olivier Hottelet, bajo el nombre comercial OHCodex: https://ohcodex.com
 
-Las contribuciones son bienvenidas, pero los cambios al repositorio oficial requieren revisión y aprobación explícita del mantenedor antes de hacer merge. Lee [CONTRIBUTING.md](CONTRIBUTING.md) antes de abrir issues grandes o pull requests.
+Las contribuciones son bienvenidas, pero los cambios al repositorio oficial requieren revisión y aprobación explícita del mantenedor antes de hacer merge. Lee [CONTRIBUTING.md](CONTRIBUTING.md) antes de abrir issues grandes o pull requests. Tras cambios grandes de UI o trading, usa [docs/SMOKE_CHECKLIST.md](docs/SMOKE_CHECKLIST.md) como guía de pruebas manuales.
 
 La rama `main` está protegida. Mantenedores y agentes IA deben trabajar desde ramas de feature y actualizar el repositorio oficial mediante pull requests.
 
