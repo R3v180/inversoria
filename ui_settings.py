@@ -243,6 +243,8 @@ def render_settings():
                 trailing_activation_pct = st.number_input("Activación trailing (%)", min_value=0.1, max_value=50.0, value=get_setting('TRAILING_ACTIVATION_PCT', 2.0, float), step=0.1)
                 break_even_activation_pct = st.number_input("Activación break-even (%)", min_value=0.1, max_value=50.0, value=get_setting('BREAK_EVEN_ACTIVATION_PCT', 1.5, float), step=0.1)
                 max_position_age_hours = st.number_input("Edad máxima posición (h)", min_value=1, max_value=8760, value=get_setting('MAX_POSITION_AGE_HOURS', 168, int), step=1)
+                stop_loss_cooldown_minutes = st.number_input("Cooldown tras stop-loss (min)", min_value=0, max_value=10080, value=get_setting('STOP_LOSS_COOLDOWN_MINUTES', 180, int), step=15)
+                take_profit_cooldown_minutes = st.number_input("Cooldown tras take-profit/trailing (min)", min_value=0, max_value=10080, value=get_setting('TAKE_PROFIT_COOLDOWN_MINUTES', 45, int), step=15)
             
             st.markdown("---")
             st.subheader(_('ROTATION_MODULE'))
@@ -388,6 +390,8 @@ def render_settings():
                 "TRAILING_ACTIVATION_PCT": float(trailing_activation_pct),
                 "BREAK_EVEN_ACTIVATION_PCT": float(break_even_activation_pct),
                 "MAX_POSITION_AGE_HOURS": int(max_position_age_hours),
+                "STOP_LOSS_COOLDOWN_MINUTES": int(stop_loss_cooldown_minutes),
+                "TAKE_PROFIT_COOLDOWN_MINUTES": int(take_profit_cooldown_minutes),
                 "RISK_PER_TRADE": riesgo / 100.0,
                 "MAX_DAILY_LOSS_PCT": float(max_daily_loss),
                 "MAX_PORTFOLIO_DRAWDOWN_PCT": float(max_portfolio_drawdown_pct),

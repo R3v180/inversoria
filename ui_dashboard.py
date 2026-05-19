@@ -440,6 +440,11 @@ def render_dashboard():
                         f"updated={rec.get('updated', 0)} · "
                         f"applied={rec.get('applied', 0)}"
                     )
+                if diag.get("symbol_cooldowns"):
+                    st.markdown("**Cooldowns por símbolo**")
+                    for row in diag.get("symbol_cooldowns") or []:
+                        minutes = max(1, int(float(row.get("remaining_seconds") or 0) / 60))
+                        st.caption(f"{row.get('symbol')} · {minutes}m restantes")
                 if diag.get("risk_guards"):
                     rg = diag.get("risk_guards") or {}
                     status = "OK" if rg.get("ok", True) else _('DASH_RISK_BLOCKING')

@@ -146,6 +146,16 @@ class BotDaemon:
         except Exception:
             payload["ai_usage_24h"] = {}
         try:
+            cooldown_rows = self.db.get_cooldowns() or {}
+            active_cooldowns = []
+            for symbol, until in cooldown_rows.items():
+                remaining = int(self._safe_float(until, 0.0) - now)
+                if remaining > 0:
+                    active_cooldowns.append({"symbol": symbol, "remaining_seconds": remaining})
+            payload["symbol_cooldowns"] = active_cooldowns[:25]
+        except Exception:
+            payload["symbol_cooldowns"] = []
+        try:
             stale_seconds = int(getattr(config, "ORDER_MAX_PENDING_SECONDS", 120) or 120)
             pending_orders = self.db.get_unreconciled_order_events(max_age_seconds=stale_seconds, limit=10)
             payload["unreconciled_orders_count"] = len(pending_orders)
@@ -187,6 +197,36 @@ class BotDaemon:
 
     def _status_float(self, key, default=0.0):
         return self._safe_float(self.db.get_system_status(key, default), default)
+
+    def _symbol_cooldown_until(self, symbol):
+        try:
+            return self._safe_float((self.db.get_cooldowns() or {}).get(symbol), 0.0)
+        except Exception:
+            return 0.0
+
+    def _exit_cooldown_minutes(self, reason):
+        text = str(reason or "").upper()
+        if "STOP LOSS" in text:
+            return int(getattr(config, "STOP_LOSS_COOLDOWN_MINUTES", 180) or 0)
+        if "TAKE PROFIT" in text or "TRAILING STOP" in text:
+            return int(getattr(config, "TAKE_PROFIT_COOLDOWN_MINUTES", 45) or 0)
+        return 0
+
+    def _set_exit_cooldown(self, symbol, reason):
+        minutes = self._exit_cooldown_minutes(reason)
+        if minutes <= 0:
+            return 0.0
+        until = time.time() + (minutes * 60)
+        self.db.add_cooldown(symbol, timestamp=until)
+        self.log_message(f"[COOLDOWN] {symbol} bloqueado {minutes}m tras salida | reason={self._short_reason(reason, 80)}")
+        return until
+
+    def _buy_cooldown_status(self, symbol):
+        until = self._symbol_cooldown_until(symbol)
+        remaining = max(0, int(until - time.time()))
+        if remaining <= 0:
+            return {"active": False, "remaining": 0}
+        return {"active": True, "remaining": remaining, "until": until}
 
     def _trigger_kill_switch(self, reason, details=None):
         if not getattr(config, "KILL_SWITCH_ENABLED", True):
@@ -1907,6 +1947,7 @@ class BotDaemon:
                                 open_positions[symbol] = still
                             else:
                                 del open_positions[symbol]
+                                self._set_exit_cooldown(symbol, sell_res['reason'])
                             self.log_message(
                                 f"[SELL] {symbol} qty={sold:.8g} | px={executed_price:.6g} | "
                                 f"pnl={realized_pnl:+.2f}% | reason={self._short_reason(sell_res['reason'], 80)} | "
@@ -2028,6 +2069,20 @@ class BotDaemon:
                     continue
 
                 if action == 'BUY':
+                    cooldown = self._buy_cooldown_status(symbol)
+                    if cooldown.get("active"):
+                        skipped["SYMBOL_COOLDOWN"] = skipped.get("SYMBOL_COOLDOWN", 0) + 1
+                        remaining_min = max(1, int(cooldown.get("remaining", 0) / 60))
+                        self.log_message(
+                            f"[SKIP] {symbol} BUY skipped | reason=SYMBOL_COOLDOWN | "
+                            f"remaining={remaining_min}m"
+                        )
+                        self.db.update_decision_journal(
+                            decision_journal_id,
+                            execution_status="blocked_symbol_cooldown",
+                            block_reason=f"SYMBOL_COOLDOWN remaining_seconds={cooldown.get('remaining', 0)}",
+                        )
+                        continue
                     if executable_action != "BUY":
                         skipped["LOW_DECISION_SCORE"] = skipped.get("LOW_DECISION_SCORE", 0) + 1
                         self.log_message(
