@@ -104,6 +104,10 @@ class BacktestEngine:
                     run_timestamp REAL
                 )
             ''')
+            try:
+                conn.execute('ALTER TABLE backtest_runs ADD COLUMN advanced_metrics_json TEXT')
+            except sqlite3.OperationalError:
+                pass
             conn.commit()
 
     # ─────────────────────────────────────────────
@@ -382,6 +386,7 @@ class BacktestEngine:
         sample_factor = min(1.0, len(trades) / max(1, min_sample))
         drawdown_factor = max(0.0, 1.0 - (abs(max_drawdown) / 50.0))
         reliability_score = max(0.0, min(1.0, (sample_factor * 0.65) + (drawdown_factor * 0.35)))
+        advanced = self._advanced_trade_metrics(trades)
 
         return {
             'strategy': strategy_name,
@@ -394,9 +399,46 @@ class BacktestEngine:
             'total_return_pct': round(total_return, 2),
             'max_drawdown_pct': round(max_drawdown, 2),
             'reliability_score': round(reliability_score, 3),
+            'advanced_metrics': advanced,
             'sharpe_ratio': round(sharpe, 2),
             'avg_duration_hours': round(np.mean([t['duration_hours'] for t in trades]), 1),
             'trades_detail': trades  # Guardamos para la tabla de condiciones
+        }
+
+    def _advanced_trade_metrics(self, trades: list) -> dict:
+        if not trades:
+            return {}
+        returns = np.array([float(t.get('pnl_pct') or 0.0) for t in trades], dtype=float)
+        oos_fraction = max(0.05, min(float(getattr(config, "BACKTEST_OOS_FRACTION", 0.30) or 0.30), 0.80))
+        oos_n = max(1, int(len(returns) * oos_fraction))
+        oos = returns[-oos_n:]
+        oos_wins = oos[oos > 0]
+        samples = max(0, min(int(getattr(config, "BACKTEST_BOOTSTRAP_SAMPLES", 300) or 0), 10000))
+        rng = np.random.default_rng(42)
+
+        ci_low = ci_high = float(np.mean(returns)) if len(returns) else 0.0
+        mc_p95_dd = 0.0
+        if samples > 0 and len(returns) >= 2:
+            boot_means = []
+            drawdowns = []
+            for _ in range(samples):
+                sample = rng.choice(returns, size=len(returns), replace=True)
+                boot_means.append(float(np.mean(sample)))
+                equity = np.cumprod(1 + (sample / 100.0))
+                running_max = np.maximum.accumulate(equity)
+                dd = (equity - running_max) / running_max * 100.0
+                drawdowns.append(abs(float(np.min(dd))))
+            ci_low, ci_high = np.percentile(boot_means, [5, 95])
+            mc_p95_dd = float(np.percentile(drawdowns, 95))
+
+        return {
+            'oos_trades': int(len(oos)),
+            'oos_win_rate': round(float(len(oos_wins) / len(oos)) if len(oos) else 0.0, 4),
+            'oos_expectancy_pct': round(float(np.mean(oos)) if len(oos) else 0.0, 3),
+            'expectancy_ci90_low_pct': round(float(ci_low), 3),
+            'expectancy_ci90_high_pct': round(float(ci_high), 3),
+            'monte_carlo_p95_drawdown_pct': round(mc_p95_dd, 2),
+            'bootstrap_samples': samples,
         }
 
     def _candle_hours(self, df: pd.DataFrame) -> float:
@@ -667,8 +709,8 @@ class BacktestEngine:
             conn.execute('''
                 INSERT INTO backtest_runs
                 (symbol, timeframe, period_years, total_trades, win_rate,
-                 total_return_pct, max_drawdown_pct, sharpe_ratio, best_strategy, run_timestamp)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 total_return_pct, max_drawdown_pct, sharpe_ratio, best_strategy, run_timestamp, advanced_metrics_json)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ''', (
                 symbol, timeframe, years,
                 best.get('total_trades', 0),
@@ -677,7 +719,8 @@ class BacktestEngine:
                 best.get('max_drawdown_pct', 0),
                 best.get('sharpe_ratio', 0),
                 best_strategy,
-                time.time()
+                time.time(),
+                json.dumps(best.get('advanced_metrics', {}), ensure_ascii=False),
             ))
             conn.commit()
 

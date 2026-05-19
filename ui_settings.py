@@ -325,6 +325,8 @@ def render_settings():
                 backtest_hard_veto_min_trades = st.number_input("Trades mínimos veto backtest", min_value=5, max_value=200, value=get_setting('BACKTEST_HARD_VETO_MIN_TRADES', 20, int), step=1)
                 backtest_min_bucket_trades = st.number_input("Trades mínimos por bucket", min_value=3, max_value=200, value=get_setting('BACKTEST_MIN_TRADES_PER_BUCKET', 5, int), step=1)
                 backtest_min_sample_trades = st.number_input("Trades muestra completa fiable", min_value=5, max_value=1000, value=get_setting('BACKTEST_MIN_SAMPLE_TRADES', 30, int), step=1)
+                backtest_bootstrap_samples = st.number_input("Muestras bootstrap backtest", min_value=0, max_value=10000, value=get_setting('BACKTEST_BOOTSTRAP_SAMPLES', 300, int), step=50)
+                backtest_oos_fraction = st.slider("Fracción out-of-sample", 0.05, 0.80, get_setting('BACKTEST_OOS_FRACTION', 0.30, float), step=0.05)
 
             st.markdown("##### Presupuesto IA")
             col_i1, col_i2 = st.columns(2)
@@ -451,6 +453,8 @@ def render_settings():
                 "BACKTEST_HARD_VETO_MIN_TRADES": int(backtest_hard_veto_min_trades),
                 "BACKTEST_MIN_TRADES_PER_BUCKET": int(backtest_min_bucket_trades),
                 "BACKTEST_MIN_SAMPLE_TRADES": int(backtest_min_sample_trades),
+                "BACKTEST_BOOTSTRAP_SAMPLES": int(backtest_bootstrap_samples),
+                "BACKTEST_OOS_FRACTION": float(backtest_oos_fraction),
                 "AI_MAX_REQUESTS_PER_CYCLE": int(ai_max_requests_cycle),
                 "AI_MAX_REQUESTS_PER_DAY": int(ai_max_requests_day),
                 "AI_MAX_EST_TOKENS_PER_DAY": int(ai_max_tokens_day),
