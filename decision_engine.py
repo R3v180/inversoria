@@ -49,6 +49,26 @@ DECISION_JSON_KEYS = (
     "reasoning",
 )
 
+ALLOWED_AI_REGIMES = {
+    "TRENDING_UP",
+    "TRENDING_DOWN",
+    "RANGING",
+    "HIGH_VOLATILITY",
+    "STRONG_UPTREND",
+    "STRONG_DOWNTREND",
+    "MODERATE_UPTREND",
+    "MODERATE_DOWNTREND",
+    "CONSOLIDATION",
+}
+
+ALLOWED_AI_STRATEGIES = {
+    "TREND_FOLLOWING",
+    "BREAKOUT",
+    "MEAN_REVERSION",
+    "MOMENTUM",
+    "HOLD",
+}
+
 
 def _strip_markdown_fences(text):
     cleaned = str(text or "").strip().lstrip("\ufeff")
@@ -349,6 +369,29 @@ class DecisionEngine:
 
         raise ValueError(str(last_error or "Invalid JSON"))
 
+    def _parse_ai_batch_json(self, raw_content):
+        raw_object = _extract_first_json_object(raw_content)
+        if not raw_object:
+            raise ValueError("No JSON object found")
+        attempts = [
+            ("raw", raw_object),
+            ("repaired", _repair_common_json_issues(raw_object)),
+        ]
+        last_error = None
+        for mode, candidate in attempts:
+            try:
+                parsed = json.loads(candidate)
+                return parsed, mode
+            except json.JSONDecodeError as exc:
+                last_error = exc
+        try:
+            parsed = ast.literal_eval(_repair_common_json_issues(raw_object))
+            if isinstance(parsed, dict):
+                return parsed, "literal_eval"
+        except (SyntaxError, ValueError) as exc:
+            last_error = exc
+        raise ValueError(str(last_error or "Invalid batch JSON"))
+
     def _validate_ai_decision(self, result):
         if not isinstance(result, dict):
             raise ValueError("AI JSON is not an object")
@@ -361,11 +404,16 @@ class DecisionEngine:
         if result['action'] not in {"BUY", "SELL", "HOLD"}:
             raise ValueError(f"Invalid action: {result['action']}")
         result['regime'] = str(result.get('regime', 'RANGING')).upper()
+        if result['regime'] not in ALLOWED_AI_REGIMES:
+            result['regime'] = 'RANGING'
         result['confidence'] = round(_clamp(_safe_float(result.get('confidence'), 0.0)), 3)
-        result['position_size_multiplier'] = round(_clamp(_safe_float(result.get('position_size_multiplier'), 1.0), 0.0, 2.0), 3)
-        result['stop_loss_atr'] = round(max(0.1, _safe_float(result.get('stop_loss_atr'), 2.0)), 3)
-        result['take_profit_ratio'] = round(max(0.1, _safe_float(result.get('take_profit_ratio'), 2.0)), 3)
-        result['best_strategy'] = str(result.get('best_strategy') or 'HOLD')
+        max_size_mult = float(getattr(config, 'AI_MAX_POSITION_SIZE_MULTIPLIER', 1.5) or 1.5)
+        result['position_size_multiplier'] = round(_clamp(_safe_float(result.get('position_size_multiplier'), 1.0), 0.0, max_size_mult), 3)
+        result['stop_loss_atr'] = round(_clamp(_safe_float(result.get('stop_loss_atr'), 2.0), 0.5, 6.0), 3)
+        result['take_profit_ratio'] = round(_clamp(_safe_float(result.get('take_profit_ratio'), 2.0), 0.5, 8.0), 3)
+        result['best_strategy'] = str(result.get('best_strategy') or 'HOLD').upper()
+        if result['best_strategy'] not in ALLOWED_AI_STRATEGIES:
+            result['best_strategy'] = 'HOLD'
         result['reasoning'] = " ".join(str(result.get('reasoning') or '').split())[:500]
         return result
 
@@ -905,11 +953,12 @@ Si la confluencia MTF es fuerte ({confluence_score:.0%}), puedes aumentar positi
             return {}
 
         try:
-            raw_object = _extract_first_json_object(raw_content)
-            parsed = json.loads(_repair_common_json_issues(raw_object or raw_content))
+            parsed, parse_mode = self._parse_ai_batch_json(raw_content)
             decisions = parsed.get('decisions') if isinstance(parsed, dict) else None
             if not isinstance(decisions, list):
                 return {}
+            if parse_mode != "raw":
+                print(f"[DecisionEngine] JSON parse fallback OK para batch | provider={provider} | mode={parse_mode}")
         except Exception as exc:
             print(f"[DecisionEngine] Error parseando batch IA: {exc}")
             return {}

@@ -331,6 +331,7 @@ def render_settings():
                 ai_max_tokens_day = st.number_input("Máx. tokens estimados IA/día", min_value=0, max_value=10000000, value=get_setting('AI_MAX_EST_TOKENS_PER_DAY', 120000, int), step=5000)
                 ai_max_output_tokens = st.number_input("Máx. tokens salida IA", min_value=64, max_value=4096, value=get_setting('AI_MAX_OUTPUT_TOKENS', 700, int), step=64)
                 ai_provider_timeout_seconds = st.number_input("Timeout proveedor IA (s)", min_value=3, max_value=120, value=get_setting('AI_PROVIDER_TIMEOUT_SECONDS', 15, int), step=1)
+                ai_max_position_size_multiplier = st.slider("Máx. multiplicador tamaño IA", 0.1, 3.0, get_setting('AI_MAX_POSITION_SIZE_MULTIPLIER', 1.5, float), step=0.1)
 
             st.markdown("##### Gestión avanzada de posiciones")
             col_p1, col_p2 = st.columns(2)
@@ -438,6 +439,7 @@ def render_settings():
                 "AI_RULES_ONLY_ON_BUDGET_EXHAUSTED": bool(ai_rules_only_budget),
                 "AI_MAX_OUTPUT_TOKENS": int(ai_max_output_tokens),
                 "AI_PROVIDER_TIMEOUT_SECONDS": int(ai_provider_timeout_seconds),
+                "AI_MAX_POSITION_SIZE_MULTIPLIER": float(ai_max_position_size_multiplier),
                 "ADD_TO_WINNER_ENABLED": bool(add_to_winner_enabled),
                 "ADD_MIN_PROFIT_PCT": float(add_min_profit),
                 "ADD_MIN_SCORE": float(add_min_score),
