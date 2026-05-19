@@ -3,6 +3,7 @@ import os
 import json
 import sys
 import uuid
+import hashlib
 import requests
 import config 
 from exchange_helper import ExchangeHelper
@@ -270,6 +271,19 @@ class BotDaemon:
             self.log_message(f"[WARN] alerta externa falló | error={self._safe_alert_error(exc)}")
             return False
 
+    def _send_throttled_alert(self, event_type, message, payload=None, dedupe_key='', min_interval_seconds=3600):
+        key_material = f"{event_type}:{dedupe_key or json.dumps(payload or {}, sort_keys=True, default=str)}"
+        digest = hashlib.sha256(key_material.encode("utf-8", errors="replace")).hexdigest()[:16]
+        status_key = f"alert_last_{event_type}_{digest}"
+        last = self._status_float(status_key, 0.0)
+        now = time.time()
+        if last and now - last < int(min_interval_seconds or 0):
+            return False
+        sent = self._send_alert(event_type, message, payload or {})
+        if sent:
+            self.db.set_system_status(status_key, now)
+        return sent
+
     def _safe_alert_error(self, error):
         message = str(error)
         webhook = str(getattr(config, "ALERT_WEBHOOK_URL", "") or "")
@@ -344,6 +358,26 @@ class BotDaemon:
                         "requested_price": requested_price,
                         "order": order_result,
                     },
+                )
+            status = str((order_result or {}).get("status") or "").lower()
+            reason = str((order_result or {}).get("reason") or "")
+            if (
+                status == "failed"
+                and bool(getattr(config, "ALERT_ORDER_FAILURES", True))
+                and not self._is_expected_order_block(reason)
+            ):
+                self._send_throttled_alert(
+                    "order_failed",
+                    f"Orden fallida: {symbol} {side}",
+                    {
+                        "local_order_id": local_order_id,
+                        "symbol": symbol,
+                        "side": side,
+                        "status": status,
+                        "reason": reason,
+                    },
+                    dedupe_key=f"{symbol}:{side}:{reason[:120]}",
+                    min_interval_seconds=1800,
                 )
         except Exception as exc:
             self.log_message(f"[WARN] order audit failed | {symbol} {side} | reason={self._short_reason(exc, 100)}")
@@ -511,6 +545,15 @@ class BotDaemon:
             if mismatches:
                 reasons.append("DB_EXCHANGE_MISMATCH")
                 details["mismatches"] = mismatches[:8]
+                if bool(getattr(config, "ALERT_MISMATCHES", True)):
+                    symbols = ",".join(sorted(str(m.get("symbol", "")) for m in mismatches[:8]))
+                    self._send_throttled_alert(
+                        "db_exchange_mismatch",
+                        "Mismatch entre posiciones DB y exchange",
+                        {"mismatches": mismatches[:8]},
+                        dedupe_key=symbols,
+                        min_interval_seconds=1800,
+                    )
 
         try:
             max_unreconciled = int(getattr(config, "MAX_UNRECONCILED_ORDERS", 0) or 0)
