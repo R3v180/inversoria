@@ -5,10 +5,8 @@ import os
 import re
 import shutil
 
-from config import SENSITIVE_SETTING_KEYS, USER_SETTINGS_FILE, get_setting, save_settings
-
-
-SENSITIVE_CONFIG_KEYS = set(SENSITIVE_SETTING_KEYS) | {"ALERT_WEBHOOK_URL"}
+from config import DEFAULT_SETTINGS, SENSITIVE_SETTING_KEYS, USER_SETTINGS_FILE, get_setting, save_settings
+from config_schema_sync import sync_config_schema
 
 
 CONFIG_SCHEMA = {
@@ -104,6 +102,7 @@ CONFIG_SCHEMA = {
     "DB_EXCHANGE_MISMATCH_TOLERANCE_PCT": {"type": float, "min": 0.0, "max": 25.0},
     "DB_EXCHANGE_MISMATCH_MIN_USDT": {"type": float, "min": 0.0, "max": 100.0},
     "AUTO_PAUSE_ON_STALE_HEARTBEAT": {"type": bool},
+    "AI_ENABLE_LOCAL_BUDGET": {"type": bool},
     "AI_MAX_REQUESTS_PER_CYCLE": {"type": int, "min": 0, "max": 100},
     "AI_MAX_REQUESTS_PER_DAY": {"type": int, "min": 0, "max": 10_000},
     "AI_MAX_EST_TOKENS_PER_DAY": {"type": int, "min": 0, "max": 10_000_000},
@@ -135,6 +134,34 @@ CONFIG_SCHEMA = {
     "PROMPT_SENTIMENT": {"type": str, "max_len": 2_000, "allow_empty": True},
     "PROMPT_DECISION": {"type": str, "max_len": 4_000, "allow_empty": True},
     "PROMPT_CURATION": {"type": str, "max_len": 3_000, "allow_empty": True},
+}
+
+CONFIG_SCHEMA = sync_config_schema(CONFIG_SCHEMA)
+
+
+class ConfigValidationError(Exception):
+    """Structured validation error for i18n in UI."""
+
+    def __init__(self, code: str, key: str | None = None, **kwargs):
+        self.code = code
+        self.key = key
+        self.kwargs = kwargs
+        super().__init__(code)
+
+
+def format_validation_error(exc: Exception) -> str:
+    if isinstance(exc, ConfigValidationError):
+        try:
+            from i18n import format_config_error
+
+            return format_config_error(exc.code, key=exc.key, **exc.kwargs)
+        except Exception:
+            return f"{exc.key or ''}: {exc.code}".strip()
+    return str(exc)
+
+SENSITIVE_CONFIG_KEYS = set(SENSITIVE_SETTING_KEYS) | {
+    "ALERT_WEBHOOK_URL",
+    "WEBHOOK_TRADINGVIEW_SECRET",
 }
 
 
@@ -223,9 +250,10 @@ EXAMPLE_SAFE_CONFIG = {
     "DB_EXCHANGE_MISMATCH_TOLERANCE_PCT": 1.0,
     "DB_EXCHANGE_MISMATCH_MIN_USDT": 0.25,
     "AUTO_PAUSE_ON_STALE_HEARTBEAT": True,
-    "AI_MAX_REQUESTS_PER_CYCLE": 2,
-    "AI_MAX_REQUESTS_PER_DAY": 80,
-    "AI_MAX_EST_TOKENS_PER_DAY": 120000,
+    "AI_ENABLE_LOCAL_BUDGET": False,
+    "AI_MAX_REQUESTS_PER_CYCLE": 0,
+    "AI_MAX_REQUESTS_PER_DAY": 0,
+    "AI_MAX_EST_TOKENS_PER_DAY": 0,
     "AI_RULES_ONLY_ON_BUDGET_EXHAUSTED": True,
     "AI_INVALID_RESPONSE_RULES_FALLBACK": True,
     "AI_MAX_OUTPUT_TOKENS": 700,
@@ -253,24 +281,39 @@ EXAMPLE_SAFE_CONFIG = {
 }
 
 
+PARTIAL_PATCH_EXAMPLE = {
+    "MIN_AUTO_DECISION_SCORE": 0.65,
+    "RISK_PER_TRADE": 0.015,
+    "PROTECTIONS_ENABLED": True,
+}
+
+
+def partial_config_example_json() -> str:
+    return json.dumps(PARTIAL_PATCH_EXAMPLE, indent=2, ensure_ascii=False)
+
+
 def config_example_json() -> str:
     return json.dumps(EXAMPLE_SAFE_CONFIG, indent=4, ensure_ascii=False)
 
 
-def current_safe_config_json() -> str:
+def current_safe_config_dict() -> dict:
     data = {}
     for key in CONFIG_SCHEMA:
         if key in SENSITIVE_CONFIG_KEYS:
             continue
-        default = EXAMPLE_SAFE_CONFIG.get(key, "")
+        default = DEFAULT_SETTINGS.get(key, EXAMPLE_SAFE_CONFIG.get(key))
         data[key] = get_setting(key, default)
-    return json.dumps(data, indent=4, ensure_ascii=False)
+    return data
+
+
+def current_safe_config_json() -> str:
+    return json.dumps(current_safe_config_dict(), indent=4, ensure_ascii=False)
 
 
 def parse_config_payload(raw_text: str) -> dict:
     text = (raw_text or "").strip()
     if not text:
-        raise ValueError("La configuración está vacía.")
+        raise ConfigValidationError("ERR_CFG_EMPTY")
 
     fenced = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", text, re.IGNORECASE | re.DOTALL)
     if fenced:
@@ -287,11 +330,11 @@ def parse_config_payload(raw_text: str) -> dict:
     if isinstance(payload, dict) and isinstance(payload.get("settings"), dict):
         payload = payload["settings"]
     if not isinstance(payload, dict):
-        raise ValueError("La configuración debe ser un objeto JSON.")
+        raise ConfigValidationError("ERR_CFG_NOT_OBJECT")
     return payload
 
 
-def _coerce_bool(value):
+def _coerce_bool(value, key: str | None = None):
     if isinstance(value, bool):
         return value
     if isinstance(value, str):
@@ -300,10 +343,10 @@ def _coerce_bool(value):
             return True
         if lowered in {"false", "0", "no", "off"}:
             return False
-    raise ValueError("debe ser true/false")
+    raise ConfigValidationError("ERR_CFG_BOOL", key=key or "")
 
 
-def _coerce_symbols(value):
+def _coerce_symbols(value, key: str | None = None):
     if isinstance(value, list):
         symbols = value
     else:
@@ -316,22 +359,22 @@ def _coerce_symbols(value):
         if "/" not in sym:
             sym = f"{sym}/USDT"
         if not re.match(r"^[A-Z0-9]+/[A-Z0-9]+$", sym):
-            raise ValueError(f"símbolo inválido: {sym}")
+            raise ConfigValidationError("ERR_CFG_INVALID_SYMBOL", key=key or "MONEDAS", detail=sym)
         if sym not in cleaned:
             cleaned.append(sym)
     if not cleaned:
-        raise ValueError("debe contener al menos un símbolo")
+        raise ConfigValidationError("ERR_CFG_SYMBOLS_MIN", key=key or "MONEDAS")
     return ",".join(cleaned)
 
 
-def _coerce_bucket_map(value):
+def _coerce_bucket_map(value, key: str | None = None):
     if isinstance(value, str):
         try:
             value = json.loads(value)
         except json.JSONDecodeError:
             value = ast.literal_eval(value)
     if not isinstance(value, dict):
-        raise ValueError("debe ser un objeto con buckets y listas de símbolos")
+        raise ConfigValidationError("ERR_CFG_BUCKET_OBJECT", key=key or "PORTFOLIO_BUCKETS")
     out = {}
     for bucket, symbols in value.items():
         bucket_name = str(bucket).strip().upper()
@@ -340,27 +383,52 @@ def _coerce_bucket_map(value):
         if isinstance(symbols, str):
             symbols = [s.strip() for s in symbols.split(",")]
         if not isinstance(symbols, list):
-            raise ValueError(f"{bucket_name}: debe ser lista o texto separado por comas")
+            raise ConfigValidationError("ERR_CFG_BUCKET_LIST", key=bucket_name)
         cleaned = []
         for symbol in symbols:
             base = str(symbol).strip().upper()
             if "/" in base:
                 base = base.split("/", 1)[0]
             if not re.match(r"^[A-Z0-9]+$", base):
-                raise ValueError(f"{bucket_name}: símbolo inválido {base}")
+                raise ConfigValidationError("ERR_CFG_BUCKET_SYMBOL", key=bucket_name, detail=base)
             if base and base not in cleaned:
                 cleaned.append(base)
         if cleaned:
             out[bucket_name] = cleaned
     if not out:
-        raise ValueError("debe contener al menos un bucket")
+        raise ConfigValidationError("ERR_CFG_BUCKET_MIN", key=key or "PORTFOLIO_BUCKETS")
+    return out
+
+
+def _coerce_json_list(value, spec, key: str):
+    if isinstance(value, str):
+        try:
+            value = json.loads(value)
+        except json.JSONDecodeError:
+            value = ast.literal_eval(value)
+    if not isinstance(value, list):
+        raise ConfigValidationError("ERR_CFG_JSON_LIST", key=key)
+    out = []
+    for item in value:
+        if isinstance(item, bool):
+            out.append(item)
+        elif isinstance(item, int) and not isinstance(item, bool):
+            out.append(int(item))
+        else:
+            out.append(float(item))
+    min_items = int(spec.get("min_items", 0))
+    max_items = int(spec.get("max_items", 100))
+    if len(out) < min_items:
+        raise ConfigValidationError("ERR_CFG_LIST_MIN", key=key, detail=min_items)
+    if len(out) > max_items:
+        raise ConfigValidationError("ERR_CFG_LIST_MAX", key=key, detail=max_items)
     return out
 
 
 def _coerce_value(key, value, spec, warnings):
     expected = spec["type"]
     if expected is bool:
-        coerced = _coerce_bool(value)
+        coerced = _coerce_bool(value, key=key)
     elif expected is int:
         coerced = int(value)
     elif expected is float:
@@ -373,24 +441,30 @@ def _coerce_value(key, value, spec, warnings):
         if key.startswith("PROMPT_") and not coerced:
             warnings.append(f"{key}: vacío; el bot usará el prompt por defecto interno.")
         if not coerced and not spec.get("allow_empty"):
-            raise ValueError("no puede estar vacío")
+            raise ConfigValidationError("ERR_CFG_EMPTY_FIELD", key=key)
         if len(coerced) > spec.get("max_len", 10_000):
-            raise ValueError("texto demasiado largo")
+            raise ConfigValidationError("ERR_CFG_TOO_LONG", key=key)
     elif expected == "symbols":
-        coerced = _coerce_symbols(value)
+        coerced = _coerce_symbols(value, key=key)
     elif expected == "bucket_map":
-        coerced = _coerce_bucket_map(value)
+        coerced = _coerce_bucket_map(value, key=key)
     elif expected == "choice":
         coerced = str(value).strip().lower()
         if coerced not in spec["choices"]:
-            raise ValueError(f"debe ser uno de: {', '.join(sorted(spec['choices']))}")
+            raise ConfigValidationError(
+                "ERR_CFG_CHOICE",
+                key=key,
+                detail=", ".join(sorted(spec["choices"])),
+            )
+    elif expected == "json_list":
+        coerced = _coerce_json_list(value, spec, key=key)
     else:
-        raise ValueError("tipo no soportado")
+        raise ConfigValidationError("ERR_CFG_UNSUPPORTED_TYPE", key=key)
 
     if "min" in spec and coerced < spec["min"]:
-        raise ValueError(f"debe ser >= {spec['min']}")
+        raise ConfigValidationError("ERR_CFG_MIN", key=key, detail=spec["min"])
     if "max" in spec and coerced > spec["max"]:
-        raise ValueError(f"debe ser <= {spec['max']}")
+        raise ConfigValidationError("ERR_CFG_MAX", key=key, detail=spec["max"])
     return coerced
 
 
@@ -416,20 +490,28 @@ def validate_config_payload(payload: dict):
                 warnings,
             )
         except Exception as exc:
-            errors.append(f"{normalized_key}: {exc}")
+            if isinstance(exc, ConfigValidationError) and not exc.key:
+                exc.key = normalized_key
+            errors.append(format_validation_error(exc))
 
     return changes, warnings, blocked, errors
 
 
 def diff_config_changes(changes: dict):
+    try:
+        from i18n import _
+
+        col_field, col_before, col_after = _("DIFF_COL_FIELD"), _("DIFF_COL_BEFORE"), _("DIFF_COL_AFTER")
+    except Exception:
+        col_field, col_before, col_after = "Campo", "Antes", "Después"
     rows = []
     for key, new_value in changes.items():
         old_value = get_setting(key, None)
         if old_value != new_value:
             rows.append({
-                "Campo": str(key),
-                "Antes": "" if old_value is None else str(old_value),
-                "Después": "" if new_value is None else str(new_value),
+                col_field: str(key),
+                col_before: "" if old_value is None else str(old_value),
+                col_after: "" if new_value is None else str(new_value),
             })
     return rows
 
