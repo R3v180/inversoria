@@ -998,9 +998,9 @@ class BotDaemon:
         }
         if bucket not in {"BTC", "ETH"}:
             capacities["alt"] = max(0.0, (total_value * config.MAX_ALT_EXPOSURE_PCT) - exposures["alt"])
-        capped = min(amount_usdt, *capacities.values())
-        # Tiny buffer avoids equality/rounding turning an exactly-at-limit size into a guard violation.
-        capped = max(0.0, capped * 0.999)
+        raw_capped = min(amount_usdt, *capacities.values())
+        # Tiny buffer only when a real cap applies; otherwise exact min-order sizes must stay tradable.
+        capped = max(0.0, raw_capped * 0.999) if raw_capped + 1e-8 < amount_usdt else amount_usdt
         return capped, {
             "bucket": bucket,
             "capacities": {key: round(value, 8) for key, value in capacities.items()},
@@ -1456,6 +1456,8 @@ class BotDaemon:
             # El score determinista manda; confianza IA, MTF y sizing desempatan sin dominar.
             return decision_score + (confidence * 0.20) + (confluence * 0.10) + (size_mult * 0.03)
 
+        pending_order_symbols = set()
+
         def execute_buy_candidate(item):
             sym = item['symbol']
             price = float(item['price'])
@@ -1602,6 +1604,7 @@ class BotDaemon:
             if str(res.get('status') or '').lower() == "open":
                 pending_reason = f"ORDER_PENDING_NO_FILL order_id={local_order_id}"
                 self.log_message(f"[PENDING] {sym} BUY order open without fill | order={local_order_id}")
+                pending_order_symbols.add(sym)
                 if decision_journal_id:
                     self.db.update_decision_journal(
                         decision_journal_id,
@@ -2201,6 +2204,12 @@ class BotDaemon:
                 continue
             if execute_buy_candidate(candidate):
                 executed_symbols.add(candidate['symbol'])
+            if pending_order_symbols and not self.exchange.modo_simulacion:
+                self.log_message(
+                    f"[SKIP] BUY cycle halted | reason=PENDING_REAL_ORDER | "
+                    f"pending={', '.join(sorted(pending_order_symbols))}"
+                )
+                break
 
         remaining_candidates = [
             c for c in buy_candidates
