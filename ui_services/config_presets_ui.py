@@ -156,8 +156,7 @@ def render_preset_assistant():
 def _render_preset_card(preset: dict, *, active_id: str | None):
     pid = preset["id"]
     is_active = pid == active_id
-    border = "border" if is_active else None
-    with st.container(border=border):
+    with st.container(border=is_active):
         title = _preset_label(preset)
         if is_active:
             title = f"✓ {title}"
