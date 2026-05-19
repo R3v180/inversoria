@@ -313,6 +313,8 @@ def render_settings():
                 macro_risk_on_max_btc_dom = st.number_input("BTC dominance máx. para RISK_ON alts (%)", min_value=45.0, max_value=75.0, value=get_setting('MACRO_RISK_ON_MAX_BTC_DOM', 55.0, float), step=0.5)
                 macro_caution_risk_off_btc_dom = st.number_input("BTC dominance RISK_OFF en caídas (%)", min_value=45.0, max_value=80.0, value=get_setting('MACRO_CAUTION_RISK_OFF_BTC_DOM', 55.0, float), step=0.5)
             with col_m2:
+                mtf_include_15m = st.checkbox("Incluir 15m en MTF", value=get_setting('MTF_INCLUDE_15M', True, bool))
+                mtf_divergence_penalty = st.slider("Penalización divergencia MTF", 0.0, 0.5, get_setting('MTF_DIVERGENCE_PENALTY', 0.15, float), step=0.01)
                 backtest_hard_veto_wr = st.slider("Win rate mínimo veto backtest", 0.0, 0.8, get_setting('BACKTEST_HARD_VETO_WIN_RATE', 0.50, float), step=0.01)
                 backtest_hard_veto_min_trades = st.number_input("Trades mínimos veto backtest", min_value=5, max_value=200, value=get_setting('BACKTEST_HARD_VETO_MIN_TRADES', 20, int), step=1)
 
@@ -421,6 +423,8 @@ def render_settings():
                 "MACRO_ALTSEASON_BTC_DOM": float(macro_altseason_btc_dom),
                 "MACRO_RISK_ON_MAX_BTC_DOM": float(macro_risk_on_max_btc_dom),
                 "MACRO_CAUTION_RISK_OFF_BTC_DOM": float(macro_caution_risk_off_btc_dom),
+                "MTF_INCLUDE_15M": bool(mtf_include_15m),
+                "MTF_DIVERGENCE_PENALTY": float(mtf_divergence_penalty),
                 "BACKTEST_HARD_VETO_WIN_RATE": float(backtest_hard_veto_wr),
                 "BACKTEST_HARD_VETO_MIN_TRADES": int(backtest_hard_veto_min_trades),
                 "AI_MAX_REQUESTS_PER_CYCLE": int(ai_max_requests_cycle),
