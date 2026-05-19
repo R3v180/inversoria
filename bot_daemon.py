@@ -2013,7 +2013,11 @@ class BotDaemon:
                             self.log_message(f"[WARN] {symbol} SELL executed but DB position was not found")
                     else:
                         if str(order_result.get("status") or "").lower() == "open":
-                            self.log_message(f"[PENDING] {symbol} SELL order open without fill | order={local_order_id}")
+                            pending_order_symbols.add(symbol)
+                            self.log_message(
+                                f"[PENDING] {symbol} SELL order open without fill | "
+                                f"order={local_order_id} | reason={self._short_reason(sell_res['reason'], 80)}"
+                            )
                             self.db.update_decision_journal(
                                 decision_journal_id,
                                 execution_status="pending_sell_order",
@@ -2162,6 +2166,13 @@ class BotDaemon:
                     }
                     item['score'] = candidate_score(item)
                     buy_candidates.append(item)
+
+        if pending_order_symbols and not self.exchange.modo_simulacion:
+            self.log_message(
+                f"[SKIP] BUY/ROTATION cycle halted | reason=PENDING_REAL_ORDER | "
+                f"pending={', '.join(sorted(pending_order_symbols))}"
+            )
+            buy_candidates = []
 
         buy_candidates.sort(key=lambda item: item['score'], reverse=True)
         if buy_candidates:
