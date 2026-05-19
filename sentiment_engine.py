@@ -218,15 +218,21 @@ class SentimentEngine:
             break
         return "NEUTRAL"
 
+    def _local_ai_budget_enabled(self):
+        return bool(getattr(config, 'AI_ENABLE_LOCAL_BUDGET', False))
+
     def _ai_budget_check(self, prompt, system_instruction, feature):
         input_tokens = self._estimate_tokens(f"{system_instruction or ''}\n{prompt or ''}")
         output_tokens = int(getattr(config, 'AI_MAX_OUTPUT_TOKENS', 700) or 700)
         prompt_hash = self._prompt_hash(prompt, system_instruction)
+        if not self._local_ai_budget_enabled():
+            return True, "", input_tokens, output_tokens, prompt_hash
+
         now = time.time()
         cycle_window = max(15, int(getattr(config, 'DAEMON_CYCLE_SECONDS', 60) or 60))
         try:
-            cycle = self.db.get_ai_usage_summary(since_ts=now - cycle_window)
-            day = self.db.get_ai_usage_summary(since_ts=now - 86400)
+            cycle = self.db.get_ai_usage_summary(since_ts=now - cycle_window, for_limits=True)
+            day = self.db.get_ai_usage_summary(since_ts=now - 86400, for_limits=True)
         except Exception:
             return True, "", input_tokens, output_tokens, prompt_hash
 
@@ -250,15 +256,6 @@ class SentimentEngine:
         for limit, used, label in limits:
             if limit > 0 and used >= limit:
                 reason = f"{label} reached ({used}/{limit})"
-                self.db.record_ai_usage(
-                    provider='budget',
-                    feature=feature,
-                    prompt_hash=prompt_hash,
-                    estimated_input_tokens=input_tokens,
-                    estimated_output_tokens=output_tokens,
-                    success=False,
-                    blocked_reason=reason,
-                )
                 return False, reason, input_tokens, output_tokens, prompt_hash
         return True, "", input_tokens, output_tokens, prompt_hash
 
@@ -305,7 +302,10 @@ class SentimentEngine:
             feature,
         )
         if not allowed:
-            print(f"[AI] Presupuesto IA agotado ({block_reason}); usando fallback sin llamada externa.")
+            print(
+                f"[AI] Tope local de presupuesto IA ({block_reason}); "
+                "sin llamada externa (activa reglas si AI_RULES_ONLY_ON_BUDGET_EXHAUSTED)."
+            )
             return None, None
 
         # 1. GEMINI
@@ -361,6 +361,23 @@ class SentimentEngine:
                 safe = self._safe_error_message(e)
                 self._set_ai_cooldown('Groq', time.time() + 300, safe)
                 print(f"[HYBRID] Groq falló: {safe}")
+
+        if bool(getattr(config, "OLLAMA_ENABLED", False)):
+            try:
+                from decision_runtime.ollama_provider import call_ollama
+                text, provider = call_ollama(prompt, system_instruction)
+                if text:
+                    self.db.record_ai_usage(
+                        provider=provider or "Ollama",
+                        feature=feature,
+                        prompt_hash=prompt_hash,
+                        estimated_input_tokens=input_tokens,
+                        estimated_output_tokens=self._estimate_tokens(text),
+                        success=True,
+                    )
+                    return text, provider or "Ollama"
+            except Exception as e:
+                print(f"[HYBRID] Ollama falló: {self._safe_error_message(e)}")
 
         return None, None
 

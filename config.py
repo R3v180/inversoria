@@ -103,6 +103,51 @@ DEFAULT_SETTINGS = {
     'SMALL_ACCOUNT_FORCE_MIN_ORDER': True,
     'SMALL_ACCOUNT_MAX_STOP_DISTANCE_PCT': 8.0,
     'DAEMON_CYCLE_SECONDS': 60,
+    'POSITION_MONITOR_ENABLED': True,
+    'POSITION_MONITOR_INTERVAL_SEC': 20,
+    'PROTECTIONS_ENABLED': True,
+    'PROTECTION_STOPLOSS_GUARD_COUNT': 2,
+    'PROTECTION_STOPLOSS_LOOKBACK_HOURS': 24,
+    'PROTECTION_LOW_PROFIT_MIN_TRADES': 8,
+    'PROTECTION_LOW_PROFIT_MAX_EXPECTANCY_PCT': -0.15,
+    'PAIRLIST_LIQUIDITY_FILTER_ENABLED': True,
+    'PAIRLIST_MAX_SPREAD_PCT': 0.35,
+    'PAIRLIST_MIN_QUOTE_VOLUME_USDT': 50000.0,
+    'SCALED_TAKE_PROFIT_ENABLED': False,
+    'SCALED_TAKE_PROFIT_LEVELS': '1.5:0.33,3.0:0.33,5.0:0.34',
+    'POSITION_AGE_DECAY_ENABLED': True,
+    'POSITION_AGE_DECAY_START_HOURS': 0,
+    'POSITION_AGE_DECAY_MIN_PROFIT_PCT': 0.5,
+    'LIMIT_BUY_ENABLED': False,
+    'LIMIT_BUY_PULLBACK_PCT': 0.25,
+    'FUNDING_VETO_ENABLED': False,
+    'FUNDING_VETO_MAX_LONG_PCT': 0.08,
+    'BACKTEST_DYNAMIC_SLIPPAGE_ENABLED': True,
+    'BACKTEST_DYNAMIC_SLIPPAGE_CAP': 0.02,
+    'POSITION_MONITOR_SELLS_ENABLED': True,
+    'INVENTORY_SKEW_ENABLED': False,
+    'INVENTORY_SKEW_TARGET_SYMBOL_PCT': 0.12,
+    'INVENTORY_SKEW_MAX_BOOST': 1.25,
+    'INVENTORY_SKEW_MIN_REDUCE': 0.65,
+    'RULE_SIGNIFICANCE_ENABLED': True,
+    'RULE_SIGNIFICANCE_MIN_TRADES': 12,
+    'RULE_SIGNIFICANCE_MAX_ADJ': 0.08,
+    'RULE_SIGNIFICANCE_MIN_WIN_RATE': 0.45,
+    'HYPEROPT_LITE_ENABLED': False,
+    'HYPEROPT_RISK_GRID': [0.01, 0.015, 0.02, 0.025],
+    'HYPEROPT_STOP_LOSS_GRID': [1.5, 2.0, 2.5, 3.0],
+    'WEBHOOK_TRADINGVIEW_ENABLED': False,
+    'WEBHOOK_TRADINGVIEW_SECRET': '',
+    'WEBHOOK_SERVER_PORT': 8765,
+    'WEBHOOK_AUTO_APPROVE': False,
+    'DCA_GRID_ENABLED': False,
+    'DCA_MAX_TRANCHES': 3,
+    'DCA_TRANCHE_MULTIPLIER': 1.0,
+    'GRID_LEVELS': 3,
+    'GRID_SPACING_PCT': 0.5,
+    'OLLAMA_ENABLED': False,
+    'OLLAMA_BASE_URL': 'http://127.0.0.1:11434',
+    'OLLAMA_MODEL': 'llama3.2',
     'WATCHLIST_UPDATE_SECONDS': 14400,
     'AI_BATCH_DECISIONS_ENABLED': True,
     # Inventario/dust: base configurable para vigilancia persistente futura.
@@ -127,10 +172,12 @@ DEFAULT_SETTINGS = {
     'DB_EXCHANGE_MISMATCH_TOLERANCE_PCT': 1.0,
     'DB_EXCHANGE_MISMATCH_MIN_USDT': 0.25,
     'AUTO_PAUSE_ON_STALE_HEARTBEAT': True,
-    # Presupuesto IA.
-    'AI_MAX_REQUESTS_PER_CYCLE': 2,
-    'AI_MAX_REQUESTS_PER_DAY': 80,
-    'AI_MAX_EST_TOKENS_PER_DAY': 120000,
+    # Presupuesto IA local (opcional). Desactivado por defecto: los límites reales los marcan
+    # cooldown/cuota de Gemini, Groq, etc. Activar solo si quieres tope manual adicional.
+    'AI_ENABLE_LOCAL_BUDGET': False,
+    'AI_MAX_REQUESTS_PER_CYCLE': 0,
+    'AI_MAX_REQUESTS_PER_DAY': 0,
+    'AI_MAX_EST_TOKENS_PER_DAY': 0,
     'AI_RULES_ONLY_ON_BUDGET_EXHAUSTED': True,
     'AI_INVALID_RESPONSE_RULES_FALLBACK': True,
     'AI_MAX_OUTPUT_TOKENS': 700,
@@ -232,13 +279,10 @@ def save_settings(new_settings):
         save_active_profile_settings(profile_updates)
 
 def reset_to_defaults():
-    defaults = {
-        key: value for key, value in DEFAULT_SETTINGS.items()
-        if str(key).strip().upper() not in SENSITIVE_SETTING_KEYS
-    }
-    with open(USER_SETTINGS_FILE, 'w', encoding='utf-8') as f:
-        json.dump(defaults, f, indent=4)
-    return defaults
+    """Restaura valores de fábrica + plantilla Recomendado; no cambia sim/real ni perfil."""
+    from config_presets import reset_settings_to_recommended
+
+    return reset_settings_to_recommended()
 
 # --- Carga de Variables Activas ---
 MODO_SIMULACION = get_setting('MODO_SIMULACION', True, bool)
@@ -357,9 +401,10 @@ AUTO_PAUSE_ON_DB_EXCHANGE_MISMATCH = get_setting('AUTO_PAUSE_ON_DB_EXCHANGE_MISM
 DB_EXCHANGE_MISMATCH_TOLERANCE_PCT = get_setting('DB_EXCHANGE_MISMATCH_TOLERANCE_PCT', 1.0, float)
 DB_EXCHANGE_MISMATCH_MIN_USDT = get_setting('DB_EXCHANGE_MISMATCH_MIN_USDT', 0.25, float)
 AUTO_PAUSE_ON_STALE_HEARTBEAT = get_setting('AUTO_PAUSE_ON_STALE_HEARTBEAT', True, bool)
-AI_MAX_REQUESTS_PER_CYCLE = get_setting('AI_MAX_REQUESTS_PER_CYCLE', 2, int)
-AI_MAX_REQUESTS_PER_DAY = get_setting('AI_MAX_REQUESTS_PER_DAY', 80, int)
-AI_MAX_EST_TOKENS_PER_DAY = get_setting('AI_MAX_EST_TOKENS_PER_DAY', 120000, int)
+AI_ENABLE_LOCAL_BUDGET = get_setting('AI_ENABLE_LOCAL_BUDGET', False, bool)
+AI_MAX_REQUESTS_PER_CYCLE = get_setting('AI_MAX_REQUESTS_PER_CYCLE', 0, int)
+AI_MAX_REQUESTS_PER_DAY = get_setting('AI_MAX_REQUESTS_PER_DAY', 0, int)
+AI_MAX_EST_TOKENS_PER_DAY = get_setting('AI_MAX_EST_TOKENS_PER_DAY', 0, int)
 AI_RULES_ONLY_ON_BUDGET_EXHAUSTED = get_setting('AI_RULES_ONLY_ON_BUDGET_EXHAUSTED', True, bool)
 AI_INVALID_RESPONSE_RULES_FALLBACK = get_setting('AI_INVALID_RESPONSE_RULES_FALLBACK', True, bool)
 AI_MAX_OUTPUT_TOKENS = get_setting('AI_MAX_OUTPUT_TOKENS', 700, int)

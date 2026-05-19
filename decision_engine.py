@@ -12,6 +12,7 @@ from backtest_engine import BacktestEngine
 from database_manager import DatabaseManager
 from i18n import _
 from decision_runtime.ai_fallback import build_invalid_ai_fallback_decision as build_invalid_ai_fallback_payload
+from bot_runtime.rule_significance import strategy_significance_adjustment
 
 
 def _safe_float(value, default=0.0):
@@ -172,6 +173,15 @@ def _repair_common_json_issues(text):
 
 
 class DecisionEngine:
+    @staticmethod
+    def _hybrid_confidence_weights(macro_regime):
+        regime = str(macro_regime or 'NEUTRAL').upper()
+        if regime in ('CAUTION', 'RISK_OFF'):
+            return 0.40, 0.60
+        if regime in ('RISK_ON', 'ALTSEASON'):
+            return 0.70, 0.30
+        return 0.55, 0.45
+
     def __init__(self, sentiment=None, exchange=None, lang='es'):
         self.sentiment = sentiment if sentiment else SentimentEngine()
         self.current_lang = lang
@@ -422,7 +432,8 @@ class DecisionEngine:
         """Score determinista y auditable. La IA puede opinar, pero esta capa deja rastro cuantitativo."""
         rsi = _safe_float(indicators.get('rsi'), 50.0)
         adx = _safe_float(indicators.get('adx'), 0.0)
-        trend = indicators.get('trend', 'BEAR')
+        trend = str(indicators.get('trend', 'BEAR')).upper()
+        trend_regime = str(indicators.get('trend_regime', trend or 'RANGING')).upper()
         volume_ratio = _safe_float(indicators.get('volume_ratio'), 1.0)
         macd_hist = _safe_float(indicators.get('macd_hist'), 0.0)
         macd = _safe_float(indicators.get('macd'), 0.0)
@@ -431,7 +442,18 @@ class DecisionEngine:
         stoch_k = _safe_float(indicators.get('stochrsi_k'), 50.0)
         obv_slope = _safe_float(indicators.get('obv_slope'), 0.0)
 
-        trend_score = 1.0 if trend == 'BULL' else 0.25
+        _trend_score_map = {
+            'BULL': 1.0,
+            'TRENDING_UP': 0.90,
+            'RANGING': 0.45,
+            'HIGH_VOLATILITY': 0.35,
+            'BEAR': 0.15,
+            'TRENDING_DOWN': 0.20,
+        }
+        trend_score = _trend_score_map.get(
+            trend_regime,
+            _trend_score_map.get(trend, 0.40),
+        )
         if 45 <= rsi <= 62:
             rsi_score = 0.85
         elif 35 <= rsi < 45:
@@ -517,6 +539,15 @@ class DecisionEngine:
             + macro_score * weights['macro']
             + adaptive_score * weights['adaptive']
         )
+        sig_adj, sig_evidence = (0.0, {})
+        if getattr(self, "db", None) is not None:
+            sig_adj, sig_evidence = strategy_significance_adjustment(
+                self.db,
+                strategy,
+                indicators.get('trend_regime', indicators.get('trend', macro_regime)),
+                config,
+            )
+        final_score = _clamp(final_score + sig_adj)
         components = {
             'technical': round(technical_score, 3),
             'mtf': round(mtf_score, 3),
@@ -530,6 +561,8 @@ class DecisionEngine:
             'adaptive_adjustment': round(adaptive_adjustment, 4),
             'weights': {key: round(value, 3) for key, value in weights.items()},
             'adaptive_evidence': adaptive_evidence,
+            'rule_significance': sig_evidence,
+            'rule_significance_adjustment': round(sig_adj, 4),
         }
         return round(final_score, 3), components
 
@@ -563,7 +596,35 @@ class DecisionEngine:
     def build_invalid_ai_fallback_decision(self, score, components, indicators, strategy, macro_regime, provider, error):
         result = self.build_rules_decision(score, components, indicators, strategy, macro_regime)
         return build_invalid_ai_fallback_payload(result, provider, error)
-        
+
+    def _should_rules_fallback_when_ai_unavailable(self, decision_mode):
+        if decision_mode == 'rules':
+            return False
+        if not bool(getattr(config, 'AI_RULES_ONLY_ON_BUDGET_EXHAUSTED', True)):
+            return False
+        return decision_mode in ('hybrid', 'ai_aggressive')
+
+    def _rules_fallback_when_ai_unavailable(
+        self,
+        decision_score,
+        score_components,
+        indicators,
+        strategy,
+        macro_regime,
+        reason_tag,
+    ):
+        result = self.build_rules_decision(
+            decision_score,
+            score_components,
+            indicators,
+            strategy,
+            macro_regime,
+        )
+        result['reasoning'] = f"[RULES FALLBACK] {reason_tag}. {result.get('reasoning', '')}"
+        result['provider'] = 'RulesEngine'
+        result['decision_mode'] = 'rules_fallback'
+        return result
+
     def quick_technical_filter(self, indicators, current_price):
         if not indicators: return False, _('FILTER_SIN_DATOS', lang=self.current_lang)
         rsi = _safe_float(indicators.get('rsi'), 50.0)
@@ -822,6 +883,8 @@ Si la confluencia MTF es fuerte ({confluence_score:.0%}), puedes aumentar positi
                 "decision_score": decision_score,
                 "score_components": score_components,
                 "decision_mode": decision_mode,
+                "indicators": indicators,
+                "mtf_recommended_strategy": mtf_recommended_strategy,
             }
 
         raw_content, provider = self.sentiment.call_ai_hybrid(
@@ -851,33 +914,26 @@ Si la confluencia MTF es fuerte ({confluence_score:.0%}), puedes aumentar positi
 
                 snapshot = self._adaptive_snapshot()
                 provider_stats = (snapshot.get('by_provider') or {}).get(str(provider)) if snapshot else None
-                provider_adjustment = 0.0
-                provider_evidence = {}
                 if provider_stats:
                     max_adj = abs(_safe_float(getattr(config, 'ADAPTIVE_MAX_SCORE_ADJUSTMENT', 0.12), 0.12))
-                    provider_adjustment = _clamp(_safe_float(provider_stats.get('adjustment')), -max_adj, max_adj)
-                    provider_evidence = {
-                        'adjustment': round(provider_adjustment, 4),
-                        'max_adjustment': round(max_adj, 4),
-                        'sources': [{
-                            'type': 'by_provider',
-                            'key': str(provider),
-                            'weight': 1.0,
-                            'trades': provider_stats.get('trades'),
-                            'expectancy_pct': provider_stats.get('expectancy_pct'),
-                            'profit_factor': provider_stats.get('profit_factor'),
-                            'win_rate': provider_stats.get('win_rate'),
-                            'source_adjustment': provider_stats.get('adjustment'),
-                        }],
-                    }
-                if provider_evidence:
-                    result['decision_score'], result['score_components'] = self._apply_adaptive_adjustment(
-                        result['decision_score'],
-                        result['score_components'],
-                        provider_evidence,
-                    )
-                    result['adaptive_adjustment'] = result['score_components'].get('adaptive_adjustment', provider_adjustment)
-                    result['adaptive_evidence'] = provider_evidence
+                    provider_adj = _clamp(_safe_float(provider_stats.get('adjustment')), -max_adj, max_adj)
+                    evidence = dict(score_components.get('adaptive_evidence') or {})
+                    sources = list(evidence.get('sources') or [])
+                    sources.append({
+                        'type': 'by_provider_post_ai',
+                        'key': str(provider),
+                        'weight': 0.0,
+                        'trades': provider_stats.get('trades'),
+                        'expectancy_pct': provider_stats.get('expectancy_pct'),
+                        'profit_factor': provider_stats.get('profit_factor'),
+                        'win_rate': provider_stats.get('win_rate'),
+                        'source_adjustment': provider_stats.get('adjustment'),
+                        'note': 'metadata_only_no_second_score_adjustment',
+                    })
+                    evidence['provider_post_ai'] = round(provider_adj, 4)
+                    evidence['sources'] = sources
+                    result['score_components'] = dict(score_components or {})
+                    result['score_components']['adaptive_evidence'] = evidence
 
                 # Ajuste de confianza por confluencia: si MTF es muy fuerte, boosteamos
                 if confluence_score >= 0.80 and result.get('action') == 'BUY':
@@ -894,7 +950,8 @@ Si la confluencia MTF es fuerte ({confluence_score:.0%}), puedes aumentar positi
                         )
                     else:
                         ai_conf = _safe_float(result.get('confidence'), 0.0)
-                        result['confidence'] = round(_clamp((ai_conf * 0.70) + (effective_score * 0.30)), 3)
+                        ai_w, score_w = self._hybrid_confidence_weights(macro_regime)
+                        result['confidence'] = round(_clamp((ai_conf * ai_w) + (effective_score * score_w)), 3)
 
                 return self._remember_decision(symbol, result, now, persist=True)
             except Exception as e:
@@ -910,6 +967,17 @@ Si la confluencia MTF es fuerte ({confluence_score:.0%}), puedes aumentar positi
                         e,
                     )
                     return self._remember_decision(symbol, fallback, now, persist=False)
+
+        if self._should_rules_fallback_when_ai_unavailable(decision_mode):
+            fallback = self._rules_fallback_when_ai_unavailable(
+                decision_score,
+                score_components,
+                indicators,
+                mtf_recommended_strategy,
+                macro_regime,
+                "IA no disponible (cuota proveedor, cooldown o tope local)",
+            )
+            return self._remember_decision(symbol, fallback, now, persist=False)
 
         return self.decision_cache.get(symbol)
 
@@ -968,7 +1036,27 @@ Si la confluencia MTF es fuerte ({confluence_score:.0%}), puedes aumentar positi
             feature="decision_batch",
         )
         if not raw_content:
-            return {}
+            if not contexts:
+                return {}
+            sample_mode = (contexts[0] or {}).get('decision_mode', getattr(config, 'DECISION_MODE', 'hybrid'))
+            if not self._should_rules_fallback_when_ai_unavailable(sample_mode):
+                return {}
+            out = {}
+            for ctx in contexts:
+                symbol = ctx.get('symbol')
+                if not symbol:
+                    continue
+                fallback = self._rules_fallback_when_ai_unavailable(
+                    ctx.get('decision_score', 0.0),
+                    ctx.get('score_components', {}),
+                    ctx.get('indicators') or {},
+                    ctx.get('mtf_recommended_strategy', 'TREND_FOLLOWING'),
+                    ctx.get('macro_regime', 'NEUTRAL'),
+                    "IA batch no disponible",
+                )
+                self._remember_decision(symbol, fallback, now, persist=False)
+                out[symbol] = fallback
+            return out
 
         try:
             parsed, parse_mode = self._parse_ai_batch_json(raw_content)
@@ -1071,7 +1159,33 @@ Si la confluencia MTF es fuerte ({confluence_score:.0%}), puedes aumentar positi
 
         decision = self.analyze_with_ai_hybrid(symbol, current_price, indicators, ohlcv)
         if not decision:
-            return {"action": "HOLD", "reasoning": "AI offline", "confidence": 0.0}
+            decision_mode = getattr(config, 'DECISION_MODE', 'hybrid')
+            if self._should_rules_fallback_when_ai_unavailable(decision_mode):
+                macro_regime = "NEUTRAL"
+                if self._macro_cache:
+                    macro_regime = self._macro_cache.get('macro_regime', 'NEUTRAL')
+                score, components = self.build_decision_score(
+                    indicators=indicators,
+                    macro_regime=macro_regime,
+                    confluence_score=0.5,
+                    prior=None,
+                    symbol=symbol,
+                )
+                decision = self._rules_fallback_when_ai_unavailable(
+                    score,
+                    components,
+                    indicators,
+                    "TREND_FOLLOWING",
+                    macro_regime,
+                    "IA no disponible (respaldo en get_decision)",
+                )
+            else:
+                return {
+                    "action": "HOLD",
+                    "reasoning": "AI offline",
+                    "confidence": 0.0,
+                    "provider": "None",
+                }
 
         min_conf = float(getattr(config, 'MIN_CONFIDENCE_ENTRY', 0.52))
         if decision.get("action") != "HOLD" and decision.get("confidence", 0) < min_conf:

@@ -114,6 +114,42 @@ def _provider_pending_orders(ctx: RuntimeContext) -> str:
     return compact_pending_orders_context(ctx.db)
 
 
+def _provider_webhooks(ctx: RuntimeContext) -> str:
+    if not hasattr(ctx.db, "list_external_signals"):
+        return "Webhooks no disponibles."
+    pending = ctx.db.list_external_signals(status="pending", limit=10)
+    lines = [f"Pendientes TV: {len(pending)}"]
+    for row in pending[:8]:
+        lines.append(f"- {row.get('symbol')} {row.get('action')} id={row.get('id')}")
+    return "\n".join(lines) if lines else "Sin señales webhook pendientes."
+
+
+def _provider_checkpoints(ctx: RuntimeContext) -> str:
+    try:
+        from ui_services.checkpoint_service import compact_checkpoint_summary
+
+        return compact_checkpoint_summary(ctx.db, ctx.exchange)
+    except Exception as exc:
+        return f"Checkpoints: {exc}"
+
+
+def _provider_presets(ctx: RuntimeContext) -> str:
+    try:
+        from config_presets import get_active_preset_id, get_preset, list_presets
+
+        active = get_active_preset_id()
+        names = ", ".join(p["id"] for p in list_presets()[:12])
+        if not active:
+            return f"Plantillas disponibles: {names}. Ninguna marcada como activa."
+        preset = get_preset(active)
+        return (
+            f"Plantilla activa: {active} ({preset.get('name') if preset else '?'})\n"
+            f"Disponibles: {names}"
+        )
+    except Exception as exc:
+        return f"Plantillas: {exc}"
+
+
 def build_default_context_registry() -> ContextProviderRegistry:
     return (
         ContextProviderRegistry()
@@ -123,6 +159,7 @@ def build_default_context_registry() -> ContextProviderRegistry:
         .register("CARTERA / POSICIONES BOT", _provider_portfolio, priority=20)
         .register("CARTERA EXCHANGE / DUST", _provider_wallet, priority=30)
         .register("RENDIMIENTO POR PERIODO", _provider_periods, priority=40)
+        .register("CHECKPOINTS / EVALUACIÓN ESTRATEGIA", _provider_checkpoints, priority=42, max_chars=1200)
         .register("MACRO", _provider_macro, priority=50)
         .register("DAEMON", _provider_daemon, priority=60)
         .register("RADAR / WATCHLIST", _provider_watchlist, priority=65, max_chars=700)
@@ -134,14 +171,42 @@ def build_default_context_registry() -> ContextProviderRegistry:
         .register("NOTICIAS RELEVANTES", _provider_news, priority=100)
         .register("AUDIT / REPLAY", _provider_audit, priority=110)
         .register("ACCIONES CONFIRMABLES", _provider_actions, priority=120)
+        .register("WEBHOOKS / SEÑALES", _provider_webhooks, priority=125, max_chars=600)
+        .register("PLANTILLA ACTIVA", _provider_presets, priority=127, max_chars=500)
         .register("ÚLTIMOS LOGS", _provider_logs, priority=130, max_chars=1800)
     )
 
 
-def build_assistant_context(ctx: RuntimeContext, registry: ContextProviderRegistry | None = None) -> str:
+_SECTION_CHAR_BOOST = {
+    "ÚLTIMOS LOGS": 4500,
+    "NOTICIAS RELEVANTES": 2500,
+    "DECISION JOURNAL / MÉTRICAS": 2200,
+    "AUDIT / REPLAY": 1500,
+    "WEBHOOKS / SEÑALES": 800,
+}
+
+
+def build_assistant_context(
+    ctx: RuntimeContext,
+    registry: ContextProviderRegistry | None = None,
+    *,
+    priority_sections: set[str] | None = None,
+) -> str:
     registry = registry or build_default_context_registry()
     header = "=== CONTEXTO OPERATIVO COMPACTO INVERSORIA ==="
-    blocks = [(title, f"{title}:\n{content}") for title, content in registry.build_sections(ctx)]
+    if priority_sections:
+        for provider in registry._providers.values():
+            if provider.provider_id in priority_sections:
+                boost = _SECTION_CHAR_BOOST.get(provider.provider_id)
+                if boost:
+                    provider.max_chars = max(provider.max_chars, boost)
+
+    sections = registry.build_sections(ctx)
+    if priority_sections:
+        allowed = set(_ESSENTIAL_SECTIONS) | set(priority_sections)
+        sections = [(t, c) for t, c in sections if t in allowed]
+
+    blocks = [(title, f"{title}:\n{content}") for title, content in sections]
 
     def assembled(selected):
         return header + "\n\n" + "\n\n".join(block for _, block in selected)

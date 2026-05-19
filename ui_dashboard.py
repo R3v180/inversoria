@@ -18,6 +18,7 @@ from ui_services.page_cache import (
     page_cache_ttl,
     render_stale_while_revalidate,
 )
+from ui_services.ui_status import render_cache_status, render_page_refresh_intro
 
 
 def _execute_dashboard_manual_sell(db, exchange, sym: str, qty: float, current_price: float):
@@ -38,7 +39,10 @@ def _execute_dashboard_manual_sell(db, exchange, sym: str, qty: float, current_p
 def _get_dashboard_max_sell(exchange, sym: str, pos: dict) -> float:
     pos_amount = float(pos.get("amount") or 0)
     real_amount = float(exchange.get_coin_balance(sym) or 0)
-    max_sell = min(pos_amount, real_amount) if real_amount > 0 else pos_amount
+    if real_amount > 0:
+        max_sell = max(pos_amount, real_amount)
+    else:
+        max_sell = pos_amount
     return max(0.0, float(max_sell or 0))
 
 
@@ -153,19 +157,11 @@ def render_dashboard(snapshot=None, *, stale=False, age_sec=0):
     """, unsafe_allow_html=True)
 
     st.title(f"🏛️ { _('DASHBOARD_TITLE') }")
-    st.caption(f"Auto-actualización cada {int(DASHBOARD_AUTO_REFRESH_SEC)} segundos mientras permaneces en esta pestaña.")
+    render_page_refresh_intro(DASHBOARD_AUTO_REFRESH_SEC)
+    render_cache_status(stale=stale, age_sec=age_sec, refresh_sec=DASHBOARD_AUTO_REFRESH_SEC)
 
     db = st.session_state.db
     exchange = st.session_state.exchange
-
-    if stale and age_sec is not None:
-        remaining = max(0, int(DASHBOARD_AUTO_REFRESH_SEC - age_sec))
-        st.caption(
-            f"Datos de hace {int(age_sec)}s (vista en caché). "
-            f"Actualización automática en ~{remaining}s o antes si cambias de pestaña."
-        )
-    elif age_sec is not None and age_sec > 0:
-        st.caption(f"Datos actualizados hace {int(age_sec)}s · auto-refresh cada {int(DASHBOARD_AUTO_REFRESH_SEC)}s.")
 
     if snapshot is None:
         snapshot = build_dashboard_snapshot(
@@ -208,14 +204,31 @@ def render_dashboard(snapshot=None, *, stale=False, age_sec=0):
     m5.metric(_("DASH_MODE"), mode_label)
     m6.metric(_("DAEMON_STATE"), state_label, f"{decision_mode} · {diag_top.get('scanned', 0)} scan")
     baseline_text = {
-        "real_start": "inicio real",
-        "initial": "capital inicial",
+        "real_start": _("BASELINE_REAL_START"),
+        "initial": _("BASELINE_INITIAL"),
     }.get(baseline_label, baseline_label)
     st.caption(
-        f"Desglose equity: disponible ${available_usdt:.2f} + posiciones bot ${managed_positions_value:.2f} "
-        f"+ otros saldos/dust ${other_balances_value:.2f}. PnL calculado contra baseline {baseline_text}: ${baseline:.2f}."
+        _("DASH_EQUITY_BREAKDOWN").format(
+            available_usdt,
+            managed_positions_value,
+            other_balances_value,
+            baseline_text,
+            baseline,
+        )
     )
-    st.caption("Para analizar rendimiento desde hoy, última hora o una fecha concreta usa Historial y Analítica.")
+    strategy = breakdown.get("strategy_pnl")
+    if strategy and strategy.get("checkpoint"):
+        cp = strategy["checkpoint"]
+        st.caption(
+            _("DASH_PNL_STRATEGY_CAPTION").format(
+                label=cp.get("label", _("CHK_DEFAULT_LABEL")),
+                start=f"{float(strategy.get('start_equity', 0)):.2f}",
+            )
+            + f" · { _('DASH_PNL_STRATEGY') }: ${strategy['pnl_usd']:+.2f} ({strategy['pnl_pct']:+.2f}%)"
+        )
+    else:
+        st.caption(_("DASH_PNL_NO_CHECKPOINT"))
+    st.caption(_("DASH_AUTO_REFRESH_NOTE"))
 
     # --- POSITIONS + LIVE EVENTS FIRST ---
     col_left, col_right = st.columns([1.5, 1])
@@ -223,36 +236,61 @@ def render_dashboard(snapshot=None, *, stale=False, age_sec=0):
     with col_left:
         st.markdown(f"### 💼 { _('ACTIVE_POSITIONS') }")
         if open_positions:
-            for row in snapshot.get("position_rows") or []:
+            for pos_idx, row in enumerate(snapshot.get("position_rows") or []):
                 sym = row["symbol"]
                 pos = row["pos"]
                 current_price = row["current_price"]
                 u_pnl = row["u_pnl"]
+                invested_usd = row.get("invested_usd", row.get("current_value", 0))
                 current_value = row["current_value"]
+                display_amount = row.get("display_amount", 0)
+                mismatch_note = (
+                    ' <span class="muted" title="' + _("POSITION_AMOUNT_SYNC_HINT") + '">⚠</span>'
+                    if row.get("amount_mismatch")
+                    else ""
+                )
                 color = "var(--iv-accent)" if u_pnl >= 0 else "var(--iv-danger)"
                 with st.container():
                     safe_key = sym.replace("/", "_").replace(" ", "_")
                     col_info, col_chart, col_sell = st.columns([4.2, 0.9, 0.9])
                     with col_info:
-                        st.markdown(f'<div class="position-card iv-card" style="margin-bottom: 5px; padding: 15px;"><div style="display:flex; justify-content:space-between;"><div><b>{sym}</b><br/><span class="muted">{ _("INVESTMENT") }: ${current_value:.2f}</span></div><div style="text-align:right;"><span style="font-size:1.2em; font-weight:bold; color:{color};">{u_pnl:.2f}%</span><br/><span class="muted">${current_price:.4f}</span></div></div></div>', unsafe_allow_html=True)
+                        st.markdown(
+                            f'<div class="position-card iv-card" style="margin-bottom: 5px; padding: 15px;">'
+                            f'<div style="display:flex; justify-content:space-between;">'
+                            f'<div><b>{sym}</b>{mismatch_note}<br/>'
+                            f'<span class="muted">{_("INVESTMENT")}: ${invested_usd:.2f}</span><br/>'
+                            f'<span class="muted">{_("CURRENT_VALUE")}: ${current_value:.2f}</span><br/>'
+                            f'<span class="muted">{_("POSITION_QTY")}: {display_amount:.6g}</span>'
+                            f'</div>'
+                            f'<div style="text-align:right;">'
+                            f'<span style="font-size:1.2em; font-weight:bold; color:{color};">{u_pnl:.2f}%</span><br/>'
+                            f'<span class="muted">@ ${current_price:.4f}</span>'
+                            f'</div></div></div>',
+                            unsafe_allow_html=True,
+                        )
                     with col_chart:
                         st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
 
                         def update_chart_symbol(s=sym):
                             st.session_state.selected_chart_symbol = s
 
-                        st.button("📈", key=f"btn_chart_{safe_key}", help=_('DASH_VIEW_CHART').format(sym), on_click=update_chart_symbol)
+                        st.button(
+                            "📈",
+                            key=f"btn_chart_{safe_key}_{pos_idx}",
+                            help=_('DASH_VIEW_CHART').format(sym),
+                            on_click=update_chart_symbol,
+                        )
                     with col_sell:
                         st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
                         if st.button(
                             _('MANUAL_SELL'),
-                            key=f"btn_sell_{safe_key}",
+                            key=f"btn_sell_{safe_key}_{pos_idx}",
                             help=_('MANUAL_SELL_HELP'),
                             type="secondary",
                         ):
                             max_sell = _get_dashboard_max_sell(exchange, sym, pos)
                             _execute_dashboard_manual_sell(db, exchange, sym, max_sell, current_price)
-                    _render_dashboard_sell_options(db, exchange, sym, pos, current_price, safe_key)
+                    _render_dashboard_sell_options(db, exchange, sym, pos, current_price, f"{safe_key}_{pos_idx}")
         else:
             st.info(_('NO_POSITIONS'))
 
@@ -388,32 +426,33 @@ def render_dashboard(snapshot=None, *, stale=False, age_sec=0):
 
                 a1, a2, a3 = st.columns(3)
                 actions = diag.get("actions", {})
-                a1.caption(f"BUY: {actions.get('BUY', 0)}")
-                a2.caption(f"SELL: {actions.get('SELL', 0)}")
-                a3.caption(f"HOLD: {actions.get('HOLD', 0)}")
+                a1.caption(f"{_('DASH_DECISION_BUY')} {actions.get('BUY', 0)}")
+                a2.caption(f"{_('DASH_DECISION_SELL')} {actions.get('SELL', 0)}")
+                a3.caption(f"{_('DASH_DECISION_HOLD')} {actions.get('HOLD', 0)}")
 
                 if diag.get("providers"):
-                    st.caption("Providers: " + ", ".join(f"{k}: {v}" for k, v in diag["providers"].items()))
+                    st.caption(_("DASH_PROVIDERS").format(", ".join(f"{k}: {v}" for k, v in diag["providers"].items())))
                 if diag.get("skipped"):
-                    st.caption("Skipped: " + ", ".join(f"{k}: {v}" for k, v in diag["skipped"].items()))
+                    st.caption(_("DASH_SKIPPED").format(", ".join(f"{k}: {v}" for k, v in diag["skipped"].items())))
                 if diag.get("unreconciled_orders_count", 0):
-                    st.warning(f"Órdenes pendientes/no reconciliadas: {diag.get('unreconciled_orders_count')}")
+                    st.warning(_("DASH_PENDING_ORDERS").format(diag.get("unreconciled_orders_count")))
                     rows = diag.get("unreconciled_orders") or []
                     if rows:
                         st.dataframe(rows, width="stretch", hide_index=True)
                 if diag.get("order_reconcile"):
                     rec = diag.get("order_reconcile") or {}
                     st.caption(
-                        "Reconciliación órdenes: "
-                        f"checked={rec.get('checked', 0)} · "
-                        f"updated={rec.get('updated', 0)} · "
-                        f"applied={rec.get('applied', 0)}"
+                        _("DASH_RECONCILE").format(
+                            rec.get("checked", 0),
+                            rec.get("updated", 0),
+                            rec.get("applied", 0),
+                        )
                     )
                 if diag.get("symbol_cooldowns"):
-                    st.markdown("**Cooldowns por símbolo**")
+                    st.markdown(_("DASH_COOLDOWNS_TITLE"))
                     for row in diag.get("symbol_cooldowns") or []:
                         minutes = max(1, int(float(row.get("remaining_seconds") or 0) / 60))
-                        st.caption(f"{row.get('symbol')} · {minutes}m restantes")
+                        st.caption(_("DASH_COOLDOWN_REMAINING").format(row.get("symbol"), minutes))
                 if diag.get("risk_guards"):
                     rg = diag.get("risk_guards") or {}
                     status = "OK" if rg.get("ok", True) else _('DASH_RISK_BLOCKING')
@@ -438,7 +477,7 @@ def render_dashboard(snapshot=None, *, stale=False, age_sec=0):
                     st.markdown(f"**{_('DAEMON_TOP_HOLDS')}**")
                     for reason, count in diag["hold_reasons"].items():
                         st.caption(f"{count}× {reason}")
-                st.caption("Métricas detalladas de provider/régimen movidas a Historial y Analítica.")
+                st.caption(_("DASH_METRICS_MOVED"))
         except Exception as e:
             st.info(f"{_('DAEMON_DIAG_TITLE')}: {e}")
 

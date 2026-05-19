@@ -7,6 +7,13 @@ import pandas as pd
 from simulation_profiles import get_database_path_for_current_mode
 from database_services.audit import get_audit_events as fetch_audit_events
 from database_services.audit import get_cycle_replay_snapshots as fetch_cycle_replay_snapshots
+from database_services import webhook_signals as webhook_db
+from database_services.decision_journal_queries import count_recent_exit_reasons as _count_recent_exit_reasons
+from database_services import checkpoints as checkpoint_db
+from database_services.decision_journal_closures import (
+    apply_closure_to_journal,
+    backfill_journal_closures_from_trades,
+)
 
 class DatabaseManager:
     def __init__(self, db_path=None):
@@ -303,6 +310,8 @@ class DatabaseManager:
                     payload_json TEXT
                 )
             ''')
+            checkpoint_db.ensure_checkpoints_table(conn)
+            webhook_db.ensure_webhook_table(conn)
             for idx_name, idx_cols in {
                 'idx_audit_events_type_ts': 'event_type, timestamp',
                 'idx_audit_events_symbol_ts': 'symbol, timestamp',
@@ -495,12 +504,16 @@ class DatabaseManager:
             )
             conn.commit()
 
-    def get_ai_usage_summary(self, since_ts=None):
+    def get_ai_usage_summary(self, since_ts=None, for_limits=False):
         if since_ts is None:
             since_ts = time.time() - 86400
+        filters = "timestamp >= ?"
+        params = [float(since_ts)]
+        if for_limits:
+            filters += " AND success = 1 AND provider != 'budget'"
         with self._get_connection() as conn:
             row = conn.execute(
-                '''
+                f'''
                 SELECT
                     COUNT(*) AS requests,
                     SUM(CASE WHEN success = 1 THEN 1 ELSE 0 END) AS successes,
@@ -508,19 +521,19 @@ class DatabaseManager:
                     SUM(estimated_input_tokens) AS input_tokens,
                     SUM(estimated_output_tokens) AS output_tokens
                 FROM ai_usage_events
-                WHERE timestamp >= ?
+                WHERE {filters}
                 ''',
-                (float(since_ts),),
+                tuple(params),
             ).fetchone()
             by_feature = conn.execute(
-                '''
+                f'''
                 SELECT feature, COUNT(*) AS requests,
                        SUM(estimated_input_tokens + estimated_output_tokens) AS tokens
                 FROM ai_usage_events
-                WHERE timestamp >= ?
+                WHERE {filters}
                 GROUP BY feature
                 ''',
-                (float(since_ts),),
+                tuple(params),
             ).fetchall()
         return {
             'requests': int(row['requests'] or 0) if row else 0,
@@ -733,9 +746,35 @@ class DatabaseManager:
     def get_cycle_replay_snapshots(self, limit=100, cycle_id=None):
         return fetch_cycle_replay_snapshots(self._get_connection, limit=limit, cycle_id=cycle_id)
 
+    def enqueue_external_signal(self, source, symbol, action, raw_payload, status="pending"):
+        return webhook_db.enqueue_signal(
+            self._get_connection,
+            source=source,
+            symbol=symbol,
+            action=action,
+            raw_payload=raw_payload,
+            status=status,
+        )
+
+    def list_external_signals(self, status=None, limit=50):
+        return webhook_db.list_signals(self._get_connection, status=status, limit=limit)
+
+    def update_external_signal(self, signal_id, status, notes=""):
+        return webhook_db.update_signal_status(
+            self._get_connection, signal_id, status, notes=notes
+        )
+
     def update_highest_price(self, symbol, highest_price):
         with self._get_connection() as conn:
             conn.execute('UPDATE open_positions SET highest_price = ? WHERE symbol = ?', (highest_price, symbol))
+            conn.commit()
+
+    def update_open_position_amount(self, symbol, amount):
+        with self._get_connection() as conn:
+            conn.execute(
+                'UPDATE open_positions SET amount = ? WHERE symbol = ?',
+                (float(amount or 0), symbol),
+            )
             conn.commit()
 
     def update_position_extra_data(self, symbol, extra_data):
@@ -748,15 +787,18 @@ class DatabaseManager:
             conn.execute('DELETE FROM open_positions WHERE symbol = ?', (symbol,))
             conn.commit()
 
-    def close_position(self, symbol, exit_price, reason, sold_amount=None):
+    def close_position(self, symbol, exit_price, reason, sold_amount=None, *, sync_journal=True):
         """
         Cierra (total o parcialmente) una posición abierta: registra el trade y
         actualiza o elimina la fila en open_positions. sold_amount: cantidad
         vendida en exchange (si difiere de la DB por fees/redondeo).
+
+        sync_journal: si True, enlaza el cierre al decision_journal (entry_decision_id
+        o fila nueva ligada al trade_id). Si False, el llamador actualiza el journal.
         """
         with self._get_connection() as conn:
             cursor = conn.execute(
-                'SELECT entry_price, amount FROM open_positions WHERE symbol = ?',
+                'SELECT entry_price, amount, extra_data FROM open_positions WHERE symbol = ?',
                 (symbol,)
             )
             row = cursor.fetchone()
@@ -765,6 +807,7 @@ class DatabaseManager:
 
             entry_price = float(row['entry_price'] or 0)
             db_amount = float(row['amount'] or 0)
+            extra_data = row['extra_data'] if row else None
 
             qty = float(sold_amount) if sold_amount is not None else db_amount
             qty = min(qty, db_amount)
@@ -776,10 +819,25 @@ class DatabaseManager:
             else:
                 pnl_pct = 0.0
 
-            conn.execute('''
+            ts = time.time()
+            trade_cur = conn.execute('''
                 INSERT INTO trades (symbol, side, price, amount, reason, pnl_pct, timestamp)
                 VALUES (?, ?, ?, ?, ?, ?, ?)
-            ''', (symbol, 'sell', float(exit_price), qty, reason, pnl_pct, time.time()))
+            ''', (symbol, 'sell', float(exit_price), qty, reason, pnl_pct, ts))
+            trade_id = trade_cur.lastrowid
+
+            if sync_journal and trade_id:
+                apply_closure_to_journal(
+                    conn,
+                    symbol=symbol,
+                    exit_price=float(exit_price),
+                    qty=qty,
+                    pnl_pct=pnl_pct,
+                    reason=reason,
+                    extra_data=extra_data,
+                    trade_id=int(trade_id),
+                    ts=ts,
+                )
 
             remaining = db_amount - qty
             dust_usd = remaining * float(exit_price) if exit_price else 0.0
@@ -990,6 +1048,28 @@ class DatabaseManager:
                 params=(limit,),
             )
 
+    def get_closed_decision_journal(self, limit=500):
+        """Rows with realized PnL (closed round-trips), newest first."""
+        limit = max(1, min(int(limit), 5000))
+        with self._get_connection() as conn:
+            return pd.read_sql_query(
+                '''
+                SELECT * FROM decision_journal
+                WHERE realized_pnl_pct IS NOT NULL
+                ORDER BY COALESCE(updated_at, timestamp) DESC
+                LIMIT ?
+                ''',
+                conn,
+                params=(limit,),
+            )
+
+    def backfill_journal_closures_from_trades(self, limit=5000) -> int:
+        """Idempotent backfill of journal closures from historical sell trades."""
+        with self._get_connection() as conn:
+            inserted = backfill_journal_closures_from_trades(conn, limit=limit)
+            conn.commit()
+        return inserted
+
     def get_decision_metrics(self, limit=500):
         df = self.get_decision_journal(limit=limit)
         if df.empty:
@@ -1047,6 +1127,26 @@ class DatabaseManager:
             'provider_stats': grouped_stats('provider'),
             'regime_stats': grouped_stats('regime'),
         }
+
+    def count_recent_exit_reasons(self, symbol, reason_substrings=(), hours=24.0):
+        return _count_recent_exit_reasons(
+            self._get_connection, symbol, reason_substrings, hours
+        )
+
+    def get_symbol_journal_expectancy(self, symbol, limit=200):
+        sym = str(symbol or "").upper()
+        df = self.get_decision_journal(limit=limit)
+        if df.empty or "symbol" not in df.columns:
+            return {"trades": 0, "expectancy_pct": 0.0}
+        df = df[df["symbol"].astype(str).str.upper() == sym]
+        realized = pd.to_numeric(
+            df["realized_pnl_pct"] if "realized_pnl_pct" in df.columns else pd.Series([None] * len(df)),
+            errors="coerce",
+        )
+        closed = realized.dropna()
+        if closed.empty:
+            return {"trades": 0, "expectancy_pct": 0.0}
+        return {"trades": int(len(closed)), "expectancy_pct": round(float(closed.mean()), 4)}
 
     def get_adaptive_edge_snapshot(self, limit=1000, min_trades=5):
         """

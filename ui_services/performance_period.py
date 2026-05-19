@@ -4,23 +4,43 @@ from datetime import datetime, time as dt_time, timedelta
 
 import pandas as pd
 
+from i18n import _
 
-PERFORMANCE_PRESETS = (
-    "Hoy 00:00",
-    "Última hora",
-    "Últimas 24h",
-    "Inicio disponible",
-    "Personalizado",
+PERFORMANCE_PRESET_IDS = (
+    "today",
+    "last_hour",
+    "last_24h",
+    "earliest",
+    "from_active_checkpoint",
+    "custom",
 )
 
+# Backward compatibility
+PERFORMANCE_PRESETS = PERFORMANCE_PRESET_IDS
 
-def preset_start_datetime(preset: str, now: datetime | None = None) -> datetime | None:
+
+def performance_preset_label(preset_id: str) -> str:
+    key = f"HIST_PRESET_{preset_id.upper()}"
+    text = _(key)
+    return text if text != key else preset_id
+
+
+def preset_start_datetime(
+    preset_id: str,
+    now: datetime | None = None,
+    *,
+    active_checkpoint: dict | None = None,
+) -> datetime | None:
     now = now or datetime.now()
-    if preset == "Hoy 00:00":
+    if preset_id == "from_active_checkpoint":
+        if active_checkpoint and active_checkpoint.get("created_at"):
+            return datetime.fromtimestamp(float(active_checkpoint["created_at"]))
+        return None
+    if preset_id == "today":
         return datetime.combine(now.date(), dt_time.min)
-    if preset == "Última hora":
+    if preset_id == "last_hour":
         return now - timedelta(hours=1)
-    if preset == "Últimas 24h":
+    if preset_id == "last_24h":
         return now - timedelta(hours=24)
     return None
 
@@ -39,31 +59,53 @@ def load_equity_history(db, limit: int = 5000) -> pd.DataFrame:
     return out
 
 
-def compute_period_performance(db, current_equity: float, start_dt: datetime | None) -> dict:
+def compute_period_performance(
+    db,
+    current_equity: float,
+    start_dt: datetime | None,
+    *,
+    start_equity: float | None = None,
+) -> dict:
     df = load_equity_history(db)
     current_equity = float(current_equity or 0.0)
-    if df.empty:
+    fixed_start_equity = start_equity is not None
+    if df.empty and not fixed_start_equity:
         return {
             "ok": False,
-            "reason": "Sin historial de equity todavía.",
+            "reason": _("HIST_PERF_NO_EQUITY_HISTORY"),
             "current_equity": current_equity,
             "period_df": df,
         }
 
     if start_dt is None:
-        period_df = df.copy()
+        period_df = df.copy() if not df.empty else pd.DataFrame()
     else:
         start_ts = pd.Timestamp(start_dt)
-        period_df = df[df["timestamp"] >= start_ts].copy()
-        if period_df.empty:
+        period_df = df[df["timestamp"] >= start_ts].copy() if not df.empty else pd.DataFrame()
+        if period_df.empty and not df.empty:
             period_df = df.tail(1).copy()
 
-    start_row = period_df.iloc[0]
-    start_equity = float(start_row["total_value"] or 0.0)
-    pnl_usd = current_equity - start_equity
-    pnl_pct = (pnl_usd / start_equity * 100.0) if start_equity > 0 else 0.0
+    if fixed_start_equity:
+        start_equity_val = float(start_equity or 0.0)
+        start_ts_used = pd.Timestamp(start_dt) if start_dt is not None else pd.Timestamp.now()
+    elif period_df.empty:
+        return {
+            "ok": False,
+            "reason": _("HIST_PERF_NO_EQUITY_HISTORY"),
+            "current_equity": current_equity,
+            "period_df": period_df,
+        }
+    else:
+        start_row = period_df.iloc[0]
+        start_equity_val = float(start_row["total_value"] or 0.0)
+        start_ts_used = start_row["timestamp"]
+    pnl_usd = current_equity - start_equity_val
+    pnl_pct = (pnl_usd / start_equity_val * 100.0) if start_equity_val > 0 else 0.0
 
-    curve_df = period_df[["timestamp", "total_value"]].copy()
+    if not period_df.empty and "timestamp" in period_df.columns and "total_value" in period_df.columns:
+        curve_df = period_df[["timestamp", "total_value"]].copy()
+    else:
+        curve_df = pd.DataFrame(columns=["timestamp", "total_value"])
     if curve_df.empty or curve_df.iloc[-1]["total_value"] != current_equity:
         curve_df = pd.concat(
             [
@@ -72,16 +114,16 @@ def compute_period_performance(db, current_equity: float, start_dt: datetime | N
             ],
             ignore_index=True,
         )
-    curve_df["pnl_usd"] = curve_df["total_value"] - start_equity
+    curve_df["pnl_usd"] = curve_df["total_value"] - start_equity_val
 
     return {
         "ok": True,
-        "start_ts": start_row["timestamp"],
-        "start_equity": start_equity,
+        "start_ts": start_ts_used,
+        "start_equity": start_equity_val,
         "current_equity": current_equity,
         "pnl_usd": pnl_usd,
         "pnl_pct": pnl_pct,
         "points": len(curve_df),
         "period_df": curve_df,
+        "fixed_start_equity": fixed_start_equity,
     }
-

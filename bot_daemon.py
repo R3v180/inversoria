@@ -14,7 +14,14 @@ from decision_engine import DecisionEngine
 from market_context import MarketContext
 from i18n import _
 from bot_runtime.balance_mismatch import position_balance_mismatches
+from bot_runtime.funding import funding_blocks_long
+from bot_runtime.limit_entry import should_skip_buy_until_pullback
+from bot_runtime.liquidity import passes_liquidity_filter
+from bot_runtime.protections import evaluate_buy_protections
+from bot_runtime.inventory_skew import inventory_skew_multiplier
+from bot_runtime.position_monitor import monitor_open_positions
 from bot_runtime.risk_sizing import cap_size_to_capacity
+from bot_runtime.webhook_processor import process_pending_signals
 
 
 def _configure_console_encoding():
@@ -76,6 +83,16 @@ class BotDaemon:
             self._launcher_arm_until = 0
 
         self.log_message(_('LOG_DAEMON_INIT', lang=self.u_lang))
+        self._webhook_server = None
+        if bool(getattr(config, "WEBHOOK_TRADINGVIEW_ENABLED", False)):
+            try:
+                from webhook_server import start_webhook_server
+                self._webhook_server = start_webhook_server(db=self.db, daemon=True)
+                self.log_message(
+                    f"[WEBHOOK] TradingView listener port={getattr(config, 'WEBHOOK_SERVER_PORT', 8765)}"
+                )
+            except Exception as exc:
+                self.log_message(f"[WEBHOOK] No se pudo iniciar servidor: {exc}")
 
     def log_message(self, msg):
         text = f"[DAEMON] {msg}"
@@ -230,6 +247,187 @@ class BotDaemon:
         if remaining <= 0:
             return {"active": False, "remaining": 0}
         return {"active": True, "remaining": remaining, "until": until}
+
+    def _monitor_open_positions_subcycle(self):
+        monitor_open_positions(self)
+
+    def _execute_position_sell(
+        self,
+        symbol,
+        pos,
+        current_price,
+        sell_res,
+        decision,
+        *,
+        decision_journal_id=None,
+        consultive_mode=None,
+        provider="Bot",
+        pending_order_symbols=None,
+        open_positions=None,
+    ):
+        consultive = self.is_consultive_mode() if consultive_mode is None else consultive_mode
+        if consultive:
+            self.log_message(
+                f"[CONSULTIVE] {symbol} SELL | px={current_price:.6g} | "
+                f"reason={self._short_reason(sell_res['reason'], 80)} | "
+                f"score={self._safe_float(decision.get('decision_score'), 0):.2f}"
+            )
+            if decision_journal_id:
+                self.db.update_decision_journal(
+                    decision_journal_id,
+                    execution_status="consultive",
+                    execution_side="sell",
+                    block_reason="TRADING_EXECUTION_MODE=consultive",
+                    exit_reason=sell_res['reason'],
+                )
+            return False
+
+        sell_fraction = self._clamp(self._safe_float(sell_res.get("sell_fraction"), 1.0), 0.0, 1.0)
+        requested_sell = self._safe_float(pos.get('amount'), 0.0) * sell_fraction
+        balance_state = self._sellable_balance_snapshot(symbol, current_price=current_price, check_slippage=False)
+        free_amount = self._safe_float(balance_state.get("amount"), 0.0)
+        if free_amount > 0:
+            requested_sell = min(requested_sell, free_amount)
+        validation = self.exchange.prevalidate_market_sell(
+            symbol,
+            requested_sell,
+            price_hint=current_price,
+            free_override=free_amount if free_amount > 0 else None,
+        )
+        if not validation.get("ok"):
+            errors = ",".join(validation.get("errors") or ["UNKNOWN"])
+            reason = "NO_SELLABLE_BALANCE" if any(
+                err in errors for err in ("NO_FREE_BALANCE", "INSUFFICIENT_VIRTUAL", "ZERO_AMOUNT")
+            ) else "SELL_PREVALIDATION"
+            notional = self._safe_float(validation.get("notional"), 0.0)
+            dust_cap = min(
+                float(getattr(config, "DUST_SELL_MIN_USDT", 5) or 5),
+                float(getattr(config, "MIN_POSITION_USDT", 5) or 5),
+            )
+            if reason == "SELL_PREVALIDATION" and notional < max(0.5, dust_cap * 0.15):
+                log_key = f"dust_sell:{symbol}"
+                if log_key not in getattr(self, "_dust_sell_skip_logged", set()):
+                    if not hasattr(self, "_dust_sell_skip_logged"):
+                        self._dust_sell_skip_logged = set()
+                    self._dust_sell_skip_logged.add(log_key)
+                    self.log_message(
+                        f"[SKIP] {symbol} SELL ignored | reason=DUST_UNSALEABLE | "
+                        f"free={self._safe_float(validation.get('free_amount')):.8g} | "
+                        f"notional={notional:.4f} USDT"
+                    )
+            else:
+                self.log_message(
+                    f"[BLOCK] {symbol} SELL ignored | reason={reason} | "
+                    f"errors={errors} | requested={requested_sell:.8g} | "
+                    f"free={self._safe_float(validation.get('free_amount')):.8g} | "
+                    f"notional={notional:.4f}"
+                )
+            if decision_journal_id:
+                self.db.update_decision_journal(
+                    decision_journal_id,
+                    execution_status="blocked_sell_prevalidation",
+                    execution_side="sell",
+                    block_reason=errors,
+                    exit_reason=sell_res['reason'],
+                )
+            return False
+
+        local_order_id = self._new_local_order_id(symbol, "sell")
+        order_result = self.exchange.execute_order(
+            symbol, 'sell', requested_sell, current_price, client_order_id=local_order_id
+        )
+        self._record_order_event(
+            local_order_id, symbol, "sell", requested_sell, current_price, order_result, decision_journal_id
+        )
+        if not self._is_filled_order_status(order_result):
+            if str(order_result.get("status") or "").lower() == "open":
+                if pending_order_symbols is not None:
+                    pending_order_symbols.add(symbol)
+                self.log_message(
+                    f"[PENDING] {symbol} SELL order open without fill | "
+                    f"order={local_order_id} | reason={self._short_reason(sell_res['reason'], 80)}"
+                )
+                if decision_journal_id:
+                    self.db.update_decision_journal(
+                        decision_journal_id,
+                        execution_status="pending_sell_order",
+                        execution_side="sell",
+                        block_reason=f"ORDER_PENDING_NO_FILL order_id={local_order_id}",
+                    )
+                return False
+            self.log_message(f"[ERROR] {symbol} SELL failed | reason={order_result.get('reason', 'Error desconocido')}")
+            if decision_journal_id:
+                self.db.update_decision_journal(
+                    decision_journal_id,
+                    execution_status="failed",
+                    execution_side="sell",
+                    block_reason=str(order_result.get('reason', 'Error desconocido')),
+                )
+            return False
+
+        sold, executed_price = self._order_execution_details(order_result, requested_sell, current_price)
+        if sold <= 0:
+            sold = float(pos['amount'])
+        sold = min(sold, float(pos['amount']))
+        if executed_price <= 0:
+            executed_price = current_price
+        entry_extra = self._position_extra(pos)
+        entry_decision_id = entry_extra.get('entry_decision_id')
+        entry_price = float(pos.get('entry_price') or executed_price)
+        realized_pnl = ((float(executed_price) - entry_price) / entry_price) * 100 if entry_price else 0.0
+        sync_journal = not (decision_journal_id or entry_decision_id)
+        closed = self.db.close_position(
+            symbol,
+            executed_price,
+            sell_res['reason'],
+            sold_amount=sold,
+            sync_journal=sync_journal,
+        )
+        if not closed:
+            self.log_message(f"[WARN] {symbol} SELL executed but DB position was not found")
+            return False
+
+        if decision_journal_id:
+            self.db.update_decision_journal(
+                decision_journal_id,
+                execution_status=order_result.get('status', 'executed'),
+                execution_side="sell",
+                executed_price=float(executed_price),
+                executed_amount=float(sold),
+                realized_pnl_pct=realized_pnl,
+                exit_reason=sell_res['reason'],
+                block_reason=f"order_id={local_order_id}",
+            )
+        if entry_decision_id:
+            self.db.update_decision_journal(
+                entry_decision_id,
+                realized_pnl_pct=realized_pnl,
+                exit_reason=sell_res['reason'],
+            )
+        still = self.db.get_open_positions().get(symbol)
+        if still:
+            if sell_fraction < 0.999:
+                updated_extra = self._position_extra(still)
+                if sell_res.get("scaled_tp_stage") is not None:
+                    updated_extra["scaled_tp_stage"] = int(sell_res["scaled_tp_stage"])
+                else:
+                    updated_extra["partial_take_profit_done"] = True
+                    updated_extra["partial_take_profit_ts"] = time.time()
+                    updated_extra["partial_take_profit_order_id"] = local_order_id
+                still["extra_data"] = json.dumps(updated_extra)
+                self.db.update_position_extra_data(symbol, still["extra_data"])
+            if open_positions is not None:
+                open_positions[symbol] = still
+        else:
+            if open_positions is not None and symbol in open_positions:
+                del open_positions[symbol]
+            self._set_exit_cooldown(symbol, sell_res['reason'])
+        self.log_message(
+            f"[SELL] {symbol} qty={sold:.8g} | px={executed_price:.6g} | "
+            f"pnl={realized_pnl:+.2f}% | reason={self._short_reason(sell_res['reason'], 80)} | "
+            f"provider={provider} | order={local_order_id}"
+        )
+        return True
 
     def _trigger_kill_switch(self, reason, details=None):
         if not getattr(config, "KILL_SWITCH_ENABLED", True):
@@ -564,16 +762,17 @@ class BotDaemon:
             pass
 
         try:
-            ai_day = self.db.get_ai_usage_summary(time.time() - 86400)
-            max_requests = int(getattr(config, "AI_MAX_REQUESTS_PER_DAY", 0) or 0)
-            max_tokens = int(getattr(config, "AI_MAX_EST_TOKENS_PER_DAY", 0) or 0)
-            ai_exhausted = (
-                (max_requests > 0 and ai_day.get("requests", 0) >= max_requests)
-                or (max_tokens > 0 and ai_day.get("estimated_tokens", 0) >= max_tokens)
-            )
-            if ai_exhausted and not getattr(config, "AI_RULES_ONLY_ON_BUDGET_EXHAUSTED", True):
-                reasons.append("AI_BUDGET_EXHAUSTED")
-                details["ai_usage_24h"] = ai_day
+            if bool(getattr(config, "AI_ENABLE_LOCAL_BUDGET", False)):
+                ai_day = self.db.get_ai_usage_summary(time.time() - 86400, for_limits=True)
+                max_requests = int(getattr(config, "AI_MAX_REQUESTS_PER_DAY", 0) or 0)
+                max_tokens = int(getattr(config, "AI_MAX_EST_TOKENS_PER_DAY", 0) or 0)
+                ai_exhausted = (
+                    (max_requests > 0 and ai_day.get("requests", 0) >= max_requests)
+                    or (max_tokens > 0 and ai_day.get("estimated_tokens", 0) >= max_tokens)
+                )
+                if ai_exhausted and not getattr(config, "AI_RULES_ONLY_ON_BUDGET_EXHAUSTED", True):
+                    reasons.append("AI_BUDGET_EXHAUSTED")
+                    details["ai_usage_24h"] = ai_day
         except Exception:
             pass
 
@@ -672,6 +871,52 @@ class BotDaemon:
             for err in (errors or [])
         )
         return self._safe_float(value_usdt, 0.0) < self._safe_float(min_notional, 0.0) or below_market_min
+
+    def sync_open_positions_with_exchange(self, open_positions):
+        """Align DB position size with exchange; drop untradeable dust rows."""
+        if not open_positions or self.exchange.modo_simulacion:
+            return open_positions
+
+        dust_cap = min(
+            float(getattr(config, "DUST_SELL_MIN_USDT", 5) or 5),
+            float(getattr(config, "MIN_POSITION_USDT", 5) or 5),
+        )
+        for symbol in list(open_positions.keys()):
+            pos = open_positions.get(symbol) or {}
+            state = self._sellable_balance_snapshot(symbol, check_slippage=False)
+            exchange_amount = self._safe_float(state.get("amount"), 0.0)
+            value_usdt = self._safe_float(state.get("value"), 0.0)
+            status = str(state.get("status") or "")
+            tracked = self._safe_float(pos.get("amount"), 0.0)
+
+            if exchange_amount <= 0 and value_usdt <= 0:
+                self.db.remove_open_position(symbol)
+                open_positions.pop(symbol, None)
+                self.log_message(f"[SYNC] {symbol} removed | reason=NO_EXCHANGE_BALANCE")
+                continue
+
+            if value_usdt < max(0.5, dust_cap * 0.15) and status in {
+                "DUST_BELOW_MIN_ORDER",
+                "SELL_PREVALIDATION",
+                "NO_SELLABLE_BALANCE",
+            }:
+                self.db.remove_open_position(symbol)
+                open_positions.pop(symbol, None)
+                self.log_message(
+                    f"[SYNC] {symbol} removed dust position | qty={exchange_amount:.8g} | "
+                    f"value={value_usdt:.4f} USDT"
+                )
+                continue
+
+            if exchange_amount > tracked * 1.001 and abs(exchange_amount - tracked) > 1e-8:
+                self.db.update_open_position_amount(symbol, exchange_amount)
+                pos["amount"] = exchange_amount
+                open_positions[symbol] = pos
+                self.log_message(
+                    f"[SYNC] {symbol} amount aligned | db={tracked:.8g} -> exchange={exchange_amount:.8g} | "
+                    f"value={value_usdt:.2f} USDT"
+                )
+        return open_positions
 
     def _sellable_balance_snapshot(self, symbol, current_price=None, amount_override=None, check_slippage=False):
         try:
@@ -934,7 +1179,9 @@ class BotDaemon:
         else:
             raw_amount = base_amount * size_mult * adaptive_size_mult
 
-        amount_usdt = min(raw_amount, cap_amount, balance_usdt)
+        exposures = self.portfolio_exposures(open_positions)
+        skew = inventory_skew_multiplier(symbol, exposures, total_value, config)
+        amount_usdt = min(raw_amount * skew, cap_amount, balance_usdt)
         amount_usdt = max(0.0, amount_usdt)
         min_order = float(config.MIN_POSITION_USDT)
         if (
@@ -961,6 +1208,7 @@ class BotDaemon:
             "adaptive_adjustment": round(adaptive_adjustment, 4),
             "sizing_reason": reason,
             "portfolio_bucket": self.portfolio_bucket(symbol),
+            "inventory_skew_multiplier": round(skew, 4),
         }
 
     def cap_size_to_risk_capacity(self, symbol, amount_usdt, total_value, open_positions):
@@ -1339,7 +1587,17 @@ class BotDaemon:
                         decision_mode=getattr(config, "DECISION_MODE", "hybrid"),
                     )
                 cycle_sleep = max(15, int(getattr(config, 'DAEMON_CYCLE_SECONDS', 60)))
-                time.sleep(cycle_sleep)
+                monitor_sec = max(0, int(getattr(config, 'POSITION_MONITOR_INTERVAL_SEC', 20) or 0))
+                elapsed_sleep = 0
+                while elapsed_sleep < cycle_sleep:
+                    chunk = min(
+                        cycle_sleep - elapsed_sleep,
+                        monitor_sec if monitor_sec > 0 else (cycle_sleep - elapsed_sleep),
+                    )
+                    time.sleep(max(1, chunk))
+                    elapsed_sleep += chunk
+                    if monitor_sec > 0 and str(is_running).lower() == 'true':
+                        self._monitor_open_positions_subcycle()
             except Exception as e:
                 consecutive_errors = int(self._status_float("daemon_consecutive_errors", 0)) + 1
                 self.db.set_system_status("daemon_consecutive_errors", consecutive_errors)
@@ -1357,6 +1615,7 @@ class BotDaemon:
 
     def bot_iteration(self):
         cycle_start = time.time()
+        self._dust_sell_skip_logged = set()
         cycle_id = f"{int(cycle_start * 1000)}-{uuid.uuid4().hex[:8]}"
         self.update_daemon_status("scanning", cycle_started_at=cycle_start, cycle_id=cycle_id)
         self._audit_event("cycle_start", "Daemon cycle started", payload={"cycle_id": cycle_id})
@@ -1366,7 +1625,8 @@ class BotDaemon:
         scanned = 0
         skipped = {}
         consultive_mode = self.is_consultive_mode()
-        
+        process_pending_signals(self.db, config, log_fn=self.log_message)
+
         # El balance total ya incluye el valor de todas las criptos en USDT
         total_value = self.exchange.get_balance()
         self.db.log_equity(total_value)
@@ -1376,6 +1636,7 @@ class BotDaemon:
         
         # Para el cálculo de cuánto podemos comprar, necesitamos el cash (USDT) disponible
         open_positions = self.db.get_open_positions()
+        open_positions = self.sync_open_positions_with_exchange(open_positions)
         self._cycle_snapshot(
             cycle_id,
             "start",
@@ -1517,9 +1778,45 @@ class BotDaemon:
                     )
                 return False
 
-            amount_coin = amount_usdt / price
+            skip_pullback, order_price = should_skip_buy_until_pullback(price, config)
+            if skip_pullback:
+                self.log_message(
+                    f"[SKIP] {sym} BUY deferred | reason=LIMIT_PULLBACK | "
+                    f"px={price:.6g} > limit={order_price:.6g}"
+                )
+                if decision_journal_id:
+                    self.db.update_decision_journal(
+                        decision_journal_id,
+                        execution_status="deferred_limit_pullback",
+                        block_reason=f"LIMIT_PULLBACK target={order_price:.8g}",
+                    )
+                return False
+
+            blocked_funding, funding_reason = funding_blocks_long(sym, self.exchange, config)
+            if blocked_funding:
+                self.log_message(
+                    f"[SKIP] {sym} BUY skipped | reason=FUNDING_VETO | detail={funding_reason}"
+                )
+                if decision_journal_id:
+                    self.db.update_decision_journal(
+                        decision_journal_id,
+                        execution_status="blocked_funding",
+                        block_reason=funding_reason,
+                    )
+                return False
+
+            use_limit = bool(getattr(config, "LIMIT_BUY_ENABLED", False))
+            exec_price = float(order_price or price)
+            amount_coin = amount_usdt / exec_price if exec_price > 0 else 0
             local_order_id = self._new_local_order_id(sym, "buy")
-            res = self.exchange.execute_order(sym, 'buy', amount_coin, price, client_order_id=local_order_id)
+            res = self.exchange.execute_order(
+                sym,
+                'buy',
+                amount_coin,
+                exec_price,
+                client_order_id=local_order_id,
+                order_type='limit' if use_limit else 'market',
+            )
             self._record_order_event(local_order_id, sym, "buy", amount_coin, price, res, decision_journal_id)
             if self._is_filled_order_status(res):
                 executed_amount, executed_price = self._order_execution_details(res, amount_coin, price)
@@ -1881,132 +2178,19 @@ class BotDaemon:
                 # Trailing Stop y AI Sell
                 sell_res = self.logic.check_sell_conditions(symbol, current_price, pos, decision)
                 if sell_res['should_sell']:
-                    if consultive_mode:
-                        self.log_message(
-                            f"[CONSULTIVE] {symbol} SELL | px={current_price:.6g} | "
-                            f"reason={self._short_reason(sell_res['reason'], 80)} | "
-                            f"score={self._safe_float(decision.get('decision_score'), 0):.2f}"
-                        )
-                        self.db.update_decision_journal(
-                            decision_journal_id,
-                            execution_status="consultive",
-                            execution_side="sell",
-                            block_reason="TRADING_EXECUTION_MODE=consultive",
-                            exit_reason=sell_res['reason'],
-                        )
-                        continue
-                    sell_fraction = self._safe_float(sell_res.get("sell_fraction"), 1.0)
-                    sell_fraction = self._clamp(sell_fraction, 0.0, 1.0)
-                    requested_sell = self._safe_float(pos.get('amount'), 0.0) * sell_fraction
-                    validation = self.exchange.prevalidate_market_sell(
+                    self._execute_position_sell(
                         symbol,
-                        requested_sell,
-                        price_hint=current_price,
-                    )
-                    if not validation.get("ok"):
-                        errors = ",".join(validation.get("errors") or ["UNKNOWN"])
-                        reason = "NO_SELLABLE_BALANCE" if any(
-                            err in errors for err in ("NO_FREE_BALANCE", "INSUFFICIENT_VIRTUAL", "ZERO_AMOUNT")
-                        ) else "SELL_PREVALIDATION"
-                        self.log_message(
-                            f"[BLOCK] {symbol} SELL ignored | reason={reason} | "
-                            f"errors={errors} | requested={self._safe_float(pos.get('amount')):.8g} | "
-                            f"free={self._safe_float(validation.get('free_amount')):.8g} | "
-                            f"notional={self._safe_float(validation.get('notional')):.4f}"
-                        )
-                        self.db.update_decision_journal(
-                            decision_journal_id,
-                            execution_status="blocked_sell_prevalidation",
-                            execution_side="sell",
-                            block_reason=errors,
-                            exit_reason=sell_res['reason'],
-                        )
-                        continue
-                    local_order_id = self._new_local_order_id(symbol, "sell")
-                    order_result = self.exchange.execute_order(symbol, 'sell', requested_sell, current_price, client_order_id=local_order_id)
-                    self._record_order_event(
-                        local_order_id,
-                        symbol,
-                        "sell",
-                        requested_sell,
+                        pos,
                         current_price,
-                        order_result,
-                        decision_journal_id,
+                        sell_res,
+                        decision,
+                        decision_journal_id=decision_journal_id,
+                        consultive_mode=consultive_mode,
+                        provider=provider,
+                        pending_order_symbols=pending_order_symbols,
+                        open_positions=open_positions,
                     )
-                    if self._is_filled_order_status(order_result):
-                        sold, executed_price = self._order_execution_details(
-                            order_result,
-                            requested_sell,
-                            current_price,
-                        )
-                        if sold <= 0:
-                            sold = float(pos['amount'])
-                        sold = min(sold, float(pos['amount']))
-                        if executed_price <= 0:
-                            executed_price = current_price
-                        entry_extra = self._position_extra(pos)
-                        entry_decision_id = entry_extra.get('entry_decision_id')
-                        entry_price = float(pos.get('entry_price') or executed_price)
-                        realized_pnl = ((float(executed_price) - entry_price) / entry_price) * 100 if entry_price else 0.0
-                        closed = self.db.close_position(symbol, executed_price, sell_res['reason'], sold_amount=sold)
-                        if closed:
-                            self.db.update_decision_journal(
-                                decision_journal_id,
-                                execution_status=order_result.get('status', 'executed'),
-                                execution_side="sell",
-                                executed_price=float(executed_price),
-                                executed_amount=float(sold),
-                                realized_pnl_pct=realized_pnl,
-                                exit_reason=sell_res['reason'],
-                                block_reason=f"order_id={local_order_id}",
-                            )
-                            if entry_decision_id:
-                                self.db.update_decision_journal(
-                                    entry_decision_id,
-                                    realized_pnl_pct=realized_pnl,
-                                    exit_reason=sell_res['reason'],
-                                )
-                            still = self.db.get_open_positions().get(symbol)
-                            if still:
-                                if sell_fraction < 0.999:
-                                    updated_extra = self._position_extra(still)
-                                    updated_extra["partial_take_profit_done"] = True
-                                    updated_extra["partial_take_profit_ts"] = time.time()
-                                    updated_extra["partial_take_profit_order_id"] = local_order_id
-                                    still["extra_data"] = json.dumps(updated_extra)
-                                    self.db.update_position_extra_data(symbol, still["extra_data"])
-                                open_positions[symbol] = still
-                            else:
-                                del open_positions[symbol]
-                                self._set_exit_cooldown(symbol, sell_res['reason'])
-                            self.log_message(
-                                f"[SELL] {symbol} qty={sold:.8g} | px={executed_price:.6g} | "
-                                f"pnl={realized_pnl:+.2f}% | reason={self._short_reason(sell_res['reason'], 80)} | "
-                                f"provider={provider} | order={local_order_id}"
-                            )
-                        else:
-                            self.log_message(f"[WARN] {symbol} SELL executed but DB position was not found")
-                    else:
-                        if str(order_result.get("status") or "").lower() == "open":
-                            pending_order_symbols.add(symbol)
-                            self.log_message(
-                                f"[PENDING] {symbol} SELL order open without fill | "
-                                f"order={local_order_id} | reason={self._short_reason(sell_res['reason'], 80)}"
-                            )
-                            self.db.update_decision_journal(
-                                decision_journal_id,
-                                execution_status="pending_sell_order",
-                                execution_side="sell",
-                                block_reason=f"ORDER_PENDING_NO_FILL order_id={local_order_id}",
-                            )
-                            continue
-                        self.log_message(f"[ERROR] {symbol} SELL failed | reason={order_result.get('reason', 'Error desconocido')}")
-                        self.db.update_decision_journal(
-                            decision_journal_id,
-                            execution_status="failed",
-                            execution_side="sell",
-                            block_reason=str(order_result.get('reason', 'Error desconocido')),
-                        )
+                    continue
                 elif raw_action == "SELL":
                     confidence = self._safe_float(decision.get('confidence'), 0.0)
                     threshold = self._sell_confidence_threshold(decision)
@@ -2104,6 +2288,43 @@ class BotDaemon:
                     continue
 
                 if action == 'BUY':
+                    prot = evaluate_buy_protections(self.db, symbol, config)
+                    if not prot.get("ok"):
+                        skipped["PROTECTION"] = skipped.get("PROTECTION", 0) + 1
+                        self.log_message(
+                            f"[SKIP] {symbol} BUY skipped | reason=PROTECTION | "
+                            f"details={'; '.join(prot.get('reasons', []))}"
+                        )
+                        self.db.update_decision_journal(
+                            decision_journal_id,
+                            execution_status="blocked_protection",
+                            block_reason="; ".join(prot.get("reasons", [])),
+                        )
+                        continue
+                    liq_ok, liq_reason = passes_liquidity_filter(self.exchange, symbol, config)
+                    if not liq_ok:
+                        skipped["ILLIQUID"] = skipped.get("ILLIQUID", 0) + 1
+                        self.log_message(
+                            f"[SKIP] {symbol} BUY skipped | reason=ILLIQUID | detail={liq_reason}"
+                        )
+                        self.db.update_decision_journal(
+                            decision_journal_id,
+                            execution_status="blocked_liquidity",
+                            block_reason=liq_reason,
+                        )
+                        continue
+                    fund_blocked, fund_reason = funding_blocks_long(symbol, self.exchange, config)
+                    if fund_blocked:
+                        skipped["FUNDING"] = skipped.get("FUNDING", 0) + 1
+                        self.log_message(
+                            f"[SKIP] {symbol} BUY skipped | reason=FUNDING_VETO | detail={fund_reason}"
+                        )
+                        self.db.update_decision_journal(
+                            decision_journal_id,
+                            execution_status="blocked_funding",
+                            block_reason=fund_reason,
+                        )
+                        continue
                     cooldown = self._buy_cooldown_status(symbol)
                     if cooldown.get("active"):
                         skipped["SYMBOL_COOLDOWN"] = skipped.get("SYMBOL_COOLDOWN", 0) + 1

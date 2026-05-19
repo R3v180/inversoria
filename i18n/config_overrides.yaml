@@ -1,0 +1,69 @@
+# Human-reviewed labels (optional help). sync_cfg_i18n.py merges these over auto-generated text.
+
+labels:
+  RISK_PER_TRADE:
+    es: "Riesgo por operación (%)"
+    en: "Risk per trade (%)"
+  MIN_AUTO_DECISION_SCORE:
+    es: "Puntuación mínima para auto-ejecutar"
+    en: "Minimum score for auto-execution"
+  TRADING_EXECUTION_MODE:
+    es: "Modo de ejecución de órdenes"
+    en: "Order execution mode"
+  DECISION_MODE:
+    es: "Modo de decisión (IA / reglas)"
+    en: "Decision mode (AI / rules)"
+  MODO_SIMULACION:
+    es: "Modo simulación"
+    en: "Simulation mode"
+  PRESUPUESTO_INICIAL:
+    es: "Capital inicial (USDT)"
+    en: "Initial capital (USDT)"
+  MONEDAS:
+    es: "Universo de símbolos"
+    en: "Trading symbols universe"
+  PORTFOLIO_BUCKETS:
+    es: "Buckets de cartera (JSON)"
+    en: "Portfolio buckets (JSON)"
+  PROTECTIONS_ENABLED:
+    es: "Protecciones Jesse activas"
+    en: "Jesse protections enabled"
+  PROMPT_SENTIMENT:
+    es: "Prompt — sentimiento de mercado"
+    en: "Prompt — market sentiment"
+  PROMPT_DECISION:
+    es: "Prompt — decisión de entrada"
+    en: "Prompt — entry decision"
+  PROMPT_CURATION:
+    es: "Prompt — curación de noticias"
+    en: "Prompt — news curation"
+
+helps:
+  RISK_PER_TRADE:
+    es: "Fracción del capital arriesgada por operación (0.02 = 2%)."
+    en: "Fraction of capital risked per trade (0.02 = 2%)."
+  WEBHOOK_TRADINGVIEW_SECRET:
+    es: "Passphrase del alerta TradingView. No se exporta en plantillas."
+    en: "TradingView alert passphrase. Not exported in presets."
+  MODO_SIMULACION:
+    es: "Si está activo, no se envían órdenes reales al exchange."
+    en: "When enabled, no real orders are sent to the exchange."
+
+choices:
+  TRADING_EXECUTION_MODE:
+    auto:
+      es: "Automático"
+      en: "Automatic"
+    consultive:
+      es: "Consultivo (señales)"
+      en: "Consultive (signals)"
+  DECISION_MODE:
+    ai_aggressive:
+      es: "IA agresiva"
+      en: "Aggressive AI"
+    hybrid:
+      es: "Híbrido"
+      en: "Hybrid"
+    rules:
+      es: "Reglas / quant"
+      en: "Rules / quant"

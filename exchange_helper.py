@@ -371,9 +371,20 @@ class ExchangeHelper:
                     return []
                 time.sleep(1.5) # Esperar 1.5s antes de reintentar
 
-    def execute_order(self, symbol, side, amount, price=None, force_market=False, client_order_id=None):
+    def execute_order(
+        self,
+        symbol,
+        side,
+        amount,
+        price=None,
+        force_market=False,
+        client_order_id=None,
+        order_type='market',
+    ):
         with self._order_lock:
-            return self._execute_order_inner(symbol, side, amount, price, force_market, client_order_id)
+            return self._execute_order_inner(
+                symbol, side, amount, price, force_market, client_order_id, order_type
+            )
 
     def _reconcile_created_order(self, exchange, symbol, order):
         order_id = order.get('id')
@@ -415,7 +426,16 @@ class ExchangeHelper:
             except Exception as e:
                 return {"status": "failed", "reason": self._sanitize_error(e)}
 
-    def _execute_order_inner(self, symbol, side, amount, price=None, force_market=False, client_order_id=None):
+    def _execute_order_inner(
+        self,
+        symbol,
+        side,
+        amount,
+        price=None,
+        force_market=False,
+        client_order_id=None,
+        order_type='market',
+    ):
         """
         Ejecuta una orden. Si es simulación, actualiza los saldos virtuales.
         En simulación siempre asumimos que la orden se ejecuta al precio de mercado (ticker) actual.
@@ -425,7 +445,18 @@ class ExchangeHelper:
             self._refresh_simulated_state()
             if price is None:
                 price = self.get_ticker(symbol)
-            
+            market_px = self.get_ticker(symbol)
+            if side == 'buy' and str(order_type).lower() == 'limit' and market_px and price:
+                if float(market_px) > float(price):
+                    return {
+                        "status": "open",
+                        "side": side,
+                        "price": price,
+                        "amount": amount,
+                        "reason": "LIMIT_NOT_TOUCHED",
+                    }
+                price = min(float(price), float(market_px))
+
             if side == 'buy':
                 cost = amount * price
                 if self.virtual_balance >= cost:
@@ -506,11 +537,24 @@ class ExchangeHelper:
                             if slippage > SELL_SLIPPAGE_LIMIT:
                                 return {"status": "failed", "reason": f"Slippage demasiado alto ({slippage*100:.2f}%)"}
 
-                    # Ejecutar orden real
                     order_params = build_client_order_params(config, client_order_id)
-                    order = self._call_private(
-                        lambda ex: ex.create_market_order(symbol, side, formatted_amount, order_params)
+                    use_limit = (
+                        side == 'buy'
+                        and str(order_type).lower() == 'limit'
+                        and price
+                        and hasattr(exchange, 'create_limit_buy_order')
                     )
+                    if use_limit:
+                        limit_px = float(exchange.price_to_precision(symbol, price))
+                        order = self._call_private(
+                            lambda ex: ex.create_limit_buy_order(
+                                symbol, formatted_amount, limit_px, order_params
+                            )
+                        )
+                    else:
+                        order = self._call_private(
+                            lambda ex: ex.create_market_order(symbol, side, formatted_amount, order_params)
+                        )
                     order = attach_client_order_id(order, client_order_id)
                     order = self._reconcile_created_order(exchange, symbol, order)
                     

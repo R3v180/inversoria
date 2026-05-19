@@ -28,8 +28,10 @@ APP_LOGO = os.path.join(APP_ROOT, "assets", "inversoria_logo.png")
 if os.path.exists(APP_LOGO) and "_brand_logo_b64" not in st.session_state:
     with open(APP_LOGO, "rb") as logo_file:
         st.session_state["_brand_logo_b64"] = base64.b64encode(logo_file.read()).decode("ascii")
+from i18n import _
+
 st.set_page_config(
-    page_title="InversorIA Terminal",
+    page_title=_("APP_PAGE_TITLE"),
     layout="wide",
     page_icon=APP_LOGO if os.path.exists(APP_LOGO) else "📈",
 )
@@ -169,8 +171,22 @@ def log_message(msg):
     logging.info(msg)
 
 # --- ENRUTADOR UI ---
-from i18n import _
 from ui_onboarding import render_onboarding, is_onboarding_done
+from ui_services.checkpoint_dialog import offer_checkpoint_after_event, render_pending_checkpoint_dialog
+
+
+def _revert_mode_change():
+    state = st.session_state.pop("_mode_change_revert_state", None)
+    if not state:
+        return
+    prev_sim = bool(state.get("prev_sim"))
+    was_running = bool(state.get("was_running"))
+    save_settings({"MODO_SIMULACION": prev_sim})
+    st.session_state.current_mode = prev_sim
+    st.session_state.db = new_database_manager()
+    st.session_state.db.set_system_status("is_running", "true" if was_running else "false")
+    st.session_state.db.set_system_status("simulacion", "true" if prev_sim else "false")
+    st.session_state.exchange = ExchangeHelper(modo_simulacion=prev_sim)
 
 # --- CONTROL DE FLUJO (ONBOARDING) ---
 if not is_onboarding_done():
@@ -183,6 +199,9 @@ st.session_state.sentiment.set_user_context(
     st.session_state.get('language', 'es')
 )
 
+if "db" in st.session_state and "exchange" in st.session_state:
+    render_pending_checkpoint_dialog(st.session_state.db, st.session_state.exchange)
+
 with st.sidebar:
     if os.path.exists(APP_LOGO):
         st.markdown(
@@ -190,7 +209,7 @@ with st.sidebar:
             <div class="iversoria-brand">
                 <img src="data:image/png;base64,{st.session_state.get('_brand_logo_b64', '')}" />
                 <div>
-                    <div class="iversoria-brand-title">InversorIA</div>
+                    <div class="iversoria-brand-title">{_('APP_BRAND')}</div>
                     <div class="iversoria-brand-subtitle">{_('WELCOME_SUBTITLE')}</div>
                 </div>
             </div>
@@ -198,7 +217,7 @@ with st.sidebar:
             unsafe_allow_html=True,
         )
     else:
-        st.markdown("### InversorIA")
+        st.markdown(f"### {_('APP_BRAND')}")
     st.markdown("---")
 
     nav_items = [
@@ -208,6 +227,7 @@ with st.sidebar:
         ("terminal", f"⚡ {_('NAV_TERMINAL')}"),
         ("assistant", f"💬 {_('NAV_ASSISTANT')}"),
         ("history", f"🧾 {_('NAV_HISTORY')}"),
+        ("webhooks", f"📡 {_('NAV_WEBHOOKS')}"),
         ("settings", f"⚙️ {_('NAV_SETTINGS')}"),
     ]
     nav_routes = [route for route, _ in nav_items]
@@ -215,7 +235,7 @@ with st.sidebar:
     if st.session_state.get("main_nav_route") not in nav_routes:
         st.session_state.main_nav_route = "dashboard"
     selected_route = st.radio(
-        "NAVEGACIÓN",
+        _("APP_NAV_HIDDEN"),
         nav_routes,
         format_func=lambda route: nav_labels.get(route, route),
         key="main_nav_route",
@@ -246,10 +266,10 @@ with st.sidebar:
     st.subheader(f"⚙️ { _('NAV_SETTINGS') }")
     
     # Selector de Idioma v7.0
-    lang_options = ["Español 🇪🇸", "English 🇺🇸"]
+    lang_options = [_("APP_LANG_ES"), _("APP_LANG_EN")]
     current_lang_idx = 0 if st.session_state.get('language') == 'es' else 1
-    new_lang_sel = st.radio("IDIOMA / LANGUAGE", lang_options, index=current_lang_idx, horizontal=True)
-    new_lang_code = 'es' if "Español" in new_lang_sel else 'en'
+    new_lang_sel = st.radio(_("APP_LANG_RADIO"), lang_options, index=current_lang_idx, horizontal=True)
+    new_lang_code = 'es' if new_lang_sel == _("APP_LANG_ES") else 'en'
     
     if st.session_state.get('language') != new_lang_code:
         st.session_state.language = new_lang_code
@@ -305,24 +325,47 @@ with st.sidebar:
                     st.session_state.db = new_database_manager()
                     st.session_state.exchange = ExchangeHelper(modo_simulacion=True)
                     st.session_state.current_mode = True
+                    offer_checkpoint_after_event(
+                        st.session_state.db,
+                        st.session_state.exchange,
+                        event_type="profile_reset",
+                        label=_("CHK_EVENT_PROFILE_RESET"),
+                        default_primary="activate",
+                    )
                     st.rerun()
         except Exception as exc:
             st.caption(f"{_('SIM_PROFILE_UNAVAILABLE')}: {exc}")
         
     # Detectar cambio de modo
     if st.session_state.current_mode != is_simulacion:
+        prev_sim = bool(st.session_state.current_mode)
         was_running = str(st.session_state.db.get_system_status('is_running', 'false')).lower() == 'true'
         try:
             armed_until = float(st.session_state.db.get_system_status('launcher_start_armed_until', '0') or 0)
             was_running = was_running or armed_until > time.time()
         except (TypeError, ValueError):
             pass
+        st.session_state["_mode_change_revert_state"] = {
+            "prev_sim": prev_sim,
+            "was_running": was_running,
+        }
         st.session_state.current_mode = is_simulacion
         save_settings({"MODO_SIMULACION": bool(is_simulacion)})
         st.session_state.db = new_database_manager()
         st.session_state.db.set_system_status('is_running', 'true' if was_running else 'false')
         st.session_state.db.set_system_status('simulacion', 'true' if is_simulacion else 'false')
         st.session_state.exchange = ExchangeHelper(modo_simulacion=is_simulacion)
+        mode_label = _("MODE_SIM") if is_simulacion else _("MODE_REAL")
+        offer_checkpoint_after_event(
+            st.session_state.db,
+            st.session_state.exchange,
+            event_type="mode_change",
+            label=_("CHK_EVENT_MODE") + f" → {mode_label}",
+            default_primary="activate",
+            allow_cancel=True,
+            on_cancel_key="_mode_change_revert_handler",
+        )
+        st.session_state["_mode_change_revert_handler"] = _revert_mode_change
         st.rerun()
         
     with st.expander(f"⚠️ { _('EMERGENCY_ACTIONS') }", expanded=False):
@@ -363,6 +406,9 @@ elif selected_route == "assistant":
 elif selected_route == "history":
     from ui_history import render_history_page
     render_history_page()
+elif selected_route == "webhooks":
+    from ui_webhooks import render_webhooks_page
+    render_webhooks_page()
 elif selected_route == "settings":
     from ui_settings import render_settings
     render_settings()

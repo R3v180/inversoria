@@ -184,6 +184,20 @@ class TradingLogic:
                     'reason': f"TRAILING STOP [{strategy}] | Máx asegurado: +{profit_locked:.1f}%"
                 }
 
+        # ─── 2b. Take profit escalonado (Hummingbot-style levels) ───
+        if bool(getattr(config, 'SCALED_TAKE_PROFIT_ENABLED', False)):
+            stage = int(extra.get('scaled_tp_stage', 0) or 0)
+            tp_levels = self._parse_scaled_tp_levels(config)
+            if stage < len(tp_levels):
+                target_pct, fraction = tp_levels[stage]
+                if profit_pct >= target_pct:
+                    return {
+                        'should_sell': True,
+                        'reason': f"SCALED TP L{stage + 1} (+{profit_pct:.2f}% >= {target_pct:.2f}%)",
+                        'sell_fraction': max(0.05, min(1.0, fraction)),
+                        'scaled_tp_stage': stage + 1,
+                    }
+
         # ─── 3. Señal SELL de la IA con confianza suficiente ───
         if ai_decision and ai_decision.get('action') == 'SELL':
             confidence = ai_decision.get('confidence', 0)
@@ -228,12 +242,39 @@ class TradingLogic:
 
         entry_time = float(position.get('entry_time') or 0)
         max_age_hours = int(getattr(config, 'MAX_POSITION_AGE_HOURS', 0) or 0)
-        if entry_time > 0 and max_age_hours > 0:
-            age_hours = (time.time() - entry_time) / 3600
-            if age_hours >= max_age_hours:
+        age_hours = (time.time() - entry_time) / 3600 if entry_time > 0 else 0.0
+        if entry_time > 0 and bool(getattr(config, 'POSITION_AGE_DECAY_ENABLED', True)):
+            decay_start = float(getattr(config, 'POSITION_AGE_DECAY_START_HOURS', 0) or 0)
+            if decay_start <= 0 and max_age_hours > 0:
+                decay_start = max_age_hours * 0.5
+            min_profit = float(getattr(config, 'POSITION_AGE_DECAY_MIN_PROFIT_PCT', 0.5) or 0.5)
+            if age_hours >= decay_start and profit_pct < min_profit and profit_pct > -3.0:
                 return {
                     'should_sell': True,
-                    'reason': f"MAX POSITION AGE ({age_hours:.1f}h >= {max_age_hours}h)"
+                    'reason': (
+                        f"TIME DECAY EXIT ({age_hours:.1f}h, profit {profit_pct:.2f}% "
+                        f"< {min_profit:.2f}%)"
+                    ),
                 }
+        if entry_time > 0 and max_age_hours > 0 and age_hours >= max_age_hours:
+            return {
+                'should_sell': True,
+                'reason': f"MAX POSITION AGE ({age_hours:.1f}h >= {max_age_hours}h)"
+            }
 
         return {'should_sell': False, 'reason': ''}
+
+    @staticmethod
+    def _parse_scaled_tp_levels(config):
+        raw = str(getattr(config, 'SCALED_TAKE_PROFIT_LEVELS', '1.5:0.33,3.0:0.33,5.0:0.34'))
+        levels = []
+        for part in raw.split(','):
+            part = part.strip()
+            if ':' not in part:
+                continue
+            pct_s, frac_s = part.split(':', 1)
+            try:
+                levels.append((float(pct_s), float(frac_s)))
+            except ValueError:
+                continue
+        return sorted(levels, key=lambda item: item[0])

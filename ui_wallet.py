@@ -14,6 +14,7 @@ from ui_services.page_cache import (
     page_cache_ttl,
     render_stale_while_revalidate,
 )
+from ui_services.ui_status import render_cache_status, render_page_refresh_intro
 from ui_services.wallet_data import build_wallet_snapshot
 
 
@@ -331,11 +332,8 @@ def render_wallet(snapshot=None, *, stale=False, age_sec=0):
     )
     st.title(_("WALLET_TITLE"))
     st.caption(_("WALLET_INTRO"))
-    st.caption(f"Auto-actualización cada {int(WALLET_AUTO_REFRESH_SEC)} segundos en esta pestaña.")
-
-    if stale and age_sec is not None:
-        remaining = max(0, int(WALLET_AUTO_REFRESH_SEC - age_sec))
-        st.caption(f"Datos de hace {int(age_sec)}s (caché). Actualización automática en ~{remaining}s.")
+    render_page_refresh_intro(WALLET_AUTO_REFRESH_SEC)
+    render_cache_status(stale=stale, age_sec=age_sec, refresh_sec=WALLET_AUTO_REFRESH_SEC)
 
     from runtime_bootstrap import new_database_manager
 
@@ -364,7 +362,7 @@ def render_wallet(snapshot=None, *, stale=False, age_sec=0):
 
     watch_rows = snapshot.get("watch_rows") or []
     if watch_rows:
-        with st.expander("Vigilancia persistente de dust/inventario", expanded=False):
+        with st.expander(_("WALLET_DUST_WATCH"), expanded=False):
             watch_table = []
             for item in watch_rows:
                 watch_table.append({
