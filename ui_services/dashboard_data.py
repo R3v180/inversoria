@@ -7,6 +7,7 @@ import sqlite3
 
 from config import SYMBOLS, get_effective_max_positions
 from ui_services.portfolio_summary import collect_visible_portfolio, compute_dashboard_breakdown
+from ui_services.position_display import managed_position_value, resolve_position_metrics
 
 
 def build_dashboard_snapshot(db, exchange, chart_symbol: str | None = None):
@@ -41,17 +42,20 @@ def build_dashboard_snapshot(db, exchange, chart_symbol: str | None = None):
 
     position_rows = []
     for sym, pos in open_positions.items():
-        entry = float(pos.get("entry_price") or 0)
-        current_price = float(exchange.get_ticker(sym) or entry or 0)
-        amount = float(pos.get("amount") or 0)
-        u_pnl = ((current_price - entry) / entry) * 100 if entry else 0.0
+        metrics = resolve_position_metrics(sym, pos, exchange, db=db, portfolio=portfolio)
         position_rows.append(
             {
                 "symbol": sym,
                 "pos": pos,
-                "current_price": current_price,
-                "u_pnl": u_pnl,
-                "current_value": amount * current_price,
+                "current_price": metrics["current_price"],
+                "u_pnl": metrics["u_pnl"],
+                "invested_usd": metrics["invested_usd"],
+                "current_value": metrics["current_value"],
+                "display_amount": metrics["display_amount"],
+                "tracked_amount": metrics["tracked_amount"],
+                "exchange_amount": metrics["exchange_amount"],
+                "entry_price": metrics["entry_price"],
+                "amount_mismatch": metrics["amount_mismatch"],
             }
         )
 
@@ -144,8 +148,7 @@ def _default_chart_symbol(exchange, current_symbols, open_positions):
         return default_sym
     max_v = -1.0
     for sym, pos in open_positions.items():
-        price = exchange.get_ticker(sym) or float(pos.get("entry_price") or 0)
-        val = float(pos.get("amount") or 0) * float(price or 0)
+        val = managed_position_value(sym, pos, exchange)
         if val > max_v:
             max_v = val
             default_sym = sym

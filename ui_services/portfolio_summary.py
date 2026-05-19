@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from config import PRESUPUESTO_INICIAL
+from ui_services.position_display import managed_position_value
 
 
 def collect_visible_portfolio(exchange) -> dict:
@@ -36,10 +37,14 @@ def resolve_dashboard_baseline(db, exchange) -> tuple[float, str]:
 
 def compute_dashboard_breakdown(db, exchange, total_value: float, available_usdt: float) -> dict:
     open_positions = db.get_open_positions()
+    portfolio = {}
+    try:
+        portfolio = collect_visible_portfolio(exchange)
+    except Exception:
+        portfolio = {}
     managed_positions_value = 0.0
     for symbol, pos in open_positions.items():
-        price = exchange.get_ticker(symbol) or pos.get("entry_price") or 0
-        managed_positions_value += float(pos.get("amount") or 0) * float(price or 0)
+        managed_positions_value += managed_position_value(symbol, pos, exchange, portfolio=portfolio)
     other_balances_value = float(total_value or 0) - float(available_usdt or 0) - managed_positions_value
     baseline, baseline_label = resolve_dashboard_baseline(db, exchange)
     pnl = float(total_value or 0) - baseline

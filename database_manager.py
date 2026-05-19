@@ -498,12 +498,16 @@ class DatabaseManager:
             )
             conn.commit()
 
-    def get_ai_usage_summary(self, since_ts=None):
+    def get_ai_usage_summary(self, since_ts=None, for_limits=False):
         if since_ts is None:
             since_ts = time.time() - 86400
+        filters = "timestamp >= ?"
+        params = [float(since_ts)]
+        if for_limits:
+            filters += " AND success = 1 AND provider != 'budget'"
         with self._get_connection() as conn:
             row = conn.execute(
-                '''
+                f'''
                 SELECT
                     COUNT(*) AS requests,
                     SUM(CASE WHEN success = 1 THEN 1 ELSE 0 END) AS successes,
@@ -511,19 +515,19 @@ class DatabaseManager:
                     SUM(estimated_input_tokens) AS input_tokens,
                     SUM(estimated_output_tokens) AS output_tokens
                 FROM ai_usage_events
-                WHERE timestamp >= ?
+                WHERE {filters}
                 ''',
-                (float(since_ts),),
+                tuple(params),
             ).fetchone()
             by_feature = conn.execute(
-                '''
+                f'''
                 SELECT feature, COUNT(*) AS requests,
                        SUM(estimated_input_tokens + estimated_output_tokens) AS tokens
                 FROM ai_usage_events
-                WHERE timestamp >= ?
+                WHERE {filters}
                 GROUP BY feature
                 ''',
-                (float(since_ts),),
+                tuple(params),
             ).fetchall()
         return {
             'requests': int(row['requests'] or 0) if row else 0,
@@ -757,6 +761,14 @@ class DatabaseManager:
     def update_highest_price(self, symbol, highest_price):
         with self._get_connection() as conn:
             conn.execute('UPDATE open_positions SET highest_price = ? WHERE symbol = ?', (highest_price, symbol))
+            conn.commit()
+
+    def update_open_position_amount(self, symbol, amount):
+        with self._get_connection() as conn:
+            conn.execute(
+                'UPDATE open_positions SET amount = ? WHERE symbol = ?',
+                (float(amount or 0), symbol),
+            )
             conn.commit()
 
     def update_position_extra_data(self, symbol, extra_data):

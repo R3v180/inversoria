@@ -596,7 +596,35 @@ class DecisionEngine:
     def build_invalid_ai_fallback_decision(self, score, components, indicators, strategy, macro_regime, provider, error):
         result = self.build_rules_decision(score, components, indicators, strategy, macro_regime)
         return build_invalid_ai_fallback_payload(result, provider, error)
-        
+
+    def _should_rules_fallback_when_ai_unavailable(self, decision_mode):
+        if decision_mode == 'rules':
+            return False
+        if not bool(getattr(config, 'AI_RULES_ONLY_ON_BUDGET_EXHAUSTED', True)):
+            return False
+        return decision_mode in ('hybrid', 'ai_aggressive')
+
+    def _rules_fallback_when_ai_unavailable(
+        self,
+        decision_score,
+        score_components,
+        indicators,
+        strategy,
+        macro_regime,
+        reason_tag,
+    ):
+        result = self.build_rules_decision(
+            decision_score,
+            score_components,
+            indicators,
+            strategy,
+            macro_regime,
+        )
+        result['reasoning'] = f"[RULES FALLBACK] {reason_tag}. {result.get('reasoning', '')}"
+        result['provider'] = 'RulesEngine'
+        result['decision_mode'] = 'rules_fallback'
+        return result
+
     def quick_technical_filter(self, indicators, current_price):
         if not indicators: return False, _('FILTER_SIN_DATOS', lang=self.current_lang)
         rsi = _safe_float(indicators.get('rsi'), 50.0)
@@ -855,6 +883,8 @@ Si la confluencia MTF es fuerte ({confluence_score:.0%}), puedes aumentar positi
                 "decision_score": decision_score,
                 "score_components": score_components,
                 "decision_mode": decision_mode,
+                "indicators": indicators,
+                "mtf_recommended_strategy": mtf_recommended_strategy,
             }
 
         raw_content, provider = self.sentiment.call_ai_hybrid(
@@ -938,6 +968,17 @@ Si la confluencia MTF es fuerte ({confluence_score:.0%}), puedes aumentar positi
                     )
                     return self._remember_decision(symbol, fallback, now, persist=False)
 
+        if self._should_rules_fallback_when_ai_unavailable(decision_mode):
+            fallback = self._rules_fallback_when_ai_unavailable(
+                decision_score,
+                score_components,
+                indicators,
+                mtf_recommended_strategy,
+                macro_regime,
+                "IA no disponible (cuota proveedor, cooldown o tope local)",
+            )
+            return self._remember_decision(symbol, fallback, now, persist=False)
+
         return self.decision_cache.get(symbol)
 
     def analyze_batch_with_ai(self, items):
@@ -995,7 +1036,27 @@ Si la confluencia MTF es fuerte ({confluence_score:.0%}), puedes aumentar positi
             feature="decision_batch",
         )
         if not raw_content:
-            return {}
+            if not contexts:
+                return {}
+            sample_mode = (contexts[0] or {}).get('decision_mode', getattr(config, 'DECISION_MODE', 'hybrid'))
+            if not self._should_rules_fallback_when_ai_unavailable(sample_mode):
+                return {}
+            out = {}
+            for ctx in contexts:
+                symbol = ctx.get('symbol')
+                if not symbol:
+                    continue
+                fallback = self._rules_fallback_when_ai_unavailable(
+                    ctx.get('decision_score', 0.0),
+                    ctx.get('score_components', {}),
+                    ctx.get('indicators') or {},
+                    ctx.get('mtf_recommended_strategy', 'TREND_FOLLOWING'),
+                    ctx.get('macro_regime', 'NEUTRAL'),
+                    "IA batch no disponible",
+                )
+                self._remember_decision(symbol, fallback, now, persist=False)
+                out[symbol] = fallback
+            return out
 
         try:
             parsed, parse_mode = self._parse_ai_batch_json(raw_content)
@@ -1098,7 +1159,33 @@ Si la confluencia MTF es fuerte ({confluence_score:.0%}), puedes aumentar positi
 
         decision = self.analyze_with_ai_hybrid(symbol, current_price, indicators, ohlcv)
         if not decision:
-            return {"action": "HOLD", "reasoning": "AI offline", "confidence": 0.0}
+            decision_mode = getattr(config, 'DECISION_MODE', 'hybrid')
+            if self._should_rules_fallback_when_ai_unavailable(decision_mode):
+                macro_regime = "NEUTRAL"
+                if self._macro_cache:
+                    macro_regime = self._macro_cache.get('macro_regime', 'NEUTRAL')
+                score, components = self.build_decision_score(
+                    indicators=indicators,
+                    macro_regime=macro_regime,
+                    confluence_score=0.5,
+                    prior=None,
+                    symbol=symbol,
+                )
+                decision = self._rules_fallback_when_ai_unavailable(
+                    score,
+                    components,
+                    indicators,
+                    "TREND_FOLLOWING",
+                    macro_regime,
+                    "IA no disponible (respaldo en get_decision)",
+                )
+            else:
+                return {
+                    "action": "HOLD",
+                    "reasoning": "AI offline",
+                    "confidence": 0.0,
+                    "provider": "None",
+                }
 
         min_conf = float(getattr(config, 'MIN_CONFIDENCE_ENTRY', 0.52))
         if decision.get("action") != "HOLD" and decision.get("confidence", 0) < min_conf:

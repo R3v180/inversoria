@@ -284,22 +284,44 @@ class BotDaemon:
 
         sell_fraction = self._clamp(self._safe_float(sell_res.get("sell_fraction"), 1.0), 0.0, 1.0)
         requested_sell = self._safe_float(pos.get('amount'), 0.0) * sell_fraction
+        balance_state = self._sellable_balance_snapshot(symbol, current_price=current_price, check_slippage=False)
+        free_amount = self._safe_float(balance_state.get("amount"), 0.0)
+        if free_amount > 0:
+            requested_sell = min(requested_sell, free_amount)
         validation = self.exchange.prevalidate_market_sell(
             symbol,
             requested_sell,
             price_hint=current_price,
+            free_override=free_amount if free_amount > 0 else None,
         )
         if not validation.get("ok"):
             errors = ",".join(validation.get("errors") or ["UNKNOWN"])
             reason = "NO_SELLABLE_BALANCE" if any(
                 err in errors for err in ("NO_FREE_BALANCE", "INSUFFICIENT_VIRTUAL", "ZERO_AMOUNT")
             ) else "SELL_PREVALIDATION"
-            self.log_message(
-                f"[BLOCK] {symbol} SELL ignored | reason={reason} | "
-                f"errors={errors} | requested={self._safe_float(pos.get('amount')):.8g} | "
-                f"free={self._safe_float(validation.get('free_amount')):.8g} | "
-                f"notional={self._safe_float(validation.get('notional')):.4f}"
+            notional = self._safe_float(validation.get("notional"), 0.0)
+            dust_cap = min(
+                float(getattr(config, "DUST_SELL_MIN_USDT", 5) or 5),
+                float(getattr(config, "MIN_POSITION_USDT", 5) or 5),
             )
+            if reason == "SELL_PREVALIDATION" and notional < max(0.5, dust_cap * 0.15):
+                log_key = f"dust_sell:{symbol}"
+                if log_key not in getattr(self, "_dust_sell_skip_logged", set()):
+                    if not hasattr(self, "_dust_sell_skip_logged"):
+                        self._dust_sell_skip_logged = set()
+                    self._dust_sell_skip_logged.add(log_key)
+                    self.log_message(
+                        f"[SKIP] {symbol} SELL ignored | reason=DUST_UNSALEABLE | "
+                        f"free={self._safe_float(validation.get('free_amount')):.8g} | "
+                        f"notional={notional:.4f} USDT"
+                    )
+            else:
+                self.log_message(
+                    f"[BLOCK] {symbol} SELL ignored | reason={reason} | "
+                    f"errors={errors} | requested={requested_sell:.8g} | "
+                    f"free={self._safe_float(validation.get('free_amount')):.8g} | "
+                    f"notional={notional:.4f}"
+                )
             if decision_journal_id:
                 self.db.update_decision_journal(
                     decision_journal_id,
@@ -733,16 +755,17 @@ class BotDaemon:
             pass
 
         try:
-            ai_day = self.db.get_ai_usage_summary(time.time() - 86400)
-            max_requests = int(getattr(config, "AI_MAX_REQUESTS_PER_DAY", 0) or 0)
-            max_tokens = int(getattr(config, "AI_MAX_EST_TOKENS_PER_DAY", 0) or 0)
-            ai_exhausted = (
-                (max_requests > 0 and ai_day.get("requests", 0) >= max_requests)
-                or (max_tokens > 0 and ai_day.get("estimated_tokens", 0) >= max_tokens)
-            )
-            if ai_exhausted and not getattr(config, "AI_RULES_ONLY_ON_BUDGET_EXHAUSTED", True):
-                reasons.append("AI_BUDGET_EXHAUSTED")
-                details["ai_usage_24h"] = ai_day
+            if bool(getattr(config, "AI_ENABLE_LOCAL_BUDGET", False)):
+                ai_day = self.db.get_ai_usage_summary(time.time() - 86400, for_limits=True)
+                max_requests = int(getattr(config, "AI_MAX_REQUESTS_PER_DAY", 0) or 0)
+                max_tokens = int(getattr(config, "AI_MAX_EST_TOKENS_PER_DAY", 0) or 0)
+                ai_exhausted = (
+                    (max_requests > 0 and ai_day.get("requests", 0) >= max_requests)
+                    or (max_tokens > 0 and ai_day.get("estimated_tokens", 0) >= max_tokens)
+                )
+                if ai_exhausted and not getattr(config, "AI_RULES_ONLY_ON_BUDGET_EXHAUSTED", True):
+                    reasons.append("AI_BUDGET_EXHAUSTED")
+                    details["ai_usage_24h"] = ai_day
         except Exception:
             pass
 
@@ -841,6 +864,52 @@ class BotDaemon:
             for err in (errors or [])
         )
         return self._safe_float(value_usdt, 0.0) < self._safe_float(min_notional, 0.0) or below_market_min
+
+    def sync_open_positions_with_exchange(self, open_positions):
+        """Align DB position size with exchange; drop untradeable dust rows."""
+        if not open_positions or self.exchange.modo_simulacion:
+            return open_positions
+
+        dust_cap = min(
+            float(getattr(config, "DUST_SELL_MIN_USDT", 5) or 5),
+            float(getattr(config, "MIN_POSITION_USDT", 5) or 5),
+        )
+        for symbol in list(open_positions.keys()):
+            pos = open_positions.get(symbol) or {}
+            state = self._sellable_balance_snapshot(symbol, check_slippage=False)
+            exchange_amount = self._safe_float(state.get("amount"), 0.0)
+            value_usdt = self._safe_float(state.get("value"), 0.0)
+            status = str(state.get("status") or "")
+            tracked = self._safe_float(pos.get("amount"), 0.0)
+
+            if exchange_amount <= 0 and value_usdt <= 0:
+                self.db.remove_open_position(symbol)
+                open_positions.pop(symbol, None)
+                self.log_message(f"[SYNC] {symbol} removed | reason=NO_EXCHANGE_BALANCE")
+                continue
+
+            if value_usdt < max(0.5, dust_cap * 0.15) and status in {
+                "DUST_BELOW_MIN_ORDER",
+                "SELL_PREVALIDATION",
+                "NO_SELLABLE_BALANCE",
+            }:
+                self.db.remove_open_position(symbol)
+                open_positions.pop(symbol, None)
+                self.log_message(
+                    f"[SYNC] {symbol} removed dust position | qty={exchange_amount:.8g} | "
+                    f"value={value_usdt:.4f} USDT"
+                )
+                continue
+
+            if exchange_amount > tracked * 1.001 and abs(exchange_amount - tracked) > 1e-8:
+                self.db.update_open_position_amount(symbol, exchange_amount)
+                pos["amount"] = exchange_amount
+                open_positions[symbol] = pos
+                self.log_message(
+                    f"[SYNC] {symbol} amount aligned | db={tracked:.8g} -> exchange={exchange_amount:.8g} | "
+                    f"value={value_usdt:.2f} USDT"
+                )
+        return open_positions
 
     def _sellable_balance_snapshot(self, symbol, current_price=None, amount_override=None, check_slippage=False):
         try:
@@ -1539,6 +1608,7 @@ class BotDaemon:
 
     def bot_iteration(self):
         cycle_start = time.time()
+        self._dust_sell_skip_logged = set()
         cycle_id = f"{int(cycle_start * 1000)}-{uuid.uuid4().hex[:8]}"
         self.update_daemon_status("scanning", cycle_started_at=cycle_start, cycle_id=cycle_id)
         self._audit_event("cycle_start", "Daemon cycle started", payload={"cycle_id": cycle_id})
@@ -1559,6 +1629,7 @@ class BotDaemon:
         
         # Para el cálculo de cuánto podemos comprar, necesitamos el cash (USDT) disponible
         open_positions = self.db.get_open_positions()
+        open_positions = self.sync_open_positions_with_exchange(open_positions)
         self._cycle_snapshot(
             cycle_id,
             "start",

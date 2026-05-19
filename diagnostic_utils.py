@@ -98,6 +98,7 @@ DIAGNOSTIC_CONFIG_KEYS = (
     "DB_EXCHANGE_MISMATCH_TOLERANCE_PCT",
     "DB_EXCHANGE_MISMATCH_MIN_USDT",
     "AUTO_PAUSE_ON_STALE_HEARTBEAT",
+    "AI_ENABLE_LOCAL_BUDGET",
     "AI_MAX_REQUESTS_PER_CYCLE",
     "AI_MAX_REQUESTS_PER_DAY",
     "AI_MAX_EST_TOKENS_PER_DAY",
@@ -198,9 +199,36 @@ def read_recent_log_summary(db=None, tail_lines: int = 80, focus_lines: int = 80
     return "\n\n".join(sections) if sections else "Sin logs locales recientes disponibles."
 
 
+def _diagnostic_config_keys() -> tuple[str, ...]:
+    """Keys for diagnostics: static list plus schema keys for motor/edge groups."""
+    seen = set(DIAGNOSTIC_CONFIG_KEYS)
+    prefixes = (
+        "PROTECTION_",
+        "PAIRLIST_",
+        "SCALED_",
+        "POSITION_AGE_",
+        "POSITION_MONITOR_",
+        "LIMIT_BUY_",
+        "FUNDING_",
+        "WEBHOOK_",
+        "INVENTORY_",
+        "RULE_SIGNIFICANCE_",
+        "HYPEROPT_",
+        "OLLAMA_",
+        "DCA_",
+        "GRID_",
+    )
+    for key in CONFIG_SCHEMA:
+        if key in seen:
+            continue
+        if any(key.startswith(p) for p in prefixes):
+            seen.add(key)
+    return tuple(seen)
+
+
 def _safe_config_snapshot() -> dict:
     snapshot = {}
-    for key in DIAGNOSTIC_CONFIG_KEYS:
+    for key in _diagnostic_config_keys():
         if key not in CONFIG_SCHEMA:
             continue
         default = config.DEFAULT_SETTINGS.get(key, "")
