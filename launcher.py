@@ -69,7 +69,7 @@ TEXT = {
         "logs_hint": "Escaneo en vivo del bot: decisiones por símbolo, proveedores IA, filtros y errores.",
         "logs_scroll_hint": "Rueda del ratón o barra lateral para desplazarte por el log.",
         "copy_logs": "Copiar logs",
-        "logs_copied": "Logs copiados al portapapeles ({lines} líneas).",
+        "logs_copied": "Logs copiados ({view}, {lines} líneas).",
         "logs_copied_short": "Copiado",
         "logs_empty": "No hay logs para copiar.",
         "ready": "Listo.",
@@ -180,7 +180,7 @@ TEXT = {
         "logs_hint": "Live bot scan: symbol decisions, AI providers, filters and errors.",
         "logs_scroll_hint": "Use the mouse wheel or scrollbar to scroll the log.",
         "copy_logs": "Copy logs",
-        "logs_copied": "Logs copied to clipboard ({lines} lines).",
+        "logs_copied": "Logs copied ({view}, {lines} lines).",
         "logs_copied_short": "Copied",
         "logs_empty": "No logs to copy.",
         "ready": "Ready.",
@@ -299,8 +299,8 @@ class InversoriaLauncher(ctk.CTk):
         ctk.set_appearance_mode("dark")
         ctk.set_default_color_theme("green")
         self.title(APP_NAME)
-        self.geometry("1180x820")
-        self.minsize(1040, 720)
+        self.geometry("1180x900")
+        self.minsize(1040, 760)
         try:
             self.state("zoomed")
         except Exception:
@@ -342,7 +342,7 @@ class InversoriaLauncher(ctk.CTk):
         self.grid_columnconfigure(0, weight=1)
         for row in (0, 1, 2, 4):
             self.grid_rowconfigure(row, weight=0)
-        self.grid_rowconfigure(3, weight=1, minsize=280)
+        self.grid_rowconfigure(3, weight=1, minsize=360)
 
         self.configure(fg_color="#070B12")
         header = ctk.CTkFrame(self, corner_radius=26, fg_color="#0B1220", border_width=1, border_color="#1F2937")
@@ -600,10 +600,10 @@ class InversoriaLauncher(ctk.CTk):
         status_band = 110
         footer_band = 40
         chrome = 70
-        logs_min = 280
-        logs_target = max(logs_min, int(total * 0.40))
+        logs_min = 360
+        logs_target = max(logs_min, int(total * 0.52))
         controls_h = total - header_band - status_band - footer_band - chrome - logs_target
-        controls_h = max(200, min(400, controls_h))
+        controls_h = max(180, min(300, controls_h))
         try:
             current = int(self.controls_scroll.cget("height"))
             if current != controls_h:
@@ -940,10 +940,39 @@ class InversoriaLauncher(ctk.CTk):
         self.set_status("mode_saved")
         threading.Thread(target=self._start_system_worker, daemon=True).start()
 
+    def _begin_log_session(self, *, starting_streamlit: bool, starting_daemon: bool):
+        from launcher_startup import append_session_marker, rotate_log_file
+
+        LOG_DIR.mkdir(exist_ok=True)
+        daemon_log = LOG_DIR / "daemon.log"
+        streamlit_log = LOG_DIR / "streamlit.log"
+        if starting_streamlit:
+            rotate_log_file(streamlit_log)
+        append_session_marker(
+            streamlit_log,
+            label="streamlit" if starting_streamlit else "streamlit (ya activo)",
+        )
+        if starting_daemon:
+            rotate_log_file(daemon_log)
+        else:
+            append_session_marker(daemon_log, label="daemon (sesión launcher)")
+
     def _start_system_worker(self):
         self._prevent_sleep()
         plan = self._startup_plan_id()
         is_sim = self._current_simulation_mode()
+        will_start_streamlit = not (
+            self.streamlit_process and self.streamlit_process.poll() is None
+        ) and not self._is_port_open(PORT)
+        will_start_daemon = (
+            plan != "web_only"
+            and (is_sim or self._has_real_keys())
+            and not (self.daemon_process and self.daemon_process.poll() is None)
+        )
+        self._begin_log_session(
+            starting_streamlit=will_start_streamlit,
+            starting_daemon=will_start_daemon,
+        )
 
         if plan == "active":
             self._set_system_status("launcher_start_armed_until", str(time.time() + 300))
@@ -1012,14 +1041,6 @@ class InversoriaLauncher(ctk.CTk):
             return
         LOG_DIR.mkdir(exist_ok=True)
         daemon_log = LOG_DIR / "daemon.log"
-        rotated = LOG_DIR / "daemon.log.1"
-        if daemon_log.exists():
-            try:
-                if rotated.exists():
-                    rotated.unlink()
-                daemon_log.replace(rotated)
-            except OSError:
-                pass
         self._daemon_log_handle = open(daemon_log, "a", encoding="utf-8", buffering=1)
         self._daemon_log_handle.write(
             f"\n[LAUNCHER] Nueva sesión daemon · {time.strftime('%Y-%m-%d %H:%M:%S')}\n"
@@ -1250,6 +1271,7 @@ class InversoriaLauncher(ctk.CTk):
 
     def copy_visible_logs(self):
         self._refresh_logs()
+        view_key = "log_technical" if getattr(self, "_log_view", "operational") == "technical" else "log_operational"
         text = self.log_box.get("1.0", "end-1c")
         if not text.strip():
             self.status_var.set(self.t("logs_empty"))
@@ -1260,7 +1282,9 @@ class InversoriaLauncher(ctk.CTk):
             self.clipboard_clear()
             self.clipboard_append(text)
             self.update()
-            self.status_var.set(self.t("logs_copied").format(lines=line_count))
+            self.status_var.set(
+                self.t("logs_copied").format(view=self.t(view_key), lines=line_count)
+            )
             self.copy_logs_button.configure(text=self.t("logs_copied_short"), fg_color="#0F766E")
             self.after(1800, self._reset_copy_logs_button)
         except Exception as exc:

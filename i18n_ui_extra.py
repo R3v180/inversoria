@@ -165,5 +165,6 @@ UI_EXTRA = {
     "JB_COL_LIVE_EXP": {"es": "Expect. live %", "en": "Live exp. %"},
     "JB_COL_BT_WR": {"es": "WR backtest", "en": "BT WR"},
     "JB_COL_BT_PF": {"es": "PF backtest", "en": "BT PF"},
+    "JB_COL_BT_TRADES": {"es": "Ops. backtest", "en": "BT trades"},
     "JB_COL_WR_GAP": {"es": "Brecha WR", "en": "WR gap"},
 }
