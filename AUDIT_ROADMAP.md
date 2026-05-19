@@ -25,6 +25,14 @@ Ya existe una pila de PRs que cubre parte de la auditoria:
 - PR #50: alertas operativas y health enriquecido.
 - PR #51: validacion de schema de respuestas IA.
 - PR #52: gates para funciones de edge avanzado.
+- PR #54: reconciliacion de ordenes pendientes al arrancar/ciclo y UI de ordenes no reconciliadas.
+- PR #55: cooldowns por simbolo tras salidas por stop-loss/take-profit.
+- PR #56: fallback rules-only cuando la respuesta IA de decision es invalida.
+- PR #57: alertas para orden fallida y mismatch DB/exchange.
+- PR #58: histeresis de regimen macro y tendencia/media movil de BTC dominance.
+- PR #59: vista UI para audit events y cycle replay snapshots.
+- PR #60: retry privado/nonce en ejecucion de ordenes y client order id experimental apagado por defecto.
+- PR #61: metricas avanzadas de backtest: out-of-sample, intervalos bootstrap y Monte Carlo.
 
 ## Inventario de Auditoria
 
@@ -87,16 +95,16 @@ Prioridad maxima antes de operar en real automatico.
 Objetivo: eliminar posiciones fantasma y estados inconsistentes.
 
 - [x] Crear state machine de ordenes: `pending -> submitted -> partial -> closed/canceled/failed`. Cubierto parcialmente por estados `open`/`partial`/`closed`/`failed` en PR #45.
-- [ ] Reconciliar ordenes abiertas al inicio de cada ciclo si `ORDER_RECONCILE_ENABLED=True`.
+- [x] Reconciliar ordenes abiertas al inicio de cada ciclo si `ORDER_RECONCILE_ENABLED=True`. Cubierto en PR #54.
 - [x] Adoptar fills parciales de compras reales. Cubierto en PR #45.
 - [x] Ajustar posiciones tras ventas parciales reales. Cubierto en PR #41 y PR #45.
 - [x] Detectar fondos comprometidos por timeout de red. Cubierto como orden pendiente/no reconciliada en PR #45 y PR #50.
-- [ ] Evitar retry duplicado de market orders si la respuesta se pierde.
-- [ ] Investigar soporte de `clientOrderId`/idempotencia en Crypto.com via CCXT.
+- [x] Evitar retry duplicado de market orders si la respuesta se pierde. Cubierto parcialmente en PR #60: `clientOrderId` queda preparado pero desactivado por defecto hasta validacion real de Crypto.com/CCXT.
+- [x] Investigar soporte de `clientOrderId`/idempotencia en Crypto.com via CCXT. Cubierto como soporte experimental configurable en PR #60; pendiente validacion en real/testnet antes de activarlo.
 - [x] Eliminar doble `fetch_balance` en venta o protegerlo con lock por simbolo. Cubierto en PR #45.
 - [x] Serializar ordenes por simbolo para evitar ventas/compras concurrentes. Cubierto con lock de ejecucion en helper en PR #45.
-- [ ] Usar `_call_private` o unificar retry/nonce en `execute_order`.
-- [ ] Exponer ordenes pendientes/no reconciliadas en UI.
+- [x] Usar `_call_private` o unificar retry/nonce en `execute_order`. Cubierto en PR #60.
+- [x] Exponer ordenes pendientes/no reconciliadas en UI. Cubierto en PR #54.
 - [x] Kill-switch si hay mas de `MAX_UNRECONCILED_ORDERS`. Cubierto en PR #45.
 
 ## Fase 3 - Stops, Salidas y Coherencia Vivo vs Backtest
@@ -110,8 +118,8 @@ Objetivo: que el bot vivo y el backtest midan la misma estrategia.
 - [x] Aplicar fees en entrada y salida en backtest. Cubierto previamente y mantenido en PR #46.
 - [ ] Modelar slippage dinamico por liquidez/orderbook.
 - [x] Implementar salida por edad maxima de posicion por regimen. Cubierto como edad maxima configurable en PR #46.
-- [ ] Cooldown por simbolo tras stop-loss.
-- [ ] Cooldown menor tras take-profit.
+- [x] Cooldown por simbolo tras stop-loss. Cubierto en PR #55.
+- [x] Cooldown menor tras take-profit. Cubierto en PR #55.
 - [ ] TP escalonado opcional: varios niveles y resto con trailing.
 - [x] Break-even con activacion configurable propia, no reutilizando otro parametro. Cubierto en PR #46.
 
@@ -139,8 +147,8 @@ Objetivo: evitar comprar alts en contexto macro equivocado.
 - [x] Hacer configurable `MACRO_ALTSEASON_BTC_DOM`. Cubierto en PR #44.
 - [x] En `RISK_ON`, degradar a `CAUTION` si BTC dominance esta demasiado alto. Cubierto en PR #44.
 - [x] En `CAUTION`, subir a `RISK_OFF` si baja market cap y sube BTC dominance. Cubierto en PR #44.
-- [ ] Anadir histeresis: exigir 2 ciclos o media movil antes de cambiar regimen.
-- [ ] Medir tendencia de BTC dominance, no solo valor instantaneo.
+- [x] Anadir histeresis: exigir 2 ciclos o media movil antes de cambiar regimen. Cubierto en PR #58.
+- [x] Medir tendencia de BTC dominance, no solo valor instantaneo. Cubierto en PR #58.
 - [x] Anadir `15m` al analisis MTF o documentar por que se excluye. Cubierto en PR #48.
 - [x] Detectar divergencia RSI-precio en 4H. Cubierto en PR #48.
 - [x] Penalizar confluencia si hay divergencia contra tendencia. Cubierto en PR #48.
@@ -151,14 +159,14 @@ Objetivo: evitar comprar alts en contexto macro equivocado.
 
 Objetivo: que los priors no den falsa seguridad.
 
-- [ ] Walk-forward validation: train/test rodante.
+- [x] Walk-forward validation: train/test rodante. Cubierto como out-of-sample minimo viable en PR #61.
 - [x] Subir muestra minima de priors a 20-30 trades para decisiones duras. Cubierto en PR #49.
 - [ ] Usar shrinkage bayesiano para win rate con muestras pequenas.
 - [ ] Eliminar fallback `ORDER BY win_rate DESC`.
 - [ ] Priorizar fallback por muestra, profit factor ajustado y recencia.
 - [ ] Corregir Sharpe sobre curva de equity periodica, no trades aislados.
-- [ ] Anadir intervalos de confianza.
-- [ ] Monte Carlo bootstrap sobre secuencia de trades.
+- [x] Anadir intervalos de confianza. Cubierto como intervalo bootstrap de expectancy en PR #61.
+- [x] Monte Carlo bootstrap sobre secuencia de trades. Cubierto en PR #61.
 - [x] Aplicar haircut por muestra pequena y sesgo de supervivencia. Cubierto como `reliability_score` y sample factor en PR #49.
 - [ ] Comparar backtest vs resultados reales del journal.
 
@@ -172,9 +180,9 @@ Objetivo: operar con menos latencia y mejor observabilidad.
 - [ ] File locking para estado simulado entre daemon y UI.
 - [ ] Cache de tickers con TTL corto para reducir llamadas duplicadas.
 - [x] Health checks visibles en UI. Cubierto por diagnosticos existentes y health enriquecido en PR #50.
-- [ ] Alertas por webhook para kill-switch, orden fallida y mismatch. Cubierto parcialmente para kill-switch en PR #50; faltan orden fallida y mismatch como alertas dedicadas.
+- [x] Alertas por webhook para kill-switch, orden fallida y mismatch. Kill-switch en PR #50; orden fallida y mismatch en PR #57.
 - [x] Compactar logs repetitivos. Cubierto en PR #37 y configuracion de dust/logs.
-- [ ] Vista UI de audit events y cycle replay snapshots.
+- [x] Vista UI de audit events y cycle replay snapshots. Cubierto en PR #59.
 
 ## Fase 8 - IA, Seguridad de Prompt y Consenso
 
@@ -183,7 +191,7 @@ Objetivo: que la IA sea apoyo, no punto unico de fallo.
 - [x] Sanitizar `user_name` y entradas externas antes de meterlas en prompts. Cubierto en PR #44.
 - [x] Salidas IA en JSON estricto para sentimiento y decisiones. Cubierto parcialmente: decisiones schema JSON en PR #51; sentimiento usa etiqueta estricta en PR #44.
 - [x] Validar schema de respuesta IA antes de aceptar accion. Cubierto en PR #51.
-- [ ] Fallback rules-only si respuesta IA es invalida.
+- [x] Fallback rules-only si respuesta IA es invalida. Cubierto en PR #56.
 - [ ] Evaluar consenso multi-provider solo para decisiones de alto impacto.
 - [ ] Registrar discrepancias entre proveedores.
 - [ ] Usar modelos mas fuertes solo cuando el presupuesto lo permita.
@@ -217,14 +225,12 @@ Estado actual: PR #52 anade gates (`ADVANCED_EDGE_ENABLED`, fiabilidad minima y 
 
 ## Proxima Decision Recomendada
 
-La pila autopilot principal ya esta implementada y documentada en PRs #43-#52. Las issues asignadas antiguas #30-#35 se cerraron como completadas/obsoletas.
+La pila autopilot principal ya esta implementada y documentada en PRs #43-#61. Las issues asignadas antiguas #30-#35 se cerraron como completadas/obsoletas.
 
 Siguientes issues utiles, no obsoletas:
 
-1. `startup-open-order-reconciliation`: reconciliar ordenes abiertas antiguas al arrancar el daemon.
-2. `exchange-order-idempotency`: investigar `clientOrderId` fiable en Crypto.com/CCXT.
-3. `backtest-walk-forward-validation`: walk-forward, out-of-sample e intervalos de confianza.
-4. `btc-dominance-trend-hysteresis`: histeresis y media movil para cambios de regimen macro.
-5. `ui-audit-replay-view`: vista UI para audit events y cycle replay snapshots.
-6. `real-mode-safe-runbook`: checklist operativo para primera prueba real en modo consultivo.
+1. `real-mode-safe-runbook`: checklist operativo para primera prueba real en modo consultivo.
+2. `dynamic-slippage-backtest`: slippage dinamico por liquidez/orderbook en backtest.
+3. `decision-calibration`: calibrar confianza predicha vs win rate posterior y revisar mezcla IA/determinista.
+4. `advanced-edge-research`: Kelly, correlacion, breadth, funding/open interest y OCO/limit orders, siempre detras de gates.
 

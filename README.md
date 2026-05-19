@@ -22,7 +22,7 @@ Maintained by Olivier Hottelet, trading as OHCodex: https://ohcodex.com
 - **Simulation-first workflow**: isolated paper-trading profiles let you test different risk settings without contaminating real data.
 - **Auditable decisions**: every signal, block, execution, size, risk reason and realized outcome can be written to `decision_journal`.
 - **Risk controls before execution**: portfolio, symbol, alt and bucket exposure guards can cap size or block unsafe buys.
-- **Autopilot hardening**: operational kill-switches, AI budgets, order reconciliation, ATR exits, backtest reliability and advanced-edge gates are configurable instead of hardcoded.
+- **Autopilot hardening**: operational kill-switches, AI budgets, order reconciliation, symbol cooldowns, ATR exits, macro hysteresis, backtest reliability/Monte Carlo metrics and advanced-edge gates are configurable instead of hardcoded.
 - **Real balances are protected**: existing sellable balances can be adopted into active management even if they are outside the new-buy watchlist.
 - **Local-first architecture**: Streamlit UI, daemon and SQLite run locally; API keys stay in `.env`/environment variables instead of `user_settings.json`.
 
@@ -86,7 +86,7 @@ InversorIA.exe
 - **Primero simulación**: los perfiles aislados permiten probar configuraciones de riesgo sin contaminar datos reales.
 - **Decisiones auditables**: cada señal, bloqueo, ejecución, tamaño, motivo de riesgo y resultado puede quedar en `decision_journal`.
 - **Riesgo antes que ejecución**: los guardrails de cartera, símbolo, alts y buckets pueden recortar tamaño o bloquear compras inseguras.
-- **Autopilot endurecido**: kill-switches operativos, presupuesto IA, reconciliación de órdenes, salidas ATR, fiabilidad de backtest y gates de edge avanzado son configurables.
+- **Autopilot endurecido**: kill-switches operativos, presupuesto IA, reconciliación de órdenes, cooldowns por símbolo, salidas ATR, histeresis macro, fiabilidad/Monte Carlo de backtest y gates de edge avanzado son configurables.
 - **Protección de saldos existentes**: los saldos vendibles pueden adoptarse para gestión activa aunque estén fuera de la watchlist de nuevas compras.
 - **Arquitectura local-first**: UI Streamlit, daemon y SQLite corren en local; las claves API se leen de `.env`/variables de entorno y no de `user_settings.json`.
 
@@ -233,7 +233,7 @@ Available today:
 - Historical backtesting engine with SQLite priors.
 - Incremental global macro refresh with Alpha Vantage, persistent cache and provider cooldowns to avoid wasting free-tier requests after restarts or rate limits.
 - Daemon telemetry in the dashboard, with structured `[SKIP]`, `[BLOCK]`, `[ROTATION]` and `[CYCLE]` logs for executions, skipped actions and blocked BUY/SELL/rotation decisions.
-- Autopilot audit hardening stack: persistent dust watch, AI usage budgets, operational kill-switches, local order audit events, cycle replay snapshots, order state reconciliation, ATR-based protective exits, richer indicators, MTF divergence guards, backtest reliability scoring, optional webhook alerts, AI schema guards and gated advanced-edge behavior.
+- Autopilot audit hardening stack: persistent dust watch, AI usage budgets, operational kill-switches, local order audit events, cycle replay snapshots with UI, order state reconciliation, optional client order ids, symbol cooldowns, ATR-based protective exits, richer indicators, MTF divergence guards, macro hysteresis, backtest reliability/OOS/bootstrap/Monte Carlo metrics, optional webhook alerts, AI schema guards/fallback and gated advanced-edge behavior.
 
 ---
 
@@ -540,6 +540,7 @@ Shows:
 - Best trade.
 - Approximate PnL curve.
 - Trade journal.
+- Audit events and cycle replay snapshots for operational review.
 
 ### Settings
 
@@ -1155,12 +1156,12 @@ Filters:
 Possible future improvements:
 
 1. Configurable auto-sell for recoverable dust.
-2. Reconcile stale open exchange orders at daemon startup.
-3. Add idempotency/client-order-id support if Crypto.com exposes it reliably through CCXT.
+2. Dynamic slippage modelling in backtests using liquidity/orderbook assumptions.
+3. Validate experimental client-order-id support on Crypto.com/CCXT before enabling it in real mode.
 4. Macro worker thread/process.
 5. Web search for the assistant with a controlled API.
 6. Configurable local AI provider through Ollama or another OpenAI-compatible local endpoint ([issue #12](https://github.com/R3v180/inversoria/issues/12)).
-7. Backtest improvements still pending: walk-forward, out-of-sample, confidence intervals and Monte Carlo.
+7. Deeper backtest research still pending: Bayesian shrinkage, better fallback ranking, real journal comparison and periodic-equity Sharpe.
 8. Correlation-adjusted portfolio scoring and market breadth once enough live data exists.
 9. Exchange-native stops/OCO or limit-order workflows if Crypto.com support is reliable.
 
@@ -1402,7 +1403,7 @@ Chat contextual con cartera, posiciones, macro, backtests, diagnóstico del daem
 
 ### Historial
 
-Trades con filtros por símbolo, tipo, resultado y fechas; paginación para historiales grandes; tabla compacta con formato adaptativo para precios/cantidades pequeñas como PEPE; tarjetas detalladas opcionales por página; aviso de que win rate, profit factor, mejor trade y expectancy son métricas realizadas basadas en cierres; justificación enriquecida con provider, score, confianza, régimen, estrategia y razonamiento IA cuando existe; drawdown rolling, profit factor rolling, métricas por provider/régimen, curva aproximada y journal.
+Trades con filtros por símbolo, tipo, resultado y fechas; paginación para historiales grandes; tabla compacta con formato adaptativo para precios/cantidades pequeñas como PEPE; tarjetas detalladas opcionales por página; aviso de que win rate, profit factor, mejor trade y expectancy son métricas realizadas basadas en cierres; justificación enriquecida con provider, score, confianza, régimen, estrategia y razonamiento IA cuando existe; drawdown rolling, profit factor rolling, métricas por provider/régimen, curva aproximada y journal. También incluye vista de `audit_events` y `cycle_replay_snapshots` para revisar eventos operativos y reconstruir ciclos.
 
 ### Configuración
 
