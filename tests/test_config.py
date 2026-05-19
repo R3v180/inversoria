@@ -8,8 +8,6 @@ from pathlib import Path
 from unittest.mock import patch
 import config, simulation_profiles
 
-sys.path.append(str(Path(__file__).resolve().parents[1]))
-
 def test_get_active_profile_settings():
     result = get_active_profile_settings()
     assert isinstance(result, dict)
@@ -59,6 +57,7 @@ def test_json_load_failure():
     assert result == "default"
 
 def test_key_in_global(monkeypatch):
+    monkeypatch.setenv("GLOBAL", "global")
     monkeypatch.setattr(
         config,
         "GLOBAL_SETTING_KEYS",
@@ -72,6 +71,7 @@ def fake_error():
 
 
 def test_profile_settings_exception(monkeypatch):
+    monkeypatch.setenv("TEST_KEY", "secret")
     monkeypatch.setattr(
         config,
         "get_active_profile_settings",
