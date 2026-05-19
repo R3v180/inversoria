@@ -14,6 +14,7 @@ import os
 import config
 from database_manager import DatabaseManager
 from i18n import _
+from trading_logic import TradingLogic
 
 
 class BacktestEngine:
@@ -103,6 +104,10 @@ class BacktestEngine:
                     run_timestamp REAL
                 )
             ''')
+            try:
+                conn.execute('ALTER TABLE backtest_runs ADD COLUMN advanced_metrics_json TEXT')
+            except sqlite3.OperationalError:
+                pass
             conn.commit()
 
     # ─────────────────────────────────────────────
@@ -225,6 +230,7 @@ class BacktestEngine:
         equity_curve = [initial_capital]
         capital = initial_capital
         position = None  # Dict con datos de posición abierta
+        live_logic = TradingLogic()
         fee_rate = float(getattr(config, "TRADING_FEE_RATE", 0.001) or 0.0)
         buy_slippage = float(getattr(config, "BUY_SLIPPAGE_LIMIT", 0.0) or 0.0)
         sell_slippage = float(getattr(config, "SELL_SLIPPAGE_LIMIT", 0.0) or 0.0)
@@ -239,13 +245,15 @@ class BacktestEngine:
                 if price > position['highest_price']:
                     position['highest_price'] = price
 
-                # 1. Stop Loss Estático (basado en el ATR de entrada)
-                stop_price = position['entry_stop']
-
-                # 2. Trailing Stop (activo a partir de +2% de beneficio)
-                trailing_price = None
-                if price > position['entry_price'] * 1.02:
-                    trailing_price = position['highest_price'] * (1 - params['trailing_pct'])
+                levels = live_logic.protective_levels(
+                    position['entry_price'],
+                    position['highest_price'],
+                    position.get('atr', 0),
+                    position.get('regime', 'RANGING'),
+                    aggressive=bool(getattr(config, 'AGGRESSIVE_TRADING_PROFILE', False)),
+                )
+                stop_price = levels['stop_loss_price']
+                trailing_price = levels['trailing_stop'] if price >= levels['trailing_activation'] else None
 
                 # 3. Condición de salida
                 exit_price = None
@@ -297,13 +305,19 @@ class BacktestEngine:
                 if should_enter and capital > 0:
                     position_size = capital * risk_per_trade
                     entry_price = price * (1 + buy_slippage)
-                    # Guardamos el Stop Loss inicial basado en el ATR de este momento
-                    initial_sl = entry_price - (row['atr'] * params['sl_atr_mult'])
+                    initial_sl = live_logic.protective_levels(
+                        entry_price,
+                        entry_price,
+                        row.get('atr', 0),
+                        str(row.get('regime', 'RANGING')),
+                        aggressive=bool(getattr(config, 'AGGRESSIVE_TRADING_PROFILE', False)),
+                    )['stop_loss_price']
                     
                     position = {
                         'entry_price': entry_price,
                         'highest_price': entry_price,
                         'entry_stop': initial_sl,
+                        'atr': row.get('atr', 0),
                         'position_size': position_size,
                         'entry_index': i,
                         'regime': str(row.get('regime', 'UNKNOWN')),
@@ -349,6 +363,7 @@ class BacktestEngine:
         win_rate = len(wins) / len(trades) if trades else 0
         avg_profit = np.mean([t['pnl_pct'] for t in wins]) if wins else 0
         avg_loss = np.mean([t['pnl_pct'] for t in losses]) if losses else 0
+        expectancy = (win_rate * avg_profit) + ((1 - win_rate) * avg_loss)
 
         gross_profit = sum(t['pnl_usd'] for t in wins) if wins else 0
         gross_loss = abs(sum(t['pnl_usd'] for t in losses)) if losses else 0
@@ -367,6 +382,11 @@ class BacktestEngine:
         sharpe = (returns.mean() / returns.std() * np.sqrt(trades_per_year)) if returns.std() > 0 and trades_per_year > 0 else 0
 
         total_return = (equity_curve[-1] - initial_capital) / initial_capital * 100
+        min_sample = int(getattr(config, "BACKTEST_MIN_SAMPLE_TRADES", 30) or 30)
+        sample_factor = min(1.0, len(trades) / max(1, min_sample))
+        drawdown_factor = max(0.0, 1.0 - (abs(max_drawdown) / 50.0))
+        reliability_score = max(0.0, min(1.0, (sample_factor * 0.65) + (drawdown_factor * 0.35)))
+        advanced = self._advanced_trade_metrics(trades)
 
         return {
             'strategy': strategy_name,
@@ -374,12 +394,51 @@ class BacktestEngine:
             'win_rate': round(win_rate, 4),
             'avg_profit_pct': round(avg_profit, 2),
             'avg_loss_pct': round(avg_loss, 2),
+            'expectancy_pct': round(expectancy, 3),
             'profit_factor': round(profit_factor, 2),
             'total_return_pct': round(total_return, 2),
             'max_drawdown_pct': round(max_drawdown, 2),
+            'reliability_score': round(reliability_score, 3),
+            'advanced_metrics': advanced,
             'sharpe_ratio': round(sharpe, 2),
             'avg_duration_hours': round(np.mean([t['duration_hours'] for t in trades]), 1),
             'trades_detail': trades  # Guardamos para la tabla de condiciones
+        }
+
+    def _advanced_trade_metrics(self, trades: list) -> dict:
+        if not trades:
+            return {}
+        returns = np.array([float(t.get('pnl_pct') or 0.0) for t in trades], dtype=float)
+        oos_fraction = max(0.05, min(float(getattr(config, "BACKTEST_OOS_FRACTION", 0.30) or 0.30), 0.80))
+        oos_n = max(1, int(len(returns) * oos_fraction))
+        oos = returns[-oos_n:]
+        oos_wins = oos[oos > 0]
+        samples = max(0, min(int(getattr(config, "BACKTEST_BOOTSTRAP_SAMPLES", 300) or 0), 10000))
+        rng = np.random.default_rng(42)
+
+        ci_low = ci_high = float(np.mean(returns)) if len(returns) else 0.0
+        mc_p95_dd = 0.0
+        if samples > 0 and len(returns) >= 2:
+            boot_means = []
+            drawdowns = []
+            for _ in range(samples):
+                sample = rng.choice(returns, size=len(returns), replace=True)
+                boot_means.append(float(np.mean(sample)))
+                equity = np.cumprod(1 + (sample / 100.0))
+                running_max = np.maximum.accumulate(equity)
+                dd = (equity - running_max) / running_max * 100.0
+                drawdowns.append(abs(float(np.min(dd))))
+            ci_low, ci_high = np.percentile(boot_means, [5, 95])
+            mc_p95_dd = float(np.percentile(drawdowns, 95))
+
+        return {
+            'oos_trades': int(len(oos)),
+            'oos_win_rate': round(float(len(oos_wins) / len(oos)) if len(oos) else 0.0, 4),
+            'oos_expectancy_pct': round(float(np.mean(oos)) if len(oos) else 0.0, 3),
+            'expectancy_ci90_low_pct': round(float(ci_low), 3),
+            'expectancy_ci90_high_pct': round(float(ci_high), 3),
+            'monte_carlo_p95_drawdown_pct': round(mc_p95_dd, 2),
+            'bootstrap_samples': samples,
         }
 
     def _candle_hours(self, df: pd.DataFrame) -> float:
@@ -417,8 +476,10 @@ class BacktestEngine:
         win_rate = float(result.get('win_rate', 0) or 0)
         total_return = float(result.get('total_return_pct', 0) or 0) / 100.0
         drawdown_penalty = abs(float(result.get('max_drawdown_pct', 0) or 0)) / 100.0
-        sample_factor = min(1.0, trades / 12.0)
-        return ((pf * 0.55) + (win_rate * 2.0) + total_return - drawdown_penalty) * sample_factor
+        min_sample = int(getattr(config, "BACKTEST_MIN_SAMPLE_TRADES", 30) or 30)
+        sample_factor = min(1.0, trades / max(1, min_sample))
+        reliability = float(result.get('reliability_score', sample_factor) or sample_factor)
+        return ((pf * 0.50) + (win_rate * 2.0) + total_return - drawdown_penalty) * min(sample_factor, reliability)
 
     # ─────────────────────────────────────────────
     # CONSTRUCCIÓN DE LA TABLA DE CONDICIONES
@@ -440,7 +501,8 @@ class BacktestEngine:
 
         rows_to_insert = []
         for (regime, strategy, rsi_bucket, adx_bucket, trend), group in groups:
-            if len(group) < 3:  # Mínimo 3 trades para ser estadísticamente relevante
+            min_bucket_trades = int(getattr(config, "BACKTEST_MIN_TRADES_PER_BUCKET", 5) or 5)
+            if len(group) < min_bucket_trades:
                 continue
 
             wins = group[group['won'] == True]
@@ -504,6 +566,7 @@ class BacktestEngine:
             'avg_profit_pct': 0,
             'avg_loss_pct': 0,
             'avg_duration_hours': 4,
+            'reliability_score': 0.0,
             'hard_veto': False,
             'veto_reason': '',
             'prior_text': 'Sin datos históricos suficientes para este contexto.'
@@ -513,6 +576,7 @@ class BacktestEngine:
             with sqlite3.connect(db_path, timeout=10) as conn:
                 conn.row_factory = sqlite3.Row
 
+                min_bucket = int(getattr(config, "BACKTEST_MIN_TRADES_PER_BUCKET", 5) or 5)
                 # Buscar por condiciones exactas primero
                 cursor = conn.execute('''
                     SELECT * FROM backtest_conditions
@@ -522,10 +586,10 @@ class BacktestEngine:
                     AND rsi_bucket = ?
                     AND adx_bucket = ?
                     AND trend = ?
-                    AND total_trades >= 3
+                    AND total_trades >= ?
                     ORDER BY updated_at DESC LIMIT 1
                 ''', (symbol, current_regime, proposed_strategy,
-                      current_rsi_bucket, current_adx_bucket, current_trend))
+                      current_rsi_bucket, current_adx_bucket, current_trend, min_bucket))
 
                 row = cursor.fetchone()
 
@@ -536,9 +600,9 @@ class BacktestEngine:
                         WHERE symbol = ?
                         AND regime = ?
                         AND strategy = ?
-                        AND total_trades >= 5
+                        AND total_trades >= ?
                         ORDER BY win_rate DESC LIMIT 1
-                    ''', (symbol, current_regime, proposed_strategy))
+                    ''', (symbol, current_regime, proposed_strategy, min_bucket))
                     row = cursor.fetchone()
 
                 if not row:
@@ -547,6 +611,8 @@ class BacktestEngine:
                 win_rate = row['win_rate']
                 profit_factor = row['profit_factor']
                 total_trades = row['total_trades']
+                min_sample = int(getattr(config, "BACKTEST_MIN_SAMPLE_TRADES", 30) or 30)
+                reliability_score = min(1.0, float(total_trades or 0) / max(1, min_sample))
 
                 # Aplicar veto duro solo con muestra suficiente.
                 veto_floor = float(getattr(config, 'BACKTEST_HARD_VETO_WIN_RATE', 0.35))
@@ -580,6 +646,7 @@ class BacktestEngine:
                     'avg_profit_pct': row['avg_profit_pct'],
                     'avg_loss_pct': row['avg_loss_pct'],
                     'avg_duration_hours': row['avg_duration_hours'],
+                    'reliability_score': reliability_score,
                     'hard_veto': hard_veto,
                     'veto_reason': veto_reason,
                     'prior_text': prior_text
@@ -642,8 +709,8 @@ class BacktestEngine:
             conn.execute('''
                 INSERT INTO backtest_runs
                 (symbol, timeframe, period_years, total_trades, win_rate,
-                 total_return_pct, max_drawdown_pct, sharpe_ratio, best_strategy, run_timestamp)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 total_return_pct, max_drawdown_pct, sharpe_ratio, best_strategy, run_timestamp, advanced_metrics_json)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ''', (
                 symbol, timeframe, years,
                 best.get('total_trades', 0),
@@ -652,7 +719,8 @@ class BacktestEngine:
                 best.get('max_drawdown_pct', 0),
                 best.get('sharpe_ratio', 0),
                 best_strategy,
-                time.time()
+                time.time(),
+                json.dumps(best.get('advanced_metrics', {}), ensure_ascii=False),
             ))
             conn.commit()
 

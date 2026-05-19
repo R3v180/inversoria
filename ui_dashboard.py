@@ -2,13 +2,22 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
-from plotly.subplots import make_subplots
 import time
 import json
-import pandas_ta as ta
-from config import PRESUPUESTO_INICIAL, SYMBOLS, get_effective_max_positions
+from config import SYMBOLS, get_effective_max_positions
 from i18n import _
-from ui_theme import apply_plotly_theme, plotly_theme_values
+from ui_theme import apply_plotly_theme
+from ui_services.emergency_actions import liquidate_all_to_usdt
+from ui_services.manual_trading import execute_manual_sell
+from ui_services.portfolio_summary import collect_visible_portfolio, compute_dashboard_breakdown
+from ui_services.technical_chart import build_technical_chart
+from ui_services.dashboard_data import build_dashboard_snapshot
+from ui_services.page_cache import (
+    invalidate_snapshot,
+    install_page_autorefresh,
+    page_cache_ttl,
+    render_stale_while_revalidate,
+)
 
 
 def _execute_dashboard_manual_sell(db, exchange, sym: str, qty: float, current_price: float):
@@ -16,33 +25,14 @@ def _execute_dashboard_manual_sell(db, exchange, sym: str, qty: float, current_p
         st.error(_('MANUAL_SELL_ZERO'))
         return
 
-    res = exchange.execute_order(sym, "sell", qty, current_price, force_market=True)
-    if res.get("status") in ("closed", "simulated", "open"):
-        exit_p = res.get("average") or res.get("price") or current_price
-        try:
-            exit_p = float(exit_p)
-        except (TypeError, ValueError):
-            exit_p = float(current_price)
-
-        try:
-            sold = float(res.get("filled") or 0)
-        except (TypeError, ValueError):
-            sold = 0.0
-        if sold <= 0:
-            sold = float(res.get("amount") or qty)
-        sold = min(sold, float(qty))
-
-        reason = _("MANUAL_SELL_REASON")
-        if db.close_position(sym, exit_p, reason, sold_amount=sold):
-            db.add_log(f"{reason}: {sym} qty={sold:.10g} @ {exit_p:.6f}")
-            st.success(_("MANUAL_SELL_OK"))
-            st.rerun()
-        else:
-            st.warning(_("MANUAL_SELL_FAIL"))
-        return
-
-    err = res.get("reason", str(res))
-    st.error(f"{_('MANUAL_SELL_FAIL')}: {err}")
+    outcome = execute_manual_sell(db, exchange, sym, qty, current_price, _("MANUAL_SELL_REASON"))
+    if outcome.get("ok"):
+        exchange.invalidate_ui_cache()
+        invalidate_snapshot("dashboard")
+        st.success(_("MANUAL_SELL_OK"))
+        st.rerun()
+    else:
+        st.error(f"{_('MANUAL_SELL_FAIL')}: {outcome.get('reason', outcome)}")
 
 
 def _get_dashboard_max_sell(exchange, sym: str, pos: dict) -> float:
@@ -121,7 +111,25 @@ def _render_refresh_status(diag: dict):
     st.caption(f"{_('DASH_LAST_UI_UPDATE')}: {now_txt} · {_('DASH_DAEMON')}: {state} · {age_txt} · scan {scanned}")
 
 
-def render_dashboard():
+DASHBOARD_AUTO_REFRESH_SEC = 30
+
+
+def render_dashboard_page():
+    """Caché rápida al cambiar pestaña + auto-refresh cada 30s mientras miras el dashboard."""
+    install_page_autorefresh("dashboard")
+    render_stale_while_revalidate(
+        "dashboard",
+        lambda: build_dashboard_snapshot(
+            st.session_state.db,
+            st.session_state.exchange,
+            chart_symbol=st.session_state.get("selected_chart_symbol"),
+        ),
+        lambda data, stale=False, age_sec=0: render_dashboard(data, stale=stale, age_sec=age_sec),
+        ttl_sec=page_cache_ttl("dashboard"),
+    )
+
+
+def render_dashboard(snapshot=None, *, stale=False, age_sec=0):
     # Estilos locales apoyados en las variables globales de tema.
     st.markdown("""
         <style>
@@ -145,57 +153,47 @@ def render_dashboard():
     """, unsafe_allow_html=True)
 
     st.title(f"🏛️ { _('DASHBOARD_TITLE') }")
-    
+    st.caption(f"Auto-actualización cada {int(DASHBOARD_AUTO_REFRESH_SEC)} segundos mientras permaneces en esta pestaña.")
+
     db = st.session_state.db
     exchange = st.session_state.exchange
 
-    # --- DATOS ---
-    available_usdt = exchange.get_usdt_balance()
-    total_value = exchange.get_balance()
-    
-    saved_watchlist = db.get_system_status('dynamic_watchlist')
-    current_symbols = [s.strip() for s in saved_watchlist.split(',') if s.strip()] if saved_watchlist else SYMBOLS
+    if stale and age_sec is not None:
+        remaining = max(0, int(DASHBOARD_AUTO_REFRESH_SEC - age_sec))
+        st.caption(
+            f"Datos de hace {int(age_sec)}s (vista en caché). "
+            f"Actualización automática en ~{remaining}s o antes si cambias de pestaña."
+        )
+    elif age_sec is not None and age_sec > 0:
+        st.caption(f"Datos actualizados hace {int(age_sec)}s · auto-refresh cada {int(DASHBOARD_AUTO_REFRESH_SEC)}s.")
 
-    portfolio = {}
-    if exchange.modo_simulacion:
-        # Modo simulación: leer el portfolio virtual
-        virtual = exchange.get_virtual_portfolio()
-        for sym, amount in virtual.items():
-            if amount > 0:
-                portfolio[sym] = amount
-    else:
-        # Modo real: leer inventario a través del helper, que usa instancia privada bajo demanda.
-        try:
-            rows = exchange.get_spot_inventory_rows()
-            if rows and rows[0].get("error"):
-                raise RuntimeError(rows[0].get("error"))
-            for row in rows:
-                coin = row.get("coin")
-                symbol = row.get("symbol")
-                amount = float(row.get("free") or 0)
-                if amount > 0 and symbol and coin not in ['USDT', 'USD']:
-                    portfolio[symbol] = amount
-        except Exception as e:
-            st.warning(_('DASH_REAL_BALANCE_ERROR').format(e))
+    if snapshot is None:
+        snapshot = build_dashboard_snapshot(
+            db,
+            exchange,
+            chart_symbol=st.session_state.get("selected_chart_symbol"),
+        )
 
-    # Baseline para el cálculo de PnL (Presupuesto inicial de config o Saldo inicial real)
-    baseline = PRESUPUESTO_INICIAL
-    if not exchange.modo_simulacion:
-        real_start = db.get_system_status('real_start_balance')
-        if real_start:
-            baseline = float(real_start)
+    if "selected_chart_symbol" not in st.session_state:
+        st.session_state.selected_chart_symbol = snapshot.get("chart_symbol", "BTC/USDT")
 
-    pnl = total_value - baseline
-    pnl_pct = (pnl / baseline) * 100 if baseline else 0
-    open_positions = db.get_open_positions()
+    available_usdt = snapshot["available_usdt"]
+    total_value = snapshot["total_value"]
+    portfolio = snapshot.get("portfolio") or {}
+    breakdown = snapshot["breakdown"]
+    baseline = breakdown["baseline"]
+    baseline_label = breakdown["baseline_label"]
+    pnl = breakdown["pnl"]
+    pnl_pct = breakdown["pnl_pct"]
+    open_positions = breakdown["open_positions"]
+    managed_positions_value = breakdown["managed_positions_value"]
+    other_balances_value = breakdown["other_balances_value"]
+    current_symbols = list(snapshot.get("current_symbols") or SYMBOLS)
+    diag_top = snapshot.get("diag_top") or {}
+    diag_raw = snapshot.get("diag_raw") or "{}"
+    dynamic_max = snapshot.get("dynamic_max") or get_effective_max_positions(total_value)
 
     # --- TOP METRICS ---
-    dynamic_max = get_effective_max_positions(total_value)
-    diag_raw = db.get_system_status("daemon_diagnostics", "{}")
-    try:
-        diag_top = json.loads(diag_raw or "{}")
-    except Exception:
-        diag_top = {}
     exec_mode = diag_top.get("execution_mode", "-")
     decision_mode = diag_top.get("decision_mode", "-")
     mode_label = f"{'SIM' if exchange.modo_simulacion else 'REAL'} · {exec_mode}"
@@ -209,6 +207,15 @@ def render_dashboard():
     m4.metric(_('PNL_USD'), f"${pnl:.2f}", f"{pnl_pct:.2f}%")
     m5.metric(_("DASH_MODE"), mode_label)
     m6.metric(_("DAEMON_STATE"), state_label, f"{decision_mode} · {diag_top.get('scanned', 0)} scan")
+    baseline_text = {
+        "real_start": "inicio real",
+        "initial": "capital inicial",
+    }.get(baseline_label, baseline_label)
+    st.caption(
+        f"Desglose equity: disponible ${available_usdt:.2f} + posiciones bot ${managed_positions_value:.2f} "
+        f"+ otros saldos/dust ${other_balances_value:.2f}. PnL calculado contra baseline {baseline_text}: ${baseline:.2f}."
+    )
+    st.caption("Para analizar rendimiento desde hoy, última hora o una fecha concreta usa Historial y Analítica.")
 
     # --- POSITIONS + LIVE EVENTS FIRST ---
     col_left, col_right = st.columns([1.5, 1])
@@ -216,11 +223,13 @@ def render_dashboard():
     with col_left:
         st.markdown(f"### 💼 { _('ACTIVE_POSITIONS') }")
         if open_positions:
-            for sym, pos in open_positions.items():
-                current_price = exchange.get_ticker(sym) or pos['entry_price']
-                u_pnl = ((current_price - pos['entry_price']) / pos['entry_price']) * 100
+            for row in snapshot.get("position_rows") or []:
+                sym = row["symbol"]
+                pos = row["pos"]
+                current_price = row["current_price"]
+                u_pnl = row["u_pnl"]
+                current_value = row["current_value"]
                 color = "var(--iv-accent)" if u_pnl >= 0 else "var(--iv-danger)"
-                current_value = pos.get('amount', 0) * current_price
                 with st.container():
                     safe_key = sym.replace("/", "_").replace(" ", "_")
                     col_info, col_chart, col_sell = st.columns([4.2, 0.9, 0.9])
@@ -249,17 +258,12 @@ def render_dashboard():
 
     with col_right:
         st.markdown(f"### 🤖 { _('DASH_LIVE_EVENTS') }")
-        last_decision_raw = db.get_system_status('last_ia_decision', '{}')
-        try:
-            decision = json.loads(last_decision_raw)
-            if decision:
-                st.markdown(f'<div class="ai-card iv-card"><b>{decision.get("symbol", "N/A")}</b> | <span class="iv-positive">{decision.get("regime", "N/A")}</span><p style="font-size:0.85em; margin-top:5px;">{decision.get("reasoning", "")[:100]}...</p></div>', unsafe_allow_html=True)
-        except Exception:
-            pass
+        decision = snapshot.get("last_decision") or {}
+        if decision:
+            st.markdown(f'<div class="ai-card iv-card"><b>{decision.get("symbol", "N/A")}</b> | <span class="iv-positive">{decision.get("regime", "N/A")}</span><p style="font-size:0.85em; margin-top:5px;">{decision.get("reasoning", "")[:100]}...</p></div>', unsafe_allow_html=True)
 
         st.markdown("<br/>", unsafe_allow_html=True)
-        raw_logs = db.get_logs()
-        important_logs = [l for l in raw_logs if "Escaneo" not in l and "Ciclo" not in l][-15:]
+        important_logs = snapshot.get("important_logs") or []
         log_content = "".join([f"<span class='iv-positive'>>></span> {l}<br/>" for l in important_logs])
         st.markdown(f'<div class="log-box iv-log-box">{log_content}</div>', unsafe_allow_html=True)
 
@@ -269,7 +273,9 @@ def render_dashboard():
 
     with col_equity:
         st.markdown(f"### 📈 { _('EQUITY_CHART') }")
-        equity_df = db.get_equity_history(limit=500)
+        equity_df = snapshot.get("equity_df")
+        if equity_df is None:
+            equity_df = db.get_equity_history(limit=500)
         if not equity_df.empty:
             fig_equity = go.Figure()
             fig_equity.add_trace(go.Scatter(x=equity_df['timestamp'], y=equity_df['total_value'], fill='tozeroy', fillcolor='rgba(0, 168, 120, 0.14)', line=dict(color='#008A63', width=3)))
@@ -281,42 +287,17 @@ def render_dashboard():
         c1, c2 = st.columns([2, 1])
         with c1: st.markdown(f"### 🕯️ { _('MARKET_CHART') }")
         
-        if "selected_chart_symbol" not in st.session_state:
-            # Por defecto: la posición con más inversión (v7.9)
-            default_sym = current_symbols[0] if current_symbols else "BTC/USDT"
-            if open_positions:
-                max_v = -1
-                for s, p in open_positions.items():
-                    price = exchange.get_ticker(s) or p['entry_price']
-                    val = p['amount'] * price
-                    if val > max_v:
-                        max_v = val
-                        default_sym = s
-            st.session_state.selected_chart_symbol = default_sym
         if st.session_state.selected_chart_symbol not in current_symbols:
             current_symbols.insert(0, st.session_state.selected_chart_symbol)
-            
-        with c2: selected_sym = st.selectbox(_('SELECT_ASSET'), current_symbols, key="selected_chart_symbol", label_visibility="collapsed")
 
-        
-        ohlcv = exchange.get_historical_data(selected_sym, limit=150)
-        if ohlcv:
-            theme_values = plotly_theme_values()
-            df = pd.DataFrame(ohlcv, columns=['ts', 'o', 'h', 'l', 'c', 'v'])
-            df['ts'] = pd.to_datetime(df['ts'], unit='ms')
-            df['c'] = pd.to_numeric(df['c'])
-            df['EMA_50'] = ta.ema(df['c'], length=50)
-            df['EMA_200'] = ta.ema(df['c'], length=200)
-            df['RSI_14'] = ta.rsi(df['c'], length=14)
-            df['ATR_14'] = ta.atr(pd.to_numeric(df['h']), pd.to_numeric(df['l']), df['c'], length=14)
-            
-            fig = make_subplots(rows=3, cols=1, shared_xaxes=True, vertical_spacing=0.02, row_heights=[0.5, 0.25, 0.25])
-            fig.add_trace(go.Candlestick(x=df['ts'], open=df['o'], high=df['h'], low=df['l'], close=df['c'], name="Price"), row=1, col=1)
-            fig.add_trace(go.Scatter(x=df['ts'], y=df['EMA_50'], line=dict(color='orange', width=1), name="EMA50"), row=1, col=1)
-            fig.add_trace(go.Scatter(x=df['ts'], y=df['EMA_200'], line=dict(color=theme_values["ema_slow"], width=1.5), name="EMA200"), row=1, col=1)
-            fig.add_trace(go.Scatter(x=df['ts'], y=df['RSI_14'], line=dict(color='purple', width=1), name="RSI"), row=2, col=1)
-            fig.add_trace(go.Scatter(x=df['ts'], y=df['ATR_14'], line=dict(color='cyan', width=1), name="ATR"), row=3, col=1)
-            apply_plotly_theme(fig, height=400, margin=dict(l=0, r=0, t=0, b=0), xaxis_rangeslider_visible=False)
+        with c2:
+            selected_sym = st.selectbox(_('SELECT_ASSET'), current_symbols, key="selected_chart_symbol", label_visibility="collapsed")
+
+        ohlcv = snapshot.get("ohlcv")
+        if selected_sym != snapshot.get("chart_symbol"):
+            ohlcv = exchange.get_historical_data(selected_sym, limit=150)
+        fig = build_technical_chart(ohlcv, height=400, rows="compact")
+        if fig:
             st.plotly_chart(fig, width='stretch')
 
     # --- PANEL DE INTELIGENCIA ---
@@ -327,9 +308,8 @@ def render_dashboard():
 
     with col_macro:
         with st.expander(f"🌍 { _('MACRO_CONTEXT') }", expanded=True):
-            macro_raw = db.get_system_status('macro_context', '{}')
+            macro = snapshot.get("macro") or {}
             try:
-                macro = json.loads(macro_raw)
                 if macro:
                     regime = macro.get('macro_regime', 'N/A')
                     regime_color = {
@@ -351,7 +331,7 @@ def render_dashboard():
                     # Mostrar datos de Alpha Vantage v6.0
                     st.markdown("---")
                     st.markdown(f"**{ _('GLOBAL_TITLE') }**")
-                    macro_db = db.get_all_macro_data()
+                    macro_db = snapshot.get("macro_db") or {}
                     if macro_db:
                         c_m1, c_m2 = st.columns(2)
                         # DXY Proxy
@@ -372,26 +352,16 @@ def render_dashboard():
     with col_backtest:
         with st.container(border=True):
             st.markdown(f"**📊 { _('BACKTEST_STATUS') }**")
-            try:
-                import sqlite3
-                db_path = st.session_state.db.db_path
-                with sqlite3.connect(db_path, timeout=5) as conn:
-                    conn.row_factory = sqlite3.Row
-                    runs = conn.execute(
-                        'SELECT * FROM backtest_runs ORDER BY run_timestamp DESC LIMIT 5'
-                    ).fetchall()
-
-                    if runs:
-                        for run in runs:
-                            st.markdown(
-                                f"**{run['symbol']}** · {run['timeframe']} · "
-                                f"WR {run['win_rate']:.0%} · "
-                                f"{ _('BEST_STRATEGY') }: {run['best_strategy']}"
-                            )
-                    else:
-                        st.info(_('NO_BACKTEST_DATA'))
-            except Exception as e:
-                st.info(_('BACKTEST_NOT_AVAILABLE').format(str(e)))
+            runs = snapshot.get("backtest_runs") or []
+            if runs:
+                for run in runs:
+                    st.markdown(
+                        f"**{run.get('symbol')}** · {run.get('timeframe')} · "
+                        f"WR {float(run.get('win_rate') or 0):.0%} · "
+                        f"{ _('BEST_STRATEGY') }: {run.get('best_strategy')}"
+                    )
+            else:
+                st.info(_('NO_BACKTEST_DATA'))
 
             st.markdown("---")
             try:
@@ -401,7 +371,6 @@ def render_dashboard():
             except Exception as e:
                 st.info(f"{_('NEWS_WIDGET_TITLE')}: {e}")
 
-    diag_raw = db.get_system_status("daemon_diagnostics", "{}")
     with st.expander(f"🩺 { _('DAEMON_DIAG_TITLE') }", expanded=False):
         try:
             diag = json.loads(diag_raw or "{}")
@@ -427,6 +396,24 @@ def render_dashboard():
                     st.caption("Providers: " + ", ".join(f"{k}: {v}" for k, v in diag["providers"].items()))
                 if diag.get("skipped"):
                     st.caption("Skipped: " + ", ".join(f"{k}: {v}" for k, v in diag["skipped"].items()))
+                if diag.get("unreconciled_orders_count", 0):
+                    st.warning(f"Órdenes pendientes/no reconciliadas: {diag.get('unreconciled_orders_count')}")
+                    rows = diag.get("unreconciled_orders") or []
+                    if rows:
+                        st.dataframe(rows, width="stretch", hide_index=True)
+                if diag.get("order_reconcile"):
+                    rec = diag.get("order_reconcile") or {}
+                    st.caption(
+                        "Reconciliación órdenes: "
+                        f"checked={rec.get('checked', 0)} · "
+                        f"updated={rec.get('updated', 0)} · "
+                        f"applied={rec.get('applied', 0)}"
+                    )
+                if diag.get("symbol_cooldowns"):
+                    st.markdown("**Cooldowns por símbolo**")
+                    for row in diag.get("symbol_cooldowns") or []:
+                        minutes = max(1, int(float(row.get("remaining_seconds") or 0) / 60))
+                        st.caption(f"{row.get('symbol')} · {minutes}m restantes")
                 if diag.get("risk_guards"):
                     rg = diag.get("risk_guards") or {}
                     status = "OK" if rg.get("ok", True) else _('DASH_RISK_BLOCKING')
@@ -451,24 +438,7 @@ def render_dashboard():
                     st.markdown(f"**{_('DAEMON_TOP_HOLDS')}**")
                     for reason, count in diag["hold_reasons"].items():
                         st.caption(f"{count}× {reason}")
-                try:
-                    metrics = db.get_decision_metrics(limit=500)
-                    st.markdown(f"**{_('DASH_JOURNAL_METRICS')}**")
-                    j1, j2, j3, j4 = st.columns(4)
-                    j1.metric(_('DASH_DECISIONS'), metrics.get("total_decisions", 0))
-                    j2.metric(_('DASH_ACCEPTED_BUYS'), metrics.get("accepted_buys", 0))
-                    j3.metric(_('DASH_BLOCKED_SIGNALS'), metrics.get("blocked", 0))
-                    j4.metric(_('DASH_AI_ALIGNED'), f"{metrics.get('ai_alignment_pct', 0):.1f}%")
-                    provider_stats = metrics.get("provider_stats")
-                    if provider_stats is not None and not provider_stats.empty:
-                        with st.expander("Provider accuracy"):
-                            st.dataframe(provider_stats, width="stretch", hide_index=True)
-                    regime_stats = metrics.get("regime_stats")
-                    if regime_stats is not None and not regime_stats.empty:
-                        with st.expander(_('DASH_WINRATE_BY_REGIME')):
-                            st.dataframe(regime_stats, width="stretch", hide_index=True)
-                except Exception as e:
-                    st.caption(_('DASH_JOURNAL_PENDING').format(e))
+                st.caption("Métricas detalladas de provider/régimen movidas a Historial y Analítica.")
         except Exception as e:
             st.info(f"{_('DAEMON_DIAG_TITLE')}: {e}")
 
@@ -479,28 +449,17 @@ def render_dashboard():
     with c_pie:
         with st.expander(f"🥧 { _('PORTFOLIO_DIST') }", expanded=False):
             pie_data = [{"Activo": _('CASH'), "Valor": available_usdt}]
-            for sym, amt in portfolio.items():
-                p = exchange.get_ticker(sym)
-                if p:
-                    pie_data.append({"Activo": sym, "Valor": amt * p})
+            for item in snapshot.get("pie_data") or []:
+                if item.get("Activo") == "CASH":
+                    continue
+                pie_data.append({"Activo": item.get("Activo"), "Valor": item.get("Valor")})
             fig_pie = px.pie(pd.DataFrame(pie_data), values='Valor', names='Activo', hole=0.6, color_discrete_sequence=['#008A63', '#3A86FF', '#C026D3'])
             apply_plotly_theme(fig_pie)
             st.plotly_chart(fig_pie, width='stretch')
 
     with c_radar:
         with st.expander(f"🛰️ { _('OPPORTUNITY_RADAR') }", expanded=False):
-            radar_data = []
-            for sym in current_symbols[:8]: # Top 8 del radar
-                stats = exchange.get_market_stats(sym)
-                raw = stats.get('change_24h')
-                try:
-                    change = float(raw) if raw is not None else 0.0
-                except (TypeError, ValueError):
-                    change = 0.0
-                radar_data.append({"Moneda": sym, "Cambio": change})
-
-            radar_data = sorted(radar_data, key=lambda x: x['Cambio'], reverse=True)
-            for item in radar_data:
+            for item in snapshot.get("radar_data") or []:
                 chg = float(item['Cambio'] or 0)
                 c_color = "var(--iv-accent)" if chg >= 0 else "var(--iv-danger)"
                 st.markdown(
@@ -513,6 +472,7 @@ def render_dashboard():
     st.markdown("---")
     with st.expander(f"⚠️ { _('EMERGENCY_ACTIONS') }", expanded=False):
         if st.button(_('SELL_ALL_USDT'), width="stretch", type="primary"):
-            exchange.liquidate_all_to_usdt()
-            db.clear_open_positions()
+            liquidate_all_to_usdt(db, exchange)
+            exchange.invalidate_ui_cache()
+            invalidate_snapshot("dashboard")
             st.rerun()

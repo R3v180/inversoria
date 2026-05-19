@@ -1,11 +1,11 @@
 import hashlib
-import json
 
 import streamlit as st
 
 import config
 from i18n import _
 from news_service import get_cached_crypto_news
+from ui_services.manual_trading import execute_manual_buy
 
 
 @st.cache_data(ttl=900, show_spinner=False)
@@ -107,32 +107,6 @@ def _buy_amount_default(balance: float) -> float:
     return min(balance, max(1.0, risk_amount))
 
 
-def _save_manual_buy(db, symbol: str, price: float, amount: float, reason: str):
-    positions = db.get_open_positions()
-    existing = positions.get(symbol)
-    if existing:
-        old_amount = float(existing.get("amount") or 0)
-        old_entry = float(existing.get("entry_price") or price)
-        total_amount = old_amount + amount
-        if total_amount > 0:
-            entry = ((old_entry * old_amount) + (price * amount)) / total_amount
-        else:
-            entry = price
-        highest = max(float(existing.get("highest_price") or price), price)
-        entry_time = existing.get("entry_time")
-        amount_to_store = total_amount
-    else:
-        entry = price
-        highest = price
-        entry_time = None
-        amount_to_store = amount
-
-    extra = json.dumps({"provider": "Noticias", "reason": reason}, ensure_ascii=False)
-    db.add_open_position(symbol, entry, highest, amount_to_store, entry_time=entry_time, extra_data=extra)
-    db.save_trade(symbol, "buy", price, amount, reason, 0.0)
-    db.add_log(f"{reason}: {symbol} qty={amount} @ {price}")
-
-
 def _render_manual_buy(exchange, db, item: dict):
     related = item.get("related_symbols") or []
     options = related + [s for s in config.SYMBOLS if s not in related]
@@ -155,23 +129,20 @@ def _render_manual_buy(exchange, db, item: dict):
 
     disabled = amount_usdt <= 0 or amount_usdt > balance or not symbol
     if st.button(_("NEWS_BUY_BUTTON"), key=f"news_buy_btn_{key}", type="primary", disabled=disabled):
-        price = exchange.get_ticker(symbol)
-        if not price or price <= 0:
-            st.error(_("NEWS_BUY_NO_PRICE"))
-            return
-        amount_coin = float(amount_usdt) / float(price)
-        res = exchange.execute_order(symbol, "buy", amount_coin, float(price))
-        if res.get("status") in ("closed", "open", "simulated"):
-            try:
-                filled = float(res.get("filled") or res.get("amount") or amount_coin)
-            except (TypeError, ValueError):
-                filled = amount_coin
-            reason = f"{_('NEWS_BUY_REASON')}: {item.get('title', '')[:120]}"
-            _save_manual_buy(db, symbol, float(price), filled, reason)
-            st.success(_("NEWS_BUY_OK").format(symbol, f"{price:.6g}"))
+        reason = f"{_('NEWS_BUY_REASON')}: {item.get('title', '')[:120]}"
+        outcome = execute_manual_buy(
+            db,
+            exchange,
+            symbol,
+            float(amount_usdt),
+            reason,
+            provider="Noticias",
+        )
+        if outcome.get("ok"):
+            st.success(_("NEWS_BUY_OK").format(symbol, f"{outcome.get('price', 0):.6g}"))
             st.rerun()
         else:
-            st.error(f"{_('NEWS_BUY_FAIL')}: {res.get('reason', res)}")
+            st.error(f"{_('NEWS_BUY_FAIL')}: {outcome.get('reason', outcome)}")
 
 
 def render_news():

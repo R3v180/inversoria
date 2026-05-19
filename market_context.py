@@ -30,6 +30,71 @@ class MarketContext:
         self.u_lang = lang
         self._cache = {}
 
+    def _load_regime_state(self):
+        try:
+            return json.loads(self.db.get_system_status('macro_regime_state', '{}') or '{}')
+        except Exception:
+            return {}
+
+    def _classify_macro_regime(self, btc_dom, market_cap_change):
+        risk_off_dom = float(getattr(config, 'MACRO_RISK_OFF_BTC_DOM', 58.0))
+        risk_off_cap = float(getattr(config, 'MACRO_RISK_OFF_CAP_CHANGE_PCT', -2.0))
+        altseason_dom = float(getattr(config, 'MACRO_ALTSEASON_BTC_DOM', 48.0))
+        risk_on_max_dom = float(getattr(config, 'MACRO_RISK_ON_MAX_BTC_DOM', 55.0))
+        caution_risk_off_dom = float(getattr(config, 'MACRO_CAUTION_RISK_OFF_BTC_DOM', 55.0))
+        if btc_dom > risk_off_dom and market_cap_change < risk_off_cap:
+            return 'RISK_OFF'
+        if btc_dom < altseason_dom and market_cap_change > 2:
+            return 'ALTSEASON'
+        if market_cap_change > 1:
+            return 'CAUTION' if btc_dom > risk_on_max_dom else 'RISK_ON'
+        if market_cap_change < -1:
+            return 'RISK_OFF' if btc_dom > caution_risk_off_dom else 'CAUTION'
+        return 'NEUTRAL'
+
+    def _apply_regime_hysteresis(self, raw_regime, btc_dom, market_cap_change):
+        state = self._load_regime_state()
+        window = max(1, min(int(getattr(config, 'MACRO_BTC_DOM_TREND_WINDOW', 3) or 3), 24))
+        history = list(state.get('btc_dominance_history') or [])
+        history.append({'ts': time.time(), 'value': float(btc_dom or 0)})
+        history = history[-window:]
+        values = [float(row.get('value') or 0) for row in history if row.get('value') is not None]
+        btc_dom_ma = sum(values) / len(values) if values else float(btc_dom or 0)
+        btc_dom_trend = (values[-1] - values[0]) if len(values) >= 2 else 0.0
+
+        ma_regime = self._classify_macro_regime(btc_dom_ma, market_cap_change)
+        required = max(1, min(int(getattr(config, 'MACRO_REGIME_HYSTERESIS_CYCLES', 2) or 2), 12))
+        stable = state.get('stable_regime') or ma_regime
+        pending = state.get('pending_regime')
+        pending_count = int(state.get('pending_count') or 0)
+        if ma_regime == stable:
+            pending = None
+            pending_count = 0
+        elif ma_regime == pending:
+            pending_count += 1
+        else:
+            pending = ma_regime
+            pending_count = 1
+        if pending and pending_count >= required:
+            stable = pending
+            pending = None
+            pending_count = 0
+
+        new_state = {
+            'stable_regime': stable,
+            'raw_regime': raw_regime,
+            'ma_regime': ma_regime,
+            'pending_regime': pending,
+            'pending_count': pending_count,
+            'required_cycles': required,
+            'btc_dominance_history': history,
+            'btc_dominance_ma': round(btc_dom_ma, 3),
+            'btc_dominance_trend': round(btc_dom_trend, 3),
+            'updated_at': time.time(),
+        }
+        self.db.set_system_status('macro_regime_state', json.dumps(new_state))
+        return stable, new_state
+
     # ─────────────────────────────────────────────
     # MÉTRICAS GLOBALES (CoinGecko — sin API key)
     # ─────────────────────────────────────────────
@@ -242,24 +307,8 @@ class MarketContext:
         market_cap_change = global_m.get('market_cap_change_24h_pct', 0)
         btc_pressure = btc_chain.get('btc_network_pressure', 'MEDIUM')
 
-        # Lógica de régimen macro simplificada pero efectiva:
-        # BTC dominancia alta + cap bajando = mercado temeroso / risk-off
-        # BTC dominancia baja + cap subiendo = altseason / risk-on
-        risk_off_dom = float(getattr(config, 'MACRO_RISK_OFF_BTC_DOM', 58.0))
-        risk_off_cap = float(getattr(config, 'MACRO_RISK_OFF_CAP_CHANGE_PCT', -2.0))
-        altseason_dom = float(getattr(config, 'MACRO_ALTSEASON_BTC_DOM', 48.0))
-        risk_on_max_dom = float(getattr(config, 'MACRO_RISK_ON_MAX_BTC_DOM', 55.0))
-        caution_risk_off_dom = float(getattr(config, 'MACRO_CAUTION_RISK_OFF_BTC_DOM', 55.0))
-        if btc_dom > risk_off_dom and market_cap_change < risk_off_cap:
-            macro_regime = 'RISK_OFF'       # Mal momento para altcoins
-        elif btc_dom < altseason_dom and market_cap_change > 2:
-            macro_regime = 'ALTSEASON'      # Momento ideal para altcoins
-        elif market_cap_change > 1:
-            macro_regime = 'CAUTION' if btc_dom > risk_on_max_dom else 'RISK_ON'
-        elif market_cap_change < -1:
-            macro_regime = 'RISK_OFF' if btc_dom > caution_risk_off_dom else 'CAUTION'
-        else:
-            macro_regime = 'NEUTRAL'        # Sin tendencia clara
+        raw_regime = self._classify_macro_regime(btc_dom, market_cap_change)
+        macro_regime, regime_state = self._apply_regime_hysteresis(raw_regime, btc_dom, market_cap_change)
 
         # ─── Sector líder ───
         leading_sector = max(sectors, key=lambda k: sectors.get(k, -999)) if sectors else 'unknown'
@@ -278,7 +327,7 @@ class MarketContext:
 === CONTEXTO MACRO GLOBAL (v6.0) ===
 Régimen macro: {macro_regime}
 Indicadores: {macro_str}
-Dominancia BTC: {btc_dom}% | ETH: {global_m.get('eth_dominance', 0)}%
+Dominancia BTC: {btc_dom}% (MA {regime_state.get('btc_dominance_ma')}%, tendencia {regime_state.get('btc_dominance_trend'):+.2f}pp) | ETH: {global_m.get('eth_dominance', 0)}%
 Cap. total 24h: {market_cap_change:+.2f}%
 Sector líder: {leading_sector.upper()} ({leading_sector_change:+.2f}% 24h)
 Sectores: { ' | '.join([f"{k}:{v:+.1f}%" for k,v in sectors.items()]) if sectors else 'N/A' }
@@ -291,7 +340,12 @@ ETH actividad de red: {eth_gas.get('eth_network_activity', 'N/A')} ({eth_gas.get
 
         result = {
             'macro_regime': macro_regime,
+            'raw_macro_regime': raw_regime,
             'btc_dominance': btc_dom,
+            'btc_dominance_ma': regime_state.get('btc_dominance_ma'),
+            'btc_dominance_trend': regime_state.get('btc_dominance_trend'),
+            'macro_regime_pending': regime_state.get('pending_regime'),
+            'macro_regime_pending_count': regime_state.get('pending_count'),
             'market_cap_change_24h': market_cap_change,
             'leading_sector': leading_sector,
             'btc_network_pressure': btc_pressure,

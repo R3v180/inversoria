@@ -3,6 +3,8 @@ import os
 import json
 import sys
 import uuid
+import hashlib
+import requests
 import config 
 from exchange_helper import ExchangeHelper
 from sentiment_engine import SentimentEngine
@@ -11,6 +13,8 @@ from database_manager import DatabaseManager
 from decision_engine import DecisionEngine
 from market_context import MarketContext
 from i18n import _
+from bot_runtime.balance_mismatch import position_balance_mismatches
+from bot_runtime.risk_sizing import cap_size_to_capacity
 
 
 def _configure_console_encoding():
@@ -144,6 +148,31 @@ class BotDaemon:
             payload["ai_usage_24h"] = self.db.get_ai_usage_summary(time.time() - 86400)
         except Exception:
             payload["ai_usage_24h"] = {}
+        try:
+            cooldown_rows = self.db.get_cooldowns() or {}
+            active_cooldowns = []
+            for symbol, until in cooldown_rows.items():
+                remaining = int(self._safe_float(until, 0.0) - now)
+                if remaining > 0:
+                    active_cooldowns.append({"symbol": symbol, "remaining_seconds": remaining})
+            payload["symbol_cooldowns"] = active_cooldowns[:25]
+        except Exception:
+            payload["symbol_cooldowns"] = []
+        try:
+            stale_seconds = int(getattr(config, "ORDER_MAX_PENDING_SECONDS", 120) or 120)
+            pending_orders = self.db.get_unreconciled_order_events(max_age_seconds=stale_seconds, limit=10)
+            payload["unreconciled_orders_count"] = len(pending_orders)
+            payload["unreconciled_orders"] = [
+                {
+                    "local_order_id": row.get("local_order_id"),
+                    "symbol": row.get("symbol"),
+                    "side": row.get("side"),
+                    "status": row.get("status"),
+                }
+                for row in pending_orders
+            ]
+        except Exception:
+            payload["unreconciled_orders_count"] = 0
         if state == "cycle_done":
             payload["cycle_ts"] = payload["state_ts"]
         payload.update(extra)
@@ -172,6 +201,36 @@ class BotDaemon:
     def _status_float(self, key, default=0.0):
         return self._safe_float(self.db.get_system_status(key, default), default)
 
+    def _symbol_cooldown_until(self, symbol):
+        try:
+            return self._safe_float((self.db.get_cooldowns() or {}).get(symbol), 0.0)
+        except Exception:
+            return 0.0
+
+    def _exit_cooldown_minutes(self, reason):
+        text = str(reason or "").upper()
+        if "STOP LOSS" in text:
+            return int(getattr(config, "STOP_LOSS_COOLDOWN_MINUTES", 180) or 0)
+        if "TAKE PROFIT" in text or "TRAILING STOP" in text:
+            return int(getattr(config, "TAKE_PROFIT_COOLDOWN_MINUTES", 45) or 0)
+        return 0
+
+    def _set_exit_cooldown(self, symbol, reason):
+        minutes = self._exit_cooldown_minutes(reason)
+        if minutes <= 0:
+            return 0.0
+        until = time.time() + (minutes * 60)
+        self.db.add_cooldown(symbol, timestamp=until)
+        self.log_message(f"[COOLDOWN] {symbol} bloqueado {minutes}m tras salida | reason={self._short_reason(reason, 80)}")
+        return until
+
+    def _buy_cooldown_status(self, symbol):
+        until = self._symbol_cooldown_until(symbol)
+        remaining = max(0, int(until - time.time()))
+        if remaining <= 0:
+            return {"active": False, "remaining": 0}
+        return {"active": True, "remaining": remaining, "until": until}
+
     def _trigger_kill_switch(self, reason, details=None):
         if not getattr(config, "KILL_SWITCH_ENABLED", True):
             return False
@@ -184,7 +243,55 @@ class BotDaemon:
         self.db.set_system_status("kill_switch_last", json.dumps(payload, ensure_ascii=False))
         self.update_daemon_status("kill_switch", kill_switch=payload)
         self.log_message(f"[KILL_SWITCH] Trading pausado | reason={reason} | details={details or {}}")
+        self._send_alert("kill_switch", f"Trading pausado: {reason}", payload)
         return True
+
+    def _send_alert(self, event_type, message, payload=None):
+        if not bool(getattr(config, "ALERTS_ENABLED", False)):
+            return False
+        webhook = str(getattr(config, "ALERT_WEBHOOK_URL", "") or "").strip()
+        if not webhook:
+            return False
+        body = {
+            "app": "InversorIA",
+            "event_type": str(event_type),
+            "message": str(message),
+            "timestamp": time.time(),
+            "payload": payload or {},
+        }
+        try:
+            response = requests.post(
+                webhook,
+                json=body,
+                timeout=int(getattr(config, "ALERT_TIMEOUT_SECONDS", 5) or 5),
+            )
+            if response.status_code >= 400:
+                self.log_message(f"[WARN] alerta externa falló | status={response.status_code}")
+                return False
+            return True
+        except Exception as exc:
+            self.log_message(f"[WARN] alerta externa falló | error={self._safe_alert_error(exc)}")
+            return False
+
+    def _send_throttled_alert(self, event_type, message, payload=None, dedupe_key='', min_interval_seconds=3600):
+        key_material = f"{event_type}:{dedupe_key or json.dumps(payload or {}, sort_keys=True, default=str)}"
+        digest = hashlib.sha256(key_material.encode("utf-8", errors="replace")).hexdigest()[:16]
+        status_key = f"alert_last_{event_type}_{digest}"
+        last = self._status_float(status_key, 0.0)
+        now = time.time()
+        if last and now - last < int(min_interval_seconds or 0):
+            return False
+        sent = self._send_alert(event_type, message, payload or {})
+        if sent:
+            self.db.set_system_status(status_key, now)
+        return sent
+
+    def _safe_alert_error(self, error):
+        message = str(error)
+        webhook = str(getattr(config, "ALERT_WEBHOOK_URL", "") or "")
+        if webhook:
+            message = message.replace(webhook, "[REDACTED_WEBHOOK]")
+        return message[:300]
 
     def _new_local_order_id(self, symbol, side):
         base = str(symbol or "").replace("/", "")
@@ -254,8 +361,124 @@ class BotDaemon:
                         "order": order_result,
                     },
                 )
+            status = str((order_result or {}).get("status") or "").lower()
+            reason = str((order_result or {}).get("reason") or "")
+            if (
+                status == "failed"
+                and bool(getattr(config, "ALERT_ORDER_FAILURES", True))
+                and not self._is_expected_order_block(reason)
+            ):
+                self._send_throttled_alert(
+                    "order_failed",
+                    f"Orden fallida: {symbol} {side}",
+                    {
+                        "local_order_id": local_order_id,
+                        "symbol": symbol,
+                        "side": side,
+                        "status": status,
+                        "reason": reason,
+                    },
+                    dedupe_key=f"{symbol}:{side}:{reason[:120]}",
+                    min_interval_seconds=1800,
+                )
         except Exception as exc:
             self.log_message(f"[WARN] order audit failed | {symbol} {side} | reason={self._short_reason(exc, 100)}")
+
+    def _apply_reconciled_order_delta(self, row, order_result):
+        symbol = str(row.get("symbol") or "")
+        side = str(row.get("side") or "").lower()
+        if not symbol or not side:
+            return {"applied": False, "reason": "MISSING_SYMBOL_OR_SIDE"}
+
+        old_filled = self._safe_float(row.get("executed_amount"), 0.0)
+        requested_amount = self._safe_float(row.get("requested_amount"), 0.0)
+        requested_price = self._safe_float(row.get("requested_price"), 0.0)
+        total_filled, executed_price = self._order_execution_details(order_result, requested_amount, requested_price)
+        delta = max(0.0, total_filled - old_filled)
+        if delta <= 0:
+            return {"applied": False, "reason": "NO_NEW_FILL", "filled": total_filled}
+        if executed_price <= 0:
+            return {"applied": False, "reason": "NO_EXECUTED_PRICE", "filled": total_filled}
+
+        if side in {"buy", "buy_add", "add"}:
+            current = self.db.get_open_positions().get(symbol)
+            extra = json.dumps(
+                {
+                    "reconciled_order_id": row.get("local_order_id"),
+                    "exchange_order_id": row.get("exchange_order_id"),
+                    "reconciled_at": time.time(),
+                },
+                ensure_ascii=False,
+            )
+            if current:
+                self.db.add_to_open_position_with_trade(
+                    symbol,
+                    executed_price,
+                    delta,
+                    "RECONCILED_ORDER_FILL",
+                    extra_data=extra,
+                )
+            else:
+                self.db.add_open_position_with_trade(
+                    symbol,
+                    executed_price,
+                    executed_price,
+                    delta,
+                    "RECONCILED_ORDER_FILL",
+                    extra_data=extra,
+                )
+            return {"applied": True, "side": side, "delta": delta, "price": executed_price}
+
+        if side in {"sell", "rotation_sell"}:
+            applied = self.db.close_position(symbol, executed_price, "RECONCILED_ORDER_FILL", sold_amount=delta)
+            return {"applied": bool(applied), "side": side, "delta": delta, "price": executed_price}
+
+        return {"applied": False, "reason": f"UNSUPPORTED_SIDE:{side}", "filled": total_filled}
+
+    def reconcile_pending_order_events(self, max_orders=20):
+        if self.exchange.modo_simulacion or not getattr(config, "ORDER_RECONCILE_ENABLED", True):
+            return {"checked": 0, "updated": 0, "applied": 0, "errors": []}
+        pending = self.db.get_unreconciled_order_events(max_age_seconds=0, limit=max_orders)
+        summary = {"checked": 0, "updated": 0, "applied": 0, "errors": []}
+        for row in pending:
+            summary["checked"] += 1
+            local_order_id = row.get("local_order_id")
+            symbol = row.get("symbol")
+            exchange_order_id = row.get("exchange_order_id")
+            if not exchange_order_id:
+                summary["errors"].append({"local_order_id": local_order_id, "reason": "MISSING_EXCHANGE_ORDER_ID"})
+                continue
+            order_result = self.exchange.reconcile_existing_order(symbol, exchange_order_id)
+            applied = self._apply_reconciled_order_delta(row, order_result)
+            if applied.get("applied"):
+                summary["applied"] += 1
+                self.log_message(
+                    f"[RECONCILE] applied {symbol} {row.get('side')} "
+                    f"delta={applied.get('delta'):.8g} px={applied.get('price'):.8g}"
+                )
+            status = str((order_result or {}).get("status") or "unknown")
+            reason = (order_result or {}).get("reason", applied.get("reason", ""))
+            self.db.record_order_event(
+                local_order_id=local_order_id,
+                symbol=symbol,
+                side=row.get("side"),
+                requested_amount=row.get("requested_amount"),
+                requested_price=row.get("requested_price"),
+                status=status,
+                decision_journal_id=row.get("decision_journal_id"),
+                exchange_order_id=exchange_order_id,
+                executed_amount=self._order_execution_details(order_result, row.get("requested_amount"), row.get("requested_price"))[0],
+                executed_price=self._order_execution_details(order_result, row.get("requested_amount"), row.get("requested_price"))[1],
+                reason=reason,
+                raw=order_result,
+            )
+            summary["updated"] += 1
+            if status == "failed":
+                summary["errors"].append({"local_order_id": local_order_id, "reason": reason})
+                self._send_alert("order_reconcile_failed", f"Fallo reconciliando orden {local_order_id}", {"order": row, "result": order_result})
+        if summary["checked"]:
+            self.update_daemon_status("order_reconcile", order_reconcile=summary)
+        return summary
 
     def _audit_event(self, event_type, message='', symbol='', severity='info', payload=None):
         if not getattr(config, "AUDIT_EVENTS_ENABLED", True):
@@ -274,26 +497,13 @@ class BotDaemon:
             return None
 
     def _position_balance_mismatches(self, open_positions):
-        mismatches = []
-        if self.exchange.modo_simulacion:
-            return mismatches
-        for symbol, pos in (open_positions or {}).items():
-            expected = self._safe_float(pos.get("amount"), 0.0)
-            if expected <= 0:
-                continue
-            try:
-                actual = self._safe_float(self.exchange.get_coin_balance(symbol), 0.0)
-            except Exception as exc:
-                mismatches.append({"symbol": symbol, "reason": f"BALANCE_ERROR:{exc}"})
-                continue
-            tolerance = max(1e-8, expected * 0.001)
-            if actual + tolerance < expected:
-                mismatches.append({
-                    "symbol": symbol,
-                    "db_amount": round(expected, 10),
-                    "exchange_amount": round(actual, 10),
-                })
-        return mismatches
+        return position_balance_mismatches(
+            open_positions,
+            self.exchange,
+            self._safe_float,
+            tolerance_pct=getattr(config, "DB_EXCHANGE_MISMATCH_TOLERANCE_PCT", 1.0),
+            min_usdt=getattr(config, "DB_EXCHANGE_MISMATCH_MIN_USDT", 0.25),
+        )
 
     def evaluate_operational_kill_switches(self, total_value, open_positions):
         if not getattr(config, "KILL_SWITCH_ENABLED", True):
@@ -324,6 +534,15 @@ class BotDaemon:
             if mismatches:
                 reasons.append("DB_EXCHANGE_MISMATCH")
                 details["mismatches"] = mismatches[:8]
+                if bool(getattr(config, "ALERT_MISMATCHES", True)):
+                    symbols = ",".join(sorted(str(m.get("symbol", "")) for m in mismatches[:8]))
+                    self._send_throttled_alert(
+                        "db_exchange_mismatch",
+                        "Mismatch entre posiciones DB y exchange",
+                        {"mismatches": mismatches[:8]},
+                        dedupe_key=symbols,
+                        min_interval_seconds=1800,
+                    )
 
         try:
             max_unreconciled = int(getattr(config, "MAX_UNRECONCILED_ORDERS", 0) or 0)
@@ -751,23 +970,19 @@ class BotDaemon:
             return 0.0, {}
         exposures = self.portfolio_exposures(open_positions)
         bucket = self.portfolio_bucket(symbol)
-        capacities = {
-            "portfolio": max(0.0, (total_value * config.MAX_PORTFOLIO_EXPOSURE_PCT) - exposures["total"]),
-            "symbol": max(0.0, (total_value * config.MAX_SYMBOL_EXPOSURE_PCT) - exposures["symbols"].get(symbol, 0.0)),
-            "bucket": max(0.0, (total_value * config.MAX_BUCKET_EXPOSURE_PCT) - exposures["buckets"].get(bucket, 0.0)),
-        }
-        if bucket not in {"BTC", "ETH"}:
-            capacities["alt"] = max(0.0, (total_value * config.MAX_ALT_EXPOSURE_PCT) - exposures["alt"])
-        capped = min(amount_usdt, *capacities.values())
-        # Tiny buffer avoids equality/rounding turning an exactly-at-limit size into a guard violation.
-        capped = max(0.0, capped * 0.999)
-        return capped, {
-            "bucket": bucket,
-            "capacities": {key: round(value, 8) for key, value in capacities.items()},
-            "original_amount_usdt": round(amount_usdt, 8),
-            "capped_amount_usdt": round(capped, 8),
-            "capped": capped + 1e-8 < amount_usdt,
-        }
+        return cap_size_to_capacity(
+            symbol,
+            amount_usdt,
+            total_value,
+            exposures,
+            bucket,
+            {
+                "max_portfolio": config.MAX_PORTFOLIO_EXPOSURE_PCT,
+                "max_symbol": config.MAX_SYMBOL_EXPOSURE_PCT,
+                "max_bucket": config.MAX_BUCKET_EXPOSURE_PCT,
+                "max_alt": config.MAX_ALT_EXPOSURE_PCT,
+            },
+        )
 
     def _record_adopted_position(self, symbol, price, amount, notional, open_positions):
         mode_label = "simulated" if self.exchange.modo_simulacion else "real"
@@ -1107,6 +1322,7 @@ class BotDaemon:
                         current_equity = self.exchange.get_balance()
                         self.db.set_system_status('real_start_balance', current_equity)
                         self.log_message(f"{ _('LOG_INITIAL_REAL', lang=self.u_lang) } ${current_equity:.2f}")
+                    self.reconcile_pending_order_events()
 
                 if str(is_running).lower() == 'true':
                     self.bot_iteration()
@@ -1215,6 +1431,8 @@ class BotDaemon:
             # El score determinista manda; confianza IA, MTF y sizing desempatan sin dominar.
             return decision_score + (confidence * 0.20) + (confluence * 0.10) + (size_mult * 0.03)
 
+        pending_order_symbols = set()
+
         def execute_buy_candidate(item):
             sym = item['symbol']
             price = float(item['price'])
@@ -1301,7 +1519,7 @@ class BotDaemon:
 
             amount_coin = amount_usdt / price
             local_order_id = self._new_local_order_id(sym, "buy")
-            res = self.exchange.execute_order(sym, 'buy', amount_coin, price)
+            res = self.exchange.execute_order(sym, 'buy', amount_coin, price, client_order_id=local_order_id)
             self._record_order_event(local_order_id, sym, "buy", amount_coin, price, res, decision_journal_id)
             if self._is_filled_order_status(res):
                 executed_amount, executed_price = self._order_execution_details(res, amount_coin, price)
@@ -1334,6 +1552,7 @@ class BotDaemon:
                     'entry_price': executed_price,
                     'highest_price': executed_price,
                     'amount': executed_amount,
+                    'entry_time': time.time(),
                     'entry_confidence': decision.get('entry_confidence', 0.7),
                     'extra_data': extra_json,
                 }
@@ -1360,6 +1579,7 @@ class BotDaemon:
             if str(res.get('status') or '').lower() == "open":
                 pending_reason = f"ORDER_PENDING_NO_FILL order_id={local_order_id}"
                 self.log_message(f"[PENDING] {sym} BUY order open without fill | order={local_order_id}")
+                pending_order_symbols.add(sym)
                 if decision_journal_id:
                     self.db.update_decision_journal(
                         decision_journal_id,
@@ -1386,6 +1606,8 @@ class BotDaemon:
             return False
 
         def execute_add_to_winner(symbol, current_price, indicators, decision, provider, decision_journal_id):
+            if not getattr(config, "ADVANCED_EDGE_ENABLED", False):
+                return False
             if not getattr(config, "ADD_TO_WINNER_ENABLED", False):
                 return False
             pos = open_positions.get(symbol)
@@ -1403,6 +1625,13 @@ class BotDaemon:
             if decision_score < float(getattr(config, "ADD_MIN_SCORE", 0.74) or 0.74):
                 return False
             if confidence < float(getattr(config, "ADD_MIN_CONFIDENCE", 0.72) or 0.72):
+                return False
+            components = decision.get("score_components") if isinstance(decision.get("score_components"), dict) else {}
+            historical_reliability = self._safe_float(components.get("historical_reliability"), 0.0)
+            historical_trades = int(self._safe_float(components.get("historical_trades"), 0.0))
+            if historical_reliability < float(getattr(config, "ADVANCED_EDGE_MIN_RELIABILITY", 0.65) or 0.65):
+                return False
+            if historical_trades < int(getattr(config, "ADVANCED_EDGE_MIN_TRADES", 30) or 30):
                 return False
 
             extra = self._position_extra(pos)
@@ -1460,7 +1689,7 @@ class BotDaemon:
 
             add_amount_coin = amount_usdt / current_price
             local_order_id = self._new_local_order_id(symbol, "add")
-            res = self.exchange.execute_order(symbol, "buy", add_amount_coin, current_price)
+            res = self.exchange.execute_order(symbol, "buy", add_amount_coin, current_price, client_order_id=local_order_id)
             self._record_order_event(local_order_id, symbol, "buy_add", add_amount_coin, current_price, res, decision_journal_id)
             if not self._is_filled_order_status(res):
                 if str(res.get("status") or "").lower() == "open":
@@ -1694,7 +1923,7 @@ class BotDaemon:
                         )
                         continue
                     local_order_id = self._new_local_order_id(symbol, "sell")
-                    order_result = self.exchange.execute_order(symbol, 'sell', requested_sell, current_price)
+                    order_result = self.exchange.execute_order(symbol, 'sell', requested_sell, current_price, client_order_id=local_order_id)
                     self._record_order_event(
                         local_order_id,
                         symbol,
@@ -1749,6 +1978,7 @@ class BotDaemon:
                                 open_positions[symbol] = still
                             else:
                                 del open_positions[symbol]
+                                self._set_exit_cooldown(symbol, sell_res['reason'])
                             self.log_message(
                                 f"[SELL] {symbol} qty={sold:.8g} | px={executed_price:.6g} | "
                                 f"pnl={realized_pnl:+.2f}% | reason={self._short_reason(sell_res['reason'], 80)} | "
@@ -1758,7 +1988,11 @@ class BotDaemon:
                             self.log_message(f"[WARN] {symbol} SELL executed but DB position was not found")
                     else:
                         if str(order_result.get("status") or "").lower() == "open":
-                            self.log_message(f"[PENDING] {symbol} SELL order open without fill | order={local_order_id}")
+                            pending_order_symbols.add(symbol)
+                            self.log_message(
+                                f"[PENDING] {symbol} SELL order open without fill | "
+                                f"order={local_order_id} | reason={self._short_reason(sell_res['reason'], 80)}"
+                            )
                             self.db.update_decision_journal(
                                 decision_journal_id,
                                 execution_status="pending_sell_order",
@@ -1870,6 +2104,20 @@ class BotDaemon:
                     continue
 
                 if action == 'BUY':
+                    cooldown = self._buy_cooldown_status(symbol)
+                    if cooldown.get("active"):
+                        skipped["SYMBOL_COOLDOWN"] = skipped.get("SYMBOL_COOLDOWN", 0) + 1
+                        remaining_min = max(1, int(cooldown.get("remaining", 0) / 60))
+                        self.log_message(
+                            f"[SKIP] {symbol} BUY skipped | reason=SYMBOL_COOLDOWN | "
+                            f"remaining={remaining_min}m"
+                        )
+                        self.db.update_decision_journal(
+                            decision_journal_id,
+                            execution_status="blocked_symbol_cooldown",
+                            block_reason=f"SYMBOL_COOLDOWN remaining_seconds={cooldown.get('remaining', 0)}",
+                        )
+                        continue
                     if executable_action != "BUY":
                         skipped["LOW_DECISION_SCORE"] = skipped.get("LOW_DECISION_SCORE", 0) + 1
                         self.log_message(
@@ -1893,6 +2141,13 @@ class BotDaemon:
                     }
                     item['score'] = candidate_score(item)
                     buy_candidates.append(item)
+
+        if pending_order_symbols and not self.exchange.modo_simulacion:
+            self.log_message(
+                f"[SKIP] BUY/ROTATION cycle halted | reason=PENDING_REAL_ORDER | "
+                f"pending={', '.join(sorted(pending_order_symbols))}"
+            )
+            buy_candidates = []
 
         buy_candidates.sort(key=lambda item: item['score'], reverse=True)
         if buy_candidates:
@@ -1935,6 +2190,12 @@ class BotDaemon:
                 continue
             if execute_buy_candidate(candidate):
                 executed_symbols.add(candidate['symbol'])
+            if pending_order_symbols and not self.exchange.modo_simulacion:
+                self.log_message(
+                    f"[SKIP] BUY cycle halted | reason=PENDING_REAL_ORDER | "
+                    f"pending={', '.join(sorted(pending_order_symbols))}"
+                )
+                break
 
         remaining_candidates = [
             c for c in buy_candidates
@@ -1980,7 +2241,7 @@ class BotDaemon:
 
                 rot_order_id = self._new_local_order_id(sym_sac, "rotation_sell")
                 rot_amount = self._safe_float(sac_pos.get('amount'), 0.0)
-                rot_res = self.exchange.execute_order(sym_sac, 'sell', rot_amount, sac_price)
+                rot_res = self.exchange.execute_order(sym_sac, 'sell', rot_amount, sac_price, client_order_id=rot_order_id)
                 self._record_order_event(rot_order_id, sym_sac, "rotation_sell", rot_amount, sac_price, rot_res)
                 if not self._is_filled_order_status(rot_res):
                     if str(rot_res.get("status") or "").lower() == "open":

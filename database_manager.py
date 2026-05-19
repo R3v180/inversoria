@@ -5,6 +5,8 @@ import re
 import json
 import pandas as pd
 from simulation_profiles import get_database_path_for_current_mode
+from database_services.audit import get_audit_events as fetch_audit_events
+from database_services.audit import get_cycle_replay_snapshots as fetch_cycle_replay_snapshots
 
 class DatabaseManager:
     def __init__(self, db_path=None):
@@ -668,7 +670,7 @@ class DatabaseManager:
 
     def get_unreconciled_order_events(self, max_age_seconds=0, limit=100):
         params = []
-        where = "LOWER(status) IN ('open', 'submitted', 'pending')"
+        where = "LOWER(status) IN ('open', 'submitted', 'pending', 'partial')"
         if max_age_seconds and float(max_age_seconds) > 0:
             where += " AND updated_at <= ?"
             params.append(time.time() - float(max_age_seconds))
@@ -724,6 +726,12 @@ class DatabaseManager:
             )
             conn.commit()
             return cursor.lastrowid
+
+    def get_audit_events(self, limit=200, event_type=None, symbol=None):
+        return fetch_audit_events(self._get_connection, limit=limit, event_type=event_type, symbol=symbol)
+
+    def get_cycle_replay_snapshots(self, limit=100, cycle_id=None):
+        return fetch_cycle_replay_snapshots(self._get_connection, limit=limit, cycle_id=cycle_id)
 
     def update_highest_price(self, symbol, highest_price):
         with self._get_connection() as conn:

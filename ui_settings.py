@@ -236,6 +236,15 @@ def render_settings():
                     step=0.1,
                     help="Fallback porcentual configurable. En fases siguientes se unificará con ATR/backtest.",
                 )
+                atr_stop_enabled = st.checkbox("Stop-loss basado en ATR", value=get_setting('ATR_STOP_ENABLED', True, bool))
+                stop_loss_atr_mult = st.number_input("Multiplicador ATR stop", min_value=0.2, max_value=10.0, value=get_setting('STOP_LOSS_ATR_MULT', 1.5, float), step=0.1)
+                atr_trailing_enabled = st.checkbox("Trailing basado en ATR", value=get_setting('ATR_TRAILING_ENABLED', True, bool))
+                trailing_atr_mult = st.number_input("Multiplicador ATR trailing", min_value=0.2, max_value=15.0, value=get_setting('TRAILING_ATR_MULT', 2.5, float), step=0.1)
+                trailing_activation_pct = st.number_input("Activación trailing (%)", min_value=0.1, max_value=50.0, value=get_setting('TRAILING_ACTIVATION_PCT', 2.0, float), step=0.1)
+                break_even_activation_pct = st.number_input("Activación break-even (%)", min_value=0.1, max_value=50.0, value=get_setting('BREAK_EVEN_ACTIVATION_PCT', 1.5, float), step=0.1)
+                max_position_age_hours = st.number_input("Edad máxima posición (h)", min_value=1, max_value=8760, value=get_setting('MAX_POSITION_AGE_HOURS', 168, int), step=1)
+                stop_loss_cooldown_minutes = st.number_input("Cooldown tras stop-loss (min)", min_value=0, max_value=10080, value=get_setting('STOP_LOSS_COOLDOWN_MINUTES', 180, int), step=15)
+                take_profit_cooldown_minutes = st.number_input("Cooldown tras take-profit/trailing (min)", min_value=0, max_value=10080, value=get_setting('TAKE_PROFIT_COOLDOWN_MINUTES', 45, int), step=15)
             
             st.markdown("---")
             st.subheader(_('ROTATION_MODULE'))
@@ -284,6 +293,8 @@ def render_settings():
                 order_reconcile_timeout = st.number_input("Timeout reconciliación orden (s)", min_value=5, max_value=600, value=get_setting('ORDER_RECONCILE_TIMEOUT_SECONDS', 30, int), step=5)
                 order_max_pending = st.number_input("Máximo tiempo orden pendiente (s)", min_value=10, max_value=3600, value=get_setting('ORDER_MAX_PENDING_SECONDS', 120, int), step=10)
             with col_o2:
+                order_client_id_enabled = st.checkbox("Enviar clientOrderId experimental", value=get_setting('ORDER_CLIENT_ID_ENABLED', False, bool), help="Mantener apagado hasta validar soporte Crypto.com/CCXT.")
+                order_client_id_param = st.text_input("Parámetro clientOrderId", value=get_setting('ORDER_CLIENT_ID_PARAM', 'client_oid'))
                 buy_fee_buffer_pct = st.number_input("Buffer fee compra (%)", min_value=0.0, max_value=5.0, value=get_setting('BUY_FEE_BUFFER_PCT', 0.5, float), step=0.1)
                 orderbook_depth_levels = st.number_input("Niveles orderbook para validar", min_value=1, max_value=50, value=get_setting('ORDERBOOK_DEPTH_LEVELS', 5, int), step=1)
 
@@ -292,6 +303,8 @@ def render_settings():
             with col_k1:
                 kill_switch_enabled = st.checkbox("Activar kill-switches", value=get_setting('KILL_SWITCH_ENABLED', True, bool))
                 auto_pause_mismatch = st.checkbox("Pausar por discrepancia DB/exchange", value=get_setting('AUTO_PAUSE_ON_DB_EXCHANGE_MISMATCH', True, bool))
+                mismatch_tolerance_pct = st.number_input("Tolerancia mismatch DB/exchange (%)", min_value=0.0, max_value=25.0, value=get_setting('DB_EXCHANGE_MISMATCH_TOLERANCE_PCT', 1.0, float), step=0.1)
+                mismatch_min_usdt = st.number_input("Tolerancia mínima mismatch (USDT)", min_value=0.0, max_value=100.0, value=get_setting('DB_EXCHANGE_MISMATCH_MIN_USDT', 0.25, float), step=0.05)
                 auto_pause_heartbeat = st.checkbox("Pausar por heartbeat vencido", value=get_setting('AUTO_PAUSE_ON_STALE_HEARTBEAT', True, bool))
                 max_portfolio_drawdown_pct = st.number_input("Drawdown máximo portfolio (%)", min_value=1.0, max_value=95.0, value=get_setting('MAX_PORTFOLIO_DRAWDOWN_PCT', 15.0, float), step=1.0)
             with col_k2:
@@ -305,30 +318,43 @@ def render_settings():
                 macro_altseason_btc_dom = st.number_input("BTC dominance ALTSEASON máx. (%)", min_value=35.0, max_value=60.0, value=get_setting('MACRO_ALTSEASON_BTC_DOM', 48.0, float), step=0.5)
                 macro_risk_on_max_btc_dom = st.number_input("BTC dominance máx. para RISK_ON alts (%)", min_value=45.0, max_value=75.0, value=get_setting('MACRO_RISK_ON_MAX_BTC_DOM', 55.0, float), step=0.5)
                 macro_caution_risk_off_btc_dom = st.number_input("BTC dominance RISK_OFF en caídas (%)", min_value=45.0, max_value=80.0, value=get_setting('MACRO_CAUTION_RISK_OFF_BTC_DOM', 55.0, float), step=0.5)
+                macro_regime_hysteresis_cycles = st.number_input("Ciclos histeresis régimen macro", min_value=1, max_value=12, value=get_setting('MACRO_REGIME_HYSTERESIS_CYCLES', 2, int), step=1)
+                macro_btc_dom_trend_window = st.number_input("Ventana tendencia BTC dominance", min_value=1, max_value=24, value=get_setting('MACRO_BTC_DOM_TREND_WINDOW', 3, int), step=1)
             with col_m2:
+                mtf_include_15m = st.checkbox("Incluir 15m en MTF", value=get_setting('MTF_INCLUDE_15M', True, bool))
+                mtf_divergence_penalty = st.slider("Penalización divergencia MTF", 0.0, 0.5, get_setting('MTF_DIVERGENCE_PENALTY', 0.15, float), step=0.01)
                 backtest_hard_veto_wr = st.slider("Win rate mínimo veto backtest", 0.0, 0.8, get_setting('BACKTEST_HARD_VETO_WIN_RATE', 0.50, float), step=0.01)
                 backtest_hard_veto_min_trades = st.number_input("Trades mínimos veto backtest", min_value=5, max_value=200, value=get_setting('BACKTEST_HARD_VETO_MIN_TRADES', 20, int), step=1)
+                backtest_min_bucket_trades = st.number_input("Trades mínimos por bucket", min_value=3, max_value=200, value=get_setting('BACKTEST_MIN_TRADES_PER_BUCKET', 5, int), step=1)
+                backtest_min_sample_trades = st.number_input("Trades muestra completa fiable", min_value=5, max_value=1000, value=get_setting('BACKTEST_MIN_SAMPLE_TRADES', 30, int), step=1)
+                backtest_bootstrap_samples = st.number_input("Muestras bootstrap backtest", min_value=0, max_value=10000, value=get_setting('BACKTEST_BOOTSTRAP_SAMPLES', 300, int), step=50)
+                backtest_oos_fraction = st.slider("Fracción out-of-sample", 0.05, 0.80, get_setting('BACKTEST_OOS_FRACTION', 0.30, float), step=0.05)
 
             st.markdown("##### Presupuesto IA")
             col_i1, col_i2 = st.columns(2)
             with col_i1:
                 ai_batch_decisions_enabled = st.checkbox("Batch IA de decisiones", value=get_setting('AI_BATCH_DECISIONS_ENABLED', True, bool))
                 ai_rules_only_budget = st.checkbox("Pasar a rules-only si se agota presupuesto IA", value=get_setting('AI_RULES_ONLY_ON_BUDGET_EXHAUSTED', True, bool))
+                ai_invalid_rules_fallback = st.checkbox("Rules-only si IA devuelve JSON inválido", value=get_setting('AI_INVALID_RESPONSE_RULES_FALLBACK', True, bool))
                 ai_max_requests_cycle = st.number_input("Máx. requests IA por ciclo", min_value=0, max_value=100, value=get_setting('AI_MAX_REQUESTS_PER_CYCLE', 2, int), step=1)
             with col_i2:
                 ai_max_requests_day = st.number_input("Máx. requests IA por día", min_value=0, max_value=10000, value=get_setting('AI_MAX_REQUESTS_PER_DAY', 80, int), step=5)
                 ai_max_tokens_day = st.number_input("Máx. tokens estimados IA/día", min_value=0, max_value=10000000, value=get_setting('AI_MAX_EST_TOKENS_PER_DAY', 120000, int), step=5000)
                 ai_max_output_tokens = st.number_input("Máx. tokens salida IA", min_value=64, max_value=4096, value=get_setting('AI_MAX_OUTPUT_TOKENS', 700, int), step=64)
                 ai_provider_timeout_seconds = st.number_input("Timeout proveedor IA (s)", min_value=3, max_value=120, value=get_setting('AI_PROVIDER_TIMEOUT_SECONDS', 15, int), step=1)
+                ai_max_position_size_multiplier = st.slider("Máx. multiplicador tamaño IA", 0.1, 3.0, get_setting('AI_MAX_POSITION_SIZE_MULTIPLIER', 1.5, float), step=0.1)
 
             st.markdown("##### Gestión avanzada de posiciones")
             col_p1, col_p2 = st.columns(2)
             with col_p1:
+                advanced_edge_enabled = st.checkbox("Permitir edge avanzado", value=get_setting('ADVANCED_EDGE_ENABLED', False, bool), help="Gate global para piramidación y futuras ventajas avanzadas.")
                 add_to_winner_enabled = st.checkbox("Add-to-winner", value=get_setting('ADD_TO_WINNER_ENABLED', False, bool), help="Mantener apagado hasta implementar tramos/lotes.")
                 add_min_profit = st.number_input("Beneficio mínimo para add (%)", min_value=0.0, max_value=50.0, value=get_setting('ADD_MIN_PROFIT_PCT', 1.0, float), step=0.1)
                 add_min_score = st.slider("Score mínimo para add", 0.0, 1.0, get_setting('ADD_MIN_SCORE', 0.62, float), step=0.01)
                 add_min_confidence = st.slider("Confianza mínima para add", 0.0, 1.0, get_setting('ADD_MIN_CONFIDENCE', 0.65, float), step=0.01)
             with col_p2:
+                advanced_edge_min_reliability = st.slider("Reliability mínima edge avanzado", 0.0, 1.0, get_setting('ADVANCED_EDGE_MIN_RELIABILITY', 0.65, float), step=0.01)
+                advanced_edge_min_trades = st.number_input("Trades mínimos edge avanzado", min_value=1, max_value=1000, value=get_setting('ADVANCED_EDGE_MIN_TRADES', 30, int), step=1)
                 add_max_per_symbol = st.number_input("Máx. adds por símbolo", min_value=0, max_value=10, value=get_setting('ADD_MAX_PER_SYMBOL', 1, int), step=1)
                 add_size_multiplier = st.slider("Tamaño add vs entrada", 0.05, 2.0, get_setting('ADD_SIZE_MULTIPLIER', 0.5, float), step=0.05)
                 break_even_enabled = st.checkbox("Break-even stop", value=get_setting('BREAK_EVEN_ENABLED', True, bool))
@@ -340,6 +366,9 @@ def render_settings():
             with col_obs1:
                 alerts_enabled = st.checkbox("Alertas externas", value=get_setting('ALERTS_ENABLED', False, bool))
                 alert_webhook_url = st.text_input("Webhook de alertas", value=get_setting('ALERT_WEBHOOK_URL', ''), type="password")
+                alert_timeout_seconds = st.number_input("Timeout alertas (s)", min_value=1, max_value=60, value=get_setting('ALERT_TIMEOUT_SECONDS', 5, int), step=1)
+                alert_order_failures = st.checkbox("Alertar órdenes fallidas", value=get_setting('ALERT_ORDER_FAILURES', True, bool))
+                alert_mismatches = st.checkbox("Alertar mismatch DB/exchange", value=get_setting('ALERT_MISMATCHES', True, bool))
             with col_obs2:
                 health_export_enabled = st.checkbox("Exportar health/status", value=get_setting('HEALTH_EXPORT_ENABLED', True, bool))
                 structured_logs_enabled = st.checkbox("Logs estructurados", value=get_setting('STRUCTURED_LOGS_ENABLED', True, bool))
@@ -365,6 +394,15 @@ def render_settings():
                 "MAX_OPEN_POSITIONS": int(max_pos),
                 "MIN_PROFIT_NET": float(min_profit),
                 "STOP_LOSS_PERCENT": float(stop_loss_percent),
+                "ATR_STOP_ENABLED": bool(atr_stop_enabled),
+                "STOP_LOSS_ATR_MULT": float(stop_loss_atr_mult),
+                "ATR_TRAILING_ENABLED": bool(atr_trailing_enabled),
+                "TRAILING_ATR_MULT": float(trailing_atr_mult),
+                "TRAILING_ACTIVATION_PCT": float(trailing_activation_pct),
+                "BREAK_EVEN_ACTIVATION_PCT": float(break_even_activation_pct),
+                "MAX_POSITION_AGE_HOURS": int(max_position_age_hours),
+                "STOP_LOSS_COOLDOWN_MINUTES": int(stop_loss_cooldown_minutes),
+                "TAKE_PROFIT_COOLDOWN_MINUTES": int(take_profit_cooldown_minutes),
                 "RISK_PER_TRADE": riesgo / 100.0,
                 "MAX_DAILY_LOSS_PCT": float(max_daily_loss),
                 "MAX_PORTFOLIO_DRAWDOWN_PCT": float(max_portfolio_drawdown_pct),
@@ -397,24 +435,41 @@ def render_settings():
                 "ORDER_RECONCILE_ENABLED": bool(order_reconcile_enabled),
                 "ORDER_RECONCILE_TIMEOUT_SECONDS": int(order_reconcile_timeout),
                 "ORDER_MAX_PENDING_SECONDS": int(order_max_pending),
+                "ORDER_CLIENT_ID_ENABLED": bool(order_client_id_enabled),
+                "ORDER_CLIENT_ID_PARAM": order_client_id_param,
                 "BUY_FEE_BUFFER_PCT": float(buy_fee_buffer_pct),
                 "ORDERBOOK_DEPTH_LEVELS": int(orderbook_depth_levels),
                 "KILL_SWITCH_ENABLED": bool(kill_switch_enabled),
                 "MAX_EXCHANGE_ERRORS_PER_CYCLE": int(max_exchange_errors),
                 "MAX_UNRECONCILED_ORDERS": int(max_unreconciled_orders),
                 "AUTO_PAUSE_ON_DB_EXCHANGE_MISMATCH": bool(auto_pause_mismatch),
+                "DB_EXCHANGE_MISMATCH_TOLERANCE_PCT": float(mismatch_tolerance_pct),
+                "DB_EXCHANGE_MISMATCH_MIN_USDT": float(mismatch_min_usdt),
                 "AUTO_PAUSE_ON_STALE_HEARTBEAT": bool(auto_pause_heartbeat),
                 "MACRO_ALTSEASON_BTC_DOM": float(macro_altseason_btc_dom),
                 "MACRO_RISK_ON_MAX_BTC_DOM": float(macro_risk_on_max_btc_dom),
                 "MACRO_CAUTION_RISK_OFF_BTC_DOM": float(macro_caution_risk_off_btc_dom),
+                "MACRO_REGIME_HYSTERESIS_CYCLES": int(macro_regime_hysteresis_cycles),
+                "MACRO_BTC_DOM_TREND_WINDOW": int(macro_btc_dom_trend_window),
+                "MTF_INCLUDE_15M": bool(mtf_include_15m),
+                "MTF_DIVERGENCE_PENALTY": float(mtf_divergence_penalty),
                 "BACKTEST_HARD_VETO_WIN_RATE": float(backtest_hard_veto_wr),
                 "BACKTEST_HARD_VETO_MIN_TRADES": int(backtest_hard_veto_min_trades),
+                "BACKTEST_MIN_TRADES_PER_BUCKET": int(backtest_min_bucket_trades),
+                "BACKTEST_MIN_SAMPLE_TRADES": int(backtest_min_sample_trades),
+                "BACKTEST_BOOTSTRAP_SAMPLES": int(backtest_bootstrap_samples),
+                "BACKTEST_OOS_FRACTION": float(backtest_oos_fraction),
                 "AI_MAX_REQUESTS_PER_CYCLE": int(ai_max_requests_cycle),
                 "AI_MAX_REQUESTS_PER_DAY": int(ai_max_requests_day),
                 "AI_MAX_EST_TOKENS_PER_DAY": int(ai_max_tokens_day),
                 "AI_RULES_ONLY_ON_BUDGET_EXHAUSTED": bool(ai_rules_only_budget),
+                "AI_INVALID_RESPONSE_RULES_FALLBACK": bool(ai_invalid_rules_fallback),
                 "AI_MAX_OUTPUT_TOKENS": int(ai_max_output_tokens),
                 "AI_PROVIDER_TIMEOUT_SECONDS": int(ai_provider_timeout_seconds),
+                "AI_MAX_POSITION_SIZE_MULTIPLIER": float(ai_max_position_size_multiplier),
+                "ADVANCED_EDGE_ENABLED": bool(advanced_edge_enabled),
+                "ADVANCED_EDGE_MIN_RELIABILITY": float(advanced_edge_min_reliability),
+                "ADVANCED_EDGE_MIN_TRADES": int(advanced_edge_min_trades),
                 "ADD_TO_WINNER_ENABLED": bool(add_to_winner_enabled),
                 "ADD_MIN_PROFIT_PCT": float(add_min_profit),
                 "ADD_MIN_SCORE": float(add_min_score),
@@ -426,6 +481,9 @@ def render_settings():
                 "PARTIAL_TAKE_PROFIT_PCT": float(partial_tp_pct),
                 "ALERTS_ENABLED": bool(alerts_enabled),
                 "ALERT_WEBHOOK_URL": alert_webhook_url,
+                "ALERT_TIMEOUT_SECONDS": int(alert_timeout_seconds),
+                "ALERT_ORDER_FAILURES": bool(alert_order_failures),
+                "ALERT_MISMATCHES": bool(alert_mismatches),
                 "HEALTH_EXPORT_ENABLED": bool(health_export_enabled),
                 "STRUCTURED_LOGS_ENABLED": bool(structured_logs_enabled),
                 "AUDIT_EVENTS_ENABLED": bool(audit_events_enabled),

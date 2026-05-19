@@ -7,6 +7,7 @@ import pandas as pd
 import pandas_ta as ta
 import numpy as np
 import time
+import config
 
 
 def _safe_float(val, default=0.0):
@@ -33,12 +34,12 @@ class MultiTimeframeAnalyzer:
     """
 
     TIMEFRAMES = ['1d', '4h']
-    CANDLES_NEEDED = {'1d': 200, '4h': 200}
+    CANDLES_NEEDED = {'1d': 200, '4h': 200, '15m': 200}
 
     def __init__(self, exchange_helper):
         self.exchange = exchange_helper
         self._cache = {}
-        self.CACHE_TTL = {'1d': 43200, '4h': 14400}  # 12h y 4h respectivamente
+        self.CACHE_TTL = {'1d': 43200, '4h': 14400, '15m': 900}  # 12h, 4h y 15m
 
     def get_timeframe_analysis(self, symbol: str, timeframe: str) -> dict:
         """Descarga y analiza un timeframe específico para un símbolo."""
@@ -89,12 +90,23 @@ class MultiTimeframeAnalyzer:
             # Momentum: ¿está el precio acelerando o desacelerando?
             recent_closes = df_closed['close'].tail(5)
             momentum = 'ACCELERATING' if recent_closes.iloc[-1] > recent_closes.mean() else 'DECELERATING'
+            current_price = last['close']
+            divergence = 'NONE'
+            try:
+                prev = df_closed.iloc[-10]
+                prev_close = _safe_float(prev.get('close'), current_price)
+                prev_rsi = _safe_float(prev.get('rsi'), rsi)
+                if current_price > prev_close and rsi < prev_rsi - 3:
+                    divergence = 'BEARISH_RSI'
+                elif current_price < prev_close and rsi > prev_rsi + 3:
+                    divergence = 'BULLISH_RSI'
+            except Exception:
+                divergence = 'NONE'
 
             # Soporte y resistencia dinámicos (últimos 20 períodos)
             recent_20 = df_closed.tail(20)
             dynamic_support = recent_20['low'].min()
             dynamic_resistance = recent_20['high'].max()
-            current_price = last['close']
             position_in_range = (current_price - dynamic_support) / (dynamic_resistance - dynamic_support) if dynamic_resistance != dynamic_support else 0.5
 
             atr_safe = _safe_float(last.get('atr'), 0.0)
@@ -112,6 +124,7 @@ class MultiTimeframeAnalyzer:
                 'dynamic_resistance': round(dynamic_resistance, 6),
                 'position_in_range': round(position_in_range, 2),  # 0=soporte, 1=resistencia
                 'regime': self._classify_regime(trend, adx, rsi),
+                'divergence': divergence,
             }
 
             self._cache[cache_key] = {'data': result, 'ts': time.time()}
@@ -146,16 +159,21 @@ class MultiTimeframeAnalyzer:
         - Texto para el prompt de la IA
         """
         analyses = {}
-        for tf in self.TIMEFRAMES:
+        timeframes = list(self.TIMEFRAMES)
+        if bool(getattr(config, 'MTF_INCLUDE_15M', True)):
+            timeframes.append('15m')
+        for tf in timeframes:
             analyses[tf] = self.get_timeframe_analysis(symbol, tf)
             time.sleep(0.3)  # Pequeña pausa entre llamadas
 
         # ─── Lógica de confluencia ───
         tf_1d = analyses.get('1d', {})
         tf_4h = analyses.get('4h', {})
+        tf_15m = analyses.get('15m', {})
 
         daily_trend = tf_1d.get('trend', 'BULL')
         h4_trend = tf_4h.get('trend', 'BULL')
+        m15_trend = tf_15m.get('trend', 'BULL')
         daily_regime = tf_1d.get('regime', 'RANGING')
         h4_regime = tf_4h.get('regime', 'RANGING')
 
@@ -172,6 +190,16 @@ class MultiTimeframeAnalyzer:
         else:
             confluence = 'STRONG_SELL_BIAS'
             confluence_score = 0.10
+
+        divergences = [
+            item.get('divergence')
+            for item in (tf_1d, tf_4h, tf_15m)
+            if item.get('divergence') and item.get('divergence') != 'NONE'
+        ]
+        if 'BEARISH_RSI' in divergences:
+            confluence_score = max(0.05, confluence_score - float(getattr(config, 'MTF_DIVERGENCE_PENALTY', 0.15) or 0.15))
+        if tf_15m and m15_trend == 'BEAR' and confluence_score > 0.25:
+            confluence_score = max(0.25, confluence_score - 0.10)
 
         # ─── Recomendación de estrategia por contexto MTF ───
         adx_4h = _safe_float(tf_4h.get('adx'), 0.0)
@@ -192,7 +220,9 @@ class MultiTimeframeAnalyzer:
 === ANÁLISIS MULTI-TIMEFRAME ===
 1D  → Tendencia: {daily_trend} | Régimen: {daily_regime} | RSI: {tf_1d.get('rsi', 'N/A')} | ADX: {tf_1d.get('adx', 'N/A')}
 4H  → Tendencia: {h4_trend} | Régimen: {h4_regime} | RSI: {tf_4h.get('rsi', 'N/A')} | ADX: {tf_4h.get('adx', 'N/A')}
+15m → Tendencia: {tf_15m.get('trend', 'N/A')} | Régimen: {tf_15m.get('regime', 'N/A')} | RSI: {tf_15m.get('rsi', 'N/A')} | ADX: {tf_15m.get('adx', 'N/A')}
 Confluencia: {confluence} (score: {confluence_score:.0%})
+Divergencias: {", ".join(divergences) if divergences else "Ninguna"}
 Posición en rango 4H: {tf_4h.get('position_in_range', 0.5):.0%} (0=soporte, 100%=resistencia)
 Estrategia sugerida por MTF: {recommended_strategy}
 """.strip()
@@ -204,6 +234,8 @@ Estrategia sugerida por MTF: {recommended_strategy}
             'recommended_strategy': recommended_strategy,
             'daily_trend': daily_trend,
             'h4_trend': h4_trend,
+            'm15_trend': m15_trend,
+            'divergences': divergences,
             'allow_long': confluence not in ['STRONG_SELL_BIAS', 'COUNTER_TREND'],
             'mtf_text': mtf_text
         }

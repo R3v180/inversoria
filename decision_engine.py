@@ -11,6 +11,7 @@ from multi_timeframe import MultiTimeframeAnalyzer
 from backtest_engine import BacktestEngine
 from database_manager import DatabaseManager
 from i18n import _
+from decision_runtime.ai_fallback import build_invalid_ai_fallback_decision as build_invalid_ai_fallback_payload
 
 
 def _safe_float(value, default=0.0):
@@ -48,6 +49,26 @@ DECISION_JSON_KEYS = (
     "take_profit_ratio",
     "reasoning",
 )
+
+ALLOWED_AI_REGIMES = {
+    "TRENDING_UP",
+    "TRENDING_DOWN",
+    "RANGING",
+    "HIGH_VOLATILITY",
+    "STRONG_UPTREND",
+    "STRONG_DOWNTREND",
+    "MODERATE_UPTREND",
+    "MODERATE_DOWNTREND",
+    "CONSOLIDATION",
+}
+
+ALLOWED_AI_STRATEGIES = {
+    "TREND_FOLLOWING",
+    "BREAKOUT",
+    "MEAN_REVERSION",
+    "MOMENTUM",
+    "HOLD",
+}
 
 
 def _strip_markdown_fences(text):
@@ -349,6 +370,29 @@ class DecisionEngine:
 
         raise ValueError(str(last_error or "Invalid JSON"))
 
+    def _parse_ai_batch_json(self, raw_content):
+        raw_object = _extract_first_json_object(raw_content)
+        if not raw_object:
+            raise ValueError("No JSON object found")
+        attempts = [
+            ("raw", raw_object),
+            ("repaired", _repair_common_json_issues(raw_object)),
+        ]
+        last_error = None
+        for mode, candidate in attempts:
+            try:
+                parsed = json.loads(candidate)
+                return parsed, mode
+            except json.JSONDecodeError as exc:
+                last_error = exc
+        try:
+            parsed = ast.literal_eval(_repair_common_json_issues(raw_object))
+            if isinstance(parsed, dict):
+                return parsed, "literal_eval"
+        except (SyntaxError, ValueError) as exc:
+            last_error = exc
+        raise ValueError(str(last_error or "Invalid batch JSON"))
+
     def _validate_ai_decision(self, result):
         if not isinstance(result, dict):
             raise ValueError("AI JSON is not an object")
@@ -361,11 +405,16 @@ class DecisionEngine:
         if result['action'] not in {"BUY", "SELL", "HOLD"}:
             raise ValueError(f"Invalid action: {result['action']}")
         result['regime'] = str(result.get('regime', 'RANGING')).upper()
+        if result['regime'] not in ALLOWED_AI_REGIMES:
+            result['regime'] = 'RANGING'
         result['confidence'] = round(_clamp(_safe_float(result.get('confidence'), 0.0)), 3)
-        result['position_size_multiplier'] = round(_clamp(_safe_float(result.get('position_size_multiplier'), 1.0), 0.0, 2.0), 3)
-        result['stop_loss_atr'] = round(max(0.1, _safe_float(result.get('stop_loss_atr'), 2.0)), 3)
-        result['take_profit_ratio'] = round(max(0.1, _safe_float(result.get('take_profit_ratio'), 2.0)), 3)
-        result['best_strategy'] = str(result.get('best_strategy') or 'HOLD')
+        max_size_mult = float(getattr(config, 'AI_MAX_POSITION_SIZE_MULTIPLIER', 1.5) or 1.5)
+        result['position_size_multiplier'] = round(_clamp(_safe_float(result.get('position_size_multiplier'), 1.0), 0.0, max_size_mult), 3)
+        result['stop_loss_atr'] = round(_clamp(_safe_float(result.get('stop_loss_atr'), 2.0), 0.5, 6.0), 3)
+        result['take_profit_ratio'] = round(_clamp(_safe_float(result.get('take_profit_ratio'), 2.0), 0.5, 8.0), 3)
+        result['best_strategy'] = str(result.get('best_strategy') or 'HOLD').upper()
+        if result['best_strategy'] not in ALLOWED_AI_STRATEGIES:
+            result['best_strategy'] = 'HOLD'
         result['reasoning'] = " ".join(str(result.get('reasoning') or '').split())[:500]
         return result
 
@@ -374,6 +423,13 @@ class DecisionEngine:
         rsi = _safe_float(indicators.get('rsi'), 50.0)
         adx = _safe_float(indicators.get('adx'), 0.0)
         trend = indicators.get('trend', 'BEAR')
+        volume_ratio = _safe_float(indicators.get('volume_ratio'), 1.0)
+        macd_hist = _safe_float(indicators.get('macd_hist'), 0.0)
+        macd = _safe_float(indicators.get('macd'), 0.0)
+        macd_signal = _safe_float(indicators.get('macd_signal'), 0.0)
+        bb_percent = _safe_float(indicators.get('bb_percent'), 0.5)
+        stoch_k = _safe_float(indicators.get('stochrsi_k'), 50.0)
+        obv_slope = _safe_float(indicators.get('obv_slope'), 0.0)
 
         trend_score = 1.0 if trend == 'BULL' else 0.25
         if 45 <= rsi <= 62:
@@ -396,7 +452,39 @@ class DecisionEngine:
         else:
             adx_score = 0.70
 
-        technical_score = _clamp((trend_score * 0.45) + (rsi_score * 0.35) + (adx_score * 0.20))
+        if volume_ratio >= 1.5:
+            volume_score = 0.90
+        elif volume_ratio >= 1.0:
+            volume_score = 0.70
+        elif volume_ratio >= 0.7:
+            volume_score = 0.45
+        else:
+            volume_score = 0.25
+
+        macd_score = 0.75 if macd_hist > 0 and macd >= macd_signal else 0.35
+        if macd_hist > 0 and obv_slope > 0:
+            macd_score = min(0.95, macd_score + 0.10)
+        if 0.20 <= bb_percent <= 0.85:
+            bb_score = 0.70
+        elif bb_percent < 0.20:
+            bb_score = 0.55
+        else:
+            bb_score = 0.35
+        if 20 <= stoch_k <= 80:
+            stoch_score = 0.65
+        elif stoch_k < 20:
+            stoch_score = 0.50
+        else:
+            stoch_score = 0.30
+        momentum_score = _clamp((macd_score * 0.45) + (bb_score * 0.25) + (stoch_score * 0.20) + ((0.75 if obv_slope > 0 else 0.35) * 0.10))
+
+        technical_score = _clamp(
+            (trend_score * 0.30)
+            + (rsi_score * 0.20)
+            + (adx_score * 0.15)
+            + (volume_score * 0.15)
+            + (momentum_score * 0.20)
+        )
         macro_score = {
             'ALTSEASON': 0.95,
             'RISK_ON': 0.80,
@@ -434,7 +522,11 @@ class DecisionEngine:
             'mtf': round(mtf_score, 3),
             'historical': round(historical_score, 3),
             'macro': round(macro_score, 3),
+            'volume': round(volume_score, 3),
+            'momentum': round(momentum_score, 3),
             'adaptive': round(adaptive_score, 3),
+            'historical_trades': int((prior or {}).get('total_trades', 0) or 0),
+            'historical_reliability': round(_safe_float((prior or {}).get('reliability_score'), 0.0), 3),
             'adaptive_adjustment': round(adaptive_adjustment, 4),
             'weights': {key: round(value, 3) for key, value in weights.items()},
             'adaptive_evidence': adaptive_evidence,
@@ -467,6 +559,10 @@ class DecisionEngine:
             "decision_mode": "rules",
             "macro_regime": macro_regime,
         }
+
+    def build_invalid_ai_fallback_decision(self, score, components, indicators, strategy, macro_regime, provider, error):
+        result = self.build_rules_decision(score, components, indicators, strategy, macro_regime)
+        return build_invalid_ai_fallback_payload(result, provider, error)
         
     def quick_technical_filter(self, indicators, current_price):
         if not indicators: return False, _('FILTER_SIN_DATOS', lang=self.current_lang)
@@ -803,6 +899,17 @@ Si la confluencia MTF es fuerte ({confluence_score:.0%}), puedes aumentar positi
                 return self._remember_decision(symbol, result, now, persist=True)
             except Exception as e:
                 print(f"[DecisionEngine] Error parseando respuesta IA para {symbol}: {e}")
+                if bool(getattr(config, "AI_INVALID_RESPONSE_RULES_FALLBACK", True)):
+                    fallback = self.build_invalid_ai_fallback_decision(
+                        decision_score,
+                        score_components,
+                        indicators,
+                        mtf_recommended_strategy,
+                        macro_regime,
+                        provider,
+                        e,
+                    )
+                    return self._remember_decision(symbol, fallback, now, persist=False)
 
         return self.decision_cache.get(symbol)
 
@@ -864,11 +971,12 @@ Si la confluencia MTF es fuerte ({confluence_score:.0%}), puedes aumentar positi
             return {}
 
         try:
-            raw_object = _extract_first_json_object(raw_content)
-            parsed = json.loads(_repair_common_json_issues(raw_object or raw_content))
+            parsed, parse_mode = self._parse_ai_batch_json(raw_content)
             decisions = parsed.get('decisions') if isinstance(parsed, dict) else None
             if not isinstance(decisions, list):
                 return {}
+            if parse_mode != "raw":
+                print(f"[DecisionEngine] JSON parse fallback OK para batch | provider={provider} | mode={parse_mode}")
         except Exception as exc:
             print(f"[DecisionEngine] Error parseando batch IA: {exc}")
             return {}

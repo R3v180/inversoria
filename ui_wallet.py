@@ -7,6 +7,14 @@ import pandas as pd
 import config
 import re
 from i18n import _
+from ui_services.manual_trading import execute_manual_sell
+from ui_services.page_cache import (
+    invalidate_snapshot,
+    install_page_autorefresh,
+    page_cache_ttl,
+    render_stale_while_revalidate,
+)
+from ui_services.wallet_data import build_wallet_snapshot
 
 
 def _fmt_usd_val(v: float) -> str:
@@ -282,7 +290,20 @@ def _evaluate_sell_candidate(ex, row: dict, open_pos: dict) -> dict:
     }
 
 
-def render_wallet():
+WALLET_AUTO_REFRESH_SEC = 30
+
+
+def render_wallet_page():
+    install_page_autorefresh("wallet")
+    render_stale_while_revalidate(
+        "wallet",
+        lambda: build_wallet_snapshot(st.session_state.db, st.session_state.exchange),
+        lambda data, stale=False, age_sec=0: render_wallet(data, stale=stale, age_sec=age_sec),
+        ttl_sec=page_cache_ttl("wallet"),
+    )
+
+
+def render_wallet(snapshot=None, *, stale=False, age_sec=0):
     st.markdown(
         """
         <style>
@@ -310,6 +331,11 @@ def render_wallet():
     )
     st.title(_("WALLET_TITLE"))
     st.caption(_("WALLET_INTRO"))
+    st.caption(f"Auto-actualización cada {int(WALLET_AUTO_REFRESH_SEC)} segundos en esta pestaña.")
+
+    if stale and age_sec is not None:
+        remaining = max(0, int(WALLET_AUTO_REFRESH_SEC - age_sec))
+        st.caption(f"Datos de hace {int(age_sec)}s (caché). Actualización automática en ~{remaining}s.")
 
     from runtime_bootstrap import new_database_manager
 
@@ -317,43 +343,40 @@ def render_wallet():
         st.session_state.db = new_database_manager()
     db = st.session_state.db
     ex = st.session_state.exchange
-    open_pos = db.get_open_positions()
 
-    rows = ex.get_spot_inventory_rows()
+    if snapshot is None:
+        snapshot = build_wallet_snapshot(db, ex)
+
+    open_pos = snapshot.get("open_pos") or {}
+    rows = snapshot.get("rows") or []
     if rows and rows[0].get("error"):
         st.error(rows[0].get("error"))
         return
 
-    equity = ex.get_balance()
-    tracked_usd = 0.0
-    for sym, p in open_pos.items():
-        px = ex.get_ticker(sym) or float(p.get("entry_price") or 0)
-        tracked_usd += float(p.get("amount", 0) or 0) * float(px or 0)
-
-    sum_rows_usd = sum(float(r.get("usd_total") or 0) for r in rows)
-    untracked = max(0.0, sum_rows_usd - tracked_usd)
+    equity = float(snapshot.get("equity") or 0)
+    tracked_usd = float(snapshot.get("tracked_usd") or 0)
+    untracked = float(snapshot.get("untracked") or 0)
 
     m1, m2, m3 = st.columns(3)
     m1.metric(_("WALLET_METRIC_EQUITY"), f"${equity:.2f}")
     m2.metric(_("WALLET_METRIC_TRACKED"), f"${tracked_usd:.2f}")
     m3.metric(_("WALLET_METRIC_UNTRACKED"), f"${untracked:.2f}")
 
-    if hasattr(db, "get_exchange_balance_watch"):
-        watch_rows = db.get_exchange_balance_watch(limit=200)
-        if watch_rows:
-            with st.expander("Vigilancia persistente de dust/inventario", expanded=False):
-                watch_table = []
-                for item in watch_rows:
-                    watch_table.append({
-                        "Par": item.get("symbol"),
-                        "Estado": item.get("status"),
-                        "Libre": f"{float(item.get('free') or 0):.8g}",
-                        "Valor libre USDT": _fmt_usd_val(item.get("usd_free") or 0),
-                        "Falta qty": f"{float(item.get('missing_qty') or 0):.8g}",
-                        "Precio objetivo": _fmt_usd_val(item.get("target_price") or 0),
-                        "En posición bot": "Sí" if item.get("in_open_position") else "No",
-                    })
-                st.dataframe(pd.DataFrame(watch_table), width="stretch", hide_index=True)
+    watch_rows = snapshot.get("watch_rows") or []
+    if watch_rows:
+        with st.expander("Vigilancia persistente de dust/inventario", expanded=False):
+            watch_table = []
+            for item in watch_rows:
+                watch_table.append({
+                    "Par": item.get("symbol"),
+                    "Estado": item.get("status"),
+                    "Libre": f"{float(item.get('free') or 0):.8g}",
+                    "Valor libre USDT": _fmt_usd_val(item.get("usd_free") or 0),
+                    "Falta qty": f"{float(item.get('missing_qty') or 0):.8g}",
+                    "Precio objetivo": _fmt_usd_val(item.get("target_price") or 0),
+                    "En posición bot": "Sí" if item.get("in_open_position") else "No",
+                })
+            st.dataframe(pd.DataFrame(watch_table), width="stretch", hide_index=True)
 
     st.markdown("---")
     st.subheader(_("WALLET_TABLE_TITLE"))
@@ -549,28 +572,24 @@ def render_wallet():
                     st.warning(_("WALLET_SLIPPAGE_FORCE_HINT"))
 
                 if st.button(_("WALLET_BTN_SELL"), key=f"sell_{key}", type="primary", disabled=bool(hard_errors)):
-                    res = ex.execute_order(sym, "sell", qty, px, force_market=True)
-                    if res.get("status") in ("closed", "simulated", "open"):
-                        exit_p = res.get("average") or res.get("price") or px
-                        try:
-                            exit_p = float(exit_p)
-                        except (TypeError, ValueError):
-                            exit_p = float(px)
-                        try:
-                            sold = float(res.get("filled") or 0)
-                        except (TypeError, ValueError):
-                            sold = 0.0
-                        if sold <= 0:
-                            sold = float(res.get("amount") or qty)
-                        sold = min(sold, float(qty), free)
-                        reason = _("WALLET_REASON_WALLET")
-                        if in_bot:
-                            db.close_position(sym, exit_p, reason, sold_amount=sold)
-                        db.add_log(f"{reason}: {sym} qty={sold} @ {exit_p}")
+                    outcome = execute_manual_sell(
+                        db,
+                        ex,
+                        sym,
+                        qty,
+                        px,
+                        _("WALLET_REASON_WALLET"),
+                        in_bot=bool(in_bot),
+                        max_qty=free,
+                    )
+                    if outcome.get("ok"):
+                        ex.invalidate_ui_cache()
+                        invalidate_snapshot("wallet")
+                        invalidate_snapshot("dashboard")
                         st.success(_("WALLET_SELL_OK"))
                         st.rerun()
                     else:
-                        st.error(f"{_('WALLET_SELL_FAIL')}: {res.get('reason', res)}")
+                        st.error(f"{_('WALLET_SELL_FAIL')}: {outcome.get('reason', outcome)}")
 
     st.markdown("---")
     if st.button(_("WALLET_SNAPSHOT_BTN")):
