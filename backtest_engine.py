@@ -524,6 +524,7 @@ class BacktestEngine:
             'avg_profit_pct': 0,
             'avg_loss_pct': 0,
             'avg_duration_hours': 4,
+            'reliability_score': 0.0,
             'hard_veto': False,
             'veto_reason': '',
             'prior_text': 'Sin datos históricos suficientes para este contexto.'
@@ -533,6 +534,7 @@ class BacktestEngine:
             with sqlite3.connect(db_path, timeout=10) as conn:
                 conn.row_factory = sqlite3.Row
 
+                min_bucket = int(getattr(config, "BACKTEST_MIN_TRADES_PER_BUCKET", 5) or 5)
                 # Buscar por condiciones exactas primero
                 cursor = conn.execute('''
                     SELECT * FROM backtest_conditions
@@ -542,10 +544,10 @@ class BacktestEngine:
                     AND rsi_bucket = ?
                     AND adx_bucket = ?
                     AND trend = ?
-                    AND total_trades >= 3
+                    AND total_trades >= ?
                     ORDER BY updated_at DESC LIMIT 1
                 ''', (symbol, current_regime, proposed_strategy,
-                      current_rsi_bucket, current_adx_bucket, current_trend))
+                      current_rsi_bucket, current_adx_bucket, current_trend, min_bucket))
 
                 row = cursor.fetchone()
 
@@ -556,9 +558,9 @@ class BacktestEngine:
                         WHERE symbol = ?
                         AND regime = ?
                         AND strategy = ?
-                        AND total_trades >= 5
+                        AND total_trades >= ?
                         ORDER BY win_rate DESC LIMIT 1
-                    ''', (symbol, current_regime, proposed_strategy))
+                    ''', (symbol, current_regime, proposed_strategy, min_bucket))
                     row = cursor.fetchone()
 
                 if not row:
@@ -567,6 +569,8 @@ class BacktestEngine:
                 win_rate = row['win_rate']
                 profit_factor = row['profit_factor']
                 total_trades = row['total_trades']
+                min_sample = int(getattr(config, "BACKTEST_MIN_SAMPLE_TRADES", 30) or 30)
+                reliability_score = min(1.0, float(total_trades or 0) / max(1, min_sample))
 
                 # Aplicar veto duro solo con muestra suficiente.
                 veto_floor = float(getattr(config, 'BACKTEST_HARD_VETO_WIN_RATE', 0.35))
@@ -600,6 +604,7 @@ class BacktestEngine:
                     'avg_profit_pct': row['avg_profit_pct'],
                     'avg_loss_pct': row['avg_loss_pct'],
                     'avg_duration_hours': row['avg_duration_hours'],
+                    'reliability_score': reliability_score,
                     'hard_veto': hard_veto,
                     'veto_reason': veto_reason,
                     'prior_text': prior_text

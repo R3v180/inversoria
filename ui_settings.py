@@ -336,11 +336,14 @@ def render_settings():
             st.markdown("##### Gestión avanzada de posiciones")
             col_p1, col_p2 = st.columns(2)
             with col_p1:
+                advanced_edge_enabled = st.checkbox("Permitir edge avanzado", value=get_setting('ADVANCED_EDGE_ENABLED', False, bool), help="Gate global para piramidación y futuras ventajas avanzadas.")
                 add_to_winner_enabled = st.checkbox("Add-to-winner", value=get_setting('ADD_TO_WINNER_ENABLED', False, bool), help="Mantener apagado hasta implementar tramos/lotes.")
                 add_min_profit = st.number_input("Beneficio mínimo para add (%)", min_value=0.0, max_value=50.0, value=get_setting('ADD_MIN_PROFIT_PCT', 1.0, float), step=0.1)
                 add_min_score = st.slider("Score mínimo para add", 0.0, 1.0, get_setting('ADD_MIN_SCORE', 0.62, float), step=0.01)
                 add_min_confidence = st.slider("Confianza mínima para add", 0.0, 1.0, get_setting('ADD_MIN_CONFIDENCE', 0.65, float), step=0.01)
             with col_p2:
+                advanced_edge_min_reliability = st.slider("Reliability mínima edge avanzado", 0.0, 1.0, get_setting('ADVANCED_EDGE_MIN_RELIABILITY', 0.65, float), step=0.01)
+                advanced_edge_min_trades = st.number_input("Trades mínimos edge avanzado", min_value=1, max_value=1000, value=get_setting('ADVANCED_EDGE_MIN_TRADES', 30, int), step=1)
                 add_max_per_symbol = st.number_input("Máx. adds por símbolo", min_value=0, max_value=10, value=get_setting('ADD_MAX_PER_SYMBOL', 1, int), step=1)
                 add_size_multiplier = st.slider("Tamaño add vs entrada", 0.05, 2.0, get_setting('ADD_SIZE_MULTIPLIER', 0.5, float), step=0.05)
                 break_even_enabled = st.checkbox("Break-even stop", value=get_setting('BREAK_EVEN_ENABLED', True, bool))
@@ -440,6 +443,9 @@ def render_settings():
                 "AI_MAX_OUTPUT_TOKENS": int(ai_max_output_tokens),
                 "AI_PROVIDER_TIMEOUT_SECONDS": int(ai_provider_timeout_seconds),
                 "AI_MAX_POSITION_SIZE_MULTIPLIER": float(ai_max_position_size_multiplier),
+                "ADVANCED_EDGE_ENABLED": bool(advanced_edge_enabled),
+                "ADVANCED_EDGE_MIN_RELIABILITY": float(advanced_edge_min_reliability),
+                "ADVANCED_EDGE_MIN_TRADES": int(advanced_edge_min_trades),
                 "ADD_TO_WINNER_ENABLED": bool(add_to_winner_enabled),
                 "ADD_MIN_PROFIT_PCT": float(add_min_profit),
                 "ADD_MIN_SCORE": float(add_min_score),

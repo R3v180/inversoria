@@ -524,6 +524,8 @@ class DecisionEngine:
             'volume': round(volume_score, 3),
             'momentum': round(momentum_score, 3),
             'adaptive': round(adaptive_score, 3),
+            'historical_trades': int((prior or {}).get('total_trades', 0) or 0),
+            'historical_reliability': round(_safe_float((prior or {}).get('reliability_score'), 0.0), 3),
             'adaptive_adjustment': round(adaptive_adjustment, 4),
             'weights': {key: round(value, 3) for key, value in weights.items()},
             'adaptive_evidence': adaptive_evidence,
