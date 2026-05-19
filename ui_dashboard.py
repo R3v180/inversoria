@@ -225,7 +225,7 @@ def render_dashboard():
         except (TypeError, ValueError):
             eval_age_min = 0
         st.caption(f"Baseline de evaluación activo: ${baseline:.2f} · hace {max(0, eval_age_min)} min. El histórico no se ha borrado.")
-    c_eval1, c_eval2, _ = st.columns([1, 1, 4])
+    c_eval1, c_eval2, c_eval_spacer = st.columns([1, 1, 4])
     if c_eval1.button("Reiniciar evaluación desde ahora", help="No borra historial; solo cambia el baseline de PnL visible."):
         db.set_system_status('evaluation_start_balance', total_value)
         db.set_system_status('evaluation_start_ts', time.time())
