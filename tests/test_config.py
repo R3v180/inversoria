@@ -3,9 +3,8 @@ from simulation_profiles import (
     get_active_profile_settings,
     save_active_profile_settings,
 )
-from config import get_setting
-from pathlib import Path
-from unittest.mock import patch
+from config import get_setting, load_config
+from unittest.mock import patch, mock_open
 import config
 
 def test_get_active_profile_settings():
@@ -50,11 +49,18 @@ def test_returns_default_when_missing(monkeypatch):
     result = get_setting("MISSING_KEY", "fallback")
     assert result == "fallback"
 
-
 def test_json_load_failure():
     with patch("json.load", side_effect=Exception):
         result = get_setting("KEY", "default")
     assert result == "default"
+
+def test_json_file_content():
+    fake_json = '{"debug":"true", "port":8000}'
+
+    with patch("builtins.open", mock_open(read_data = fake_json)):
+        result = load_config()
+
+    assert result == {"debug":"true", "port":8000}
 
 def test_key_in_global(monkeypatch):
     monkeypatch.setattr(

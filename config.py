@@ -170,6 +170,10 @@ SENSITIVE_SETTING_KEYS = {
     'ALPHA_VANTAGE_API_KEY',
 }
 
+def load_config():
+    with open("config.json") as f:
+        return json.load(f)
+
 def get_setting(key, default, cast_type=str):
     
     settings = {}
