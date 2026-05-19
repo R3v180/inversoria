@@ -5,6 +5,12 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+LOG_SESSION_MARKERS = (
+    "[LAUNCHER] Sesión",
+    "[LAUNCHER] Nueva sesión daemon",
+)
+
+
 OPERATIONAL_LOG_TAGS = (
     "[DECISION]",
     "[BUY]",
@@ -51,9 +57,23 @@ def effective_config_summary() -> str:
         return f"config: {exc}"
 
 
+def lines_since_last_session(lines: list[str]) -> list[str]:
+    """Keep log lines from the latest launcher session marker onward."""
+    if not lines:
+        return []
+    last_idx = -1
+    for idx, line in enumerate(lines):
+        if any(marker in line for marker in LOG_SESSION_MARKERS):
+            last_idx = idx
+    if last_idx >= 0:
+        return lines[last_idx:]
+    return lines
+
+
 def filter_operational_log_lines(lines: list[str], *, limit: int = 220) -> list[str]:
     if not lines:
         return []
+    lines = lines_since_last_session(lines)
     filtered = [
         line
         for line in lines
@@ -63,14 +83,39 @@ def filter_operational_log_lines(lines: list[str], *, limit: int = 220) -> list[
     return source[-limit:]
 
 
-def read_log_file(path: Path, *, limit: int = 400) -> list[str]:
+def read_log_file(path: Path, *, limit: int = 400, session_only: bool = True) -> list[str]:
     if not path.exists():
         return []
     try:
         text = path.read_text(encoding="utf-8", errors="replace")
-        return text.splitlines()[-limit:]
+        lines = text.splitlines()
+        if session_only:
+            lines = lines_since_last_session(lines)
+        return lines[-limit:]
     except OSError:
         return []
+
+
+def rotate_log_file(path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    backup = path.parent / f"{path.name}.1"
+    if not path.exists():
+        return
+    try:
+        if backup.exists():
+            backup.unlink()
+        path.replace(backup)
+    except OSError:
+        pass
+
+
+def append_session_marker(path: Path, *, label: str) -> None:
+    import time
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    stamp = time.strftime("%Y-%m-%d %H:%M:%S")
+    with open(path, "a", encoding="utf-8") as handle:
+        handle.write(f"\n[LAUNCHER] Sesión · {stamp} · {label}\n")
 
 
 def read_health_json(path: Path) -> str:

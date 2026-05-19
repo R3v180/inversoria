@@ -284,7 +284,7 @@ def _render_journal_vs_backtest(db):
                 "live_expectancy_pct": _("JB_COL_LIVE_EXP"),
                 "backtest_win_rate": _("JB_COL_BT_WR"),
                 "backtest_pf": _("JB_COL_BT_PF"),
-                "backtest_trades": _("JB_COL_LIVE_TRADES"),
+                "backtest_trades": _("JB_COL_BT_TRADES"),
                 "wr_gap_live_minus_bt": _("JB_COL_WR_GAP"),
             }
         )
