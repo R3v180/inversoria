@@ -55,6 +55,53 @@ def _parse_json_maybe(raw):
         return {}
 
 
+def _audit_rows_to_df(rows):
+    df = pd.DataFrame(rows or [])
+    if df.empty:
+        return df
+    if "timestamp" in df.columns:
+        df["date"] = pd.to_datetime(df["timestamp"], unit="s", errors="coerce")
+    for col in ("payload_json", "raw_json"):
+        if col in df.columns:
+            df[col] = df[col].apply(lambda raw: json.dumps(_parse_json_maybe(raw), ensure_ascii=False)[:1200])
+    return df
+
+
+def _render_audit_replay(db):
+    with st.expander("Auditoría operativa y replay de ciclos", expanded=False):
+        tab_events, tab_snapshots = st.tabs(["Audit events", "Cycle replay"])
+        with tab_events:
+            c1, c2, c3 = st.columns([1, 1, 2])
+            limit = int(c1.selectbox("Eventos", [50, 100, 200, 500, 1000], index=2, key="audit_limit"))
+            event_type = c2.text_input("Tipo evento", value="", key="audit_event_type").strip()
+            symbol = c3.text_input("Símbolo", value="", key="audit_symbol").strip()
+            try:
+                rows = db.get_audit_events(limit=limit, event_type=event_type or None, symbol=symbol or None)
+                df = _audit_rows_to_df(rows)
+                if df.empty:
+                    st.info("Sin audit events para esos filtros.")
+                else:
+                    cols = [c for c in ("date", "event_type", "symbol", "severity", "message", "payload_json") if c in df.columns]
+                    st.dataframe(df[cols], width="stretch", hide_index=True)
+            except Exception as exc:
+                st.warning(f"No se pudieron cargar audit events: {exc}")
+
+        with tab_snapshots:
+            c1, c2 = st.columns([1, 3])
+            limit = int(c1.selectbox("Snapshots", [25, 50, 100, 250, 500], index=2, key="replay_limit"))
+            cycle_id = c2.text_input("Cycle ID", value="", key="replay_cycle_id").strip()
+            try:
+                rows = db.get_cycle_replay_snapshots(limit=limit, cycle_id=cycle_id or None)
+                df = _audit_rows_to_df(rows)
+                if df.empty:
+                    st.info("Sin snapshots de ciclo para esos filtros.")
+                else:
+                    cols = [c for c in ("date", "cycle_id", "phase", "payload_json") if c in df.columns]
+                    st.dataframe(df[cols], width="stretch", hide_index=True)
+            except Exception as exc:
+                st.warning(f"No se pudieron cargar snapshots: {exc}")
+
+
 def _open_position_context(db):
     try:
         positions = db.get_open_positions()
@@ -155,7 +202,9 @@ def render_history():
     if 'db' not in st.session_state:
         st.warning(_('DB_NOT_INIT'))
         return
-        
+
+    _render_audit_replay(st.session_state.db)
+
     df = st.session_state.db.get_trades_history()
     if df.empty:
         st.info(_('HISTORY_EMPTY'))
