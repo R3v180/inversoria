@@ -279,13 +279,10 @@ def save_settings(new_settings):
         save_active_profile_settings(profile_updates)
 
 def reset_to_defaults():
-    defaults = {
-        key: value for key, value in DEFAULT_SETTINGS.items()
-        if str(key).strip().upper() not in SENSITIVE_SETTING_KEYS
-    }
-    with open(USER_SETTINGS_FILE, 'w', encoding='utf-8') as f:
-        json.dump(defaults, f, indent=4)
-    return defaults
+    """Restaura valores de fábrica + plantilla Recomendado; no cambia sim/real ni perfil."""
+    from config_presets import reset_settings_to_recommended
+
+    return reset_settings_to_recommended()
 
 # --- Carga de Variables Activas ---
 MODO_SIMULACION = get_setting('MODO_SIMULACION', True, bool)

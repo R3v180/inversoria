@@ -62,7 +62,8 @@ def _render_preset_pending(preset_id: str):
         else:
             st.info(_("CONFIG_NO_EFFECTIVE_DIFF"))
         for w in preview.get("warnings") or []:
-            st.caption(f"- {w}")
+            text = _("PRESET_LOCKED_KEYS_SKIPPED") if w == "PRESET_LOCKED_KEYS_SKIPPED" else w
+            st.caption(f"- {text}")
         real_mode = not bool(getattr(config, "MODO_SIMULACION", True))
         confirm_real = False
         if real_mode:
@@ -270,6 +271,7 @@ def render_preset_manage_expander():
 
 def render_config_presets_panel():
     """Presets block (cards + assistant + manage). Call outside st.form."""
+    st.caption(_("PRESETS_LOCKED_KEYS_HINT"))
     render_preset_assistant()
     render_preset_cards()
     render_preset_manage_expander()

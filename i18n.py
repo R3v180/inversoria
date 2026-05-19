@@ -240,7 +240,10 @@ TRANSLATIONS = {
     'SETTINGS_TITLE': {'es': '⚙️ Centro de Mandos - Configuración', 'en': '⚙️ Command Center - Settings'},
     'SAVE_SETTINGS': {'es': '💾 Guardar Cambios en Caliente', 'en': '💾 Save Hot Changes'},
     'RESET_GLOBAL': {'es': '🔄 Reset Global', 'en': '🔄 Global Reset'},
-    'RESET_HELP': {'es': 'Restaurar toda la configuración sugerida por InversorIA', 'en': 'Restore all settings suggested by InversorIA'},
+    'RESET_HELP': {
+        'es': 'Restaura valores de fábrica + plantilla Recomendado (no cambia sim/real ni perfil)',
+        'en': 'Restore factory defaults + Recommended preset (keeps sim/real mode and profile)',
+    },
     'SUCCESS_SETTINGS': {'es': '¡Configuración actualizada!', 'en': 'Settings updated!'},
     'CONFIG_IO_TITLE': {'es': 'Importar / Exportar configuración segura', 'en': 'Import / Export safe configuration'},
     'CONFIG_IO_HELP': {'es': 'Pega un JSON completo o usa modo Parche para cambiar solo las claves que indiques. Las API keys y secretos se bloquean siempre.', 'en': 'Paste a full JSON or use Patch mode to change only the keys you specify. API keys and secrets are always blocked.'},
@@ -365,6 +368,14 @@ TRANSLATIONS = {
     'PRESETS_FORM_HINT': {
         'es': 'Las plantillas se aplican al instante (vista previa → aplicar). Los campos del formulario de abajo se guardan con «Guardar configuración».',
         'en': 'Presets apply immediately (preview → apply). Form fields below are saved with «Save settings».',
+    },
+    'PRESETS_LOCKED_KEYS_HINT': {
+        'es': 'Las plantillas no cambian modo simulación/real, perfil de simulación ni presupuesto inicial (usa el menú lateral).',
+        'en': 'Presets do not change simulation/real mode, simulation profile or initial budget (use the sidebar).',
+    },
+    'PRESET_LOCKED_KEYS_SKIPPED': {
+        'es': 'Modo sim/real, perfil y presupuesto inicial no se modifican con esta plantilla.',
+        'en': 'Sim/real mode, profile and initial budget are not changed by this preset.',
     },
     'API_CREDENTIALS': {'es': 'APIs y Credenciales', 'en': 'APIs & Credentials'},
     'CAPITAL_MGMT': {'es': 'Gestión de Capital', 'en': 'Capital Management'},

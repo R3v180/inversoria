@@ -9,7 +9,7 @@ from pathlib import Path
 
 from simulation_profiles import ROOT
 
-from config import DEFAULT_SETTINGS, SENSITIVE_SETTING_KEYS
+from config import DEFAULT_SETTINGS, SENSITIVE_SETTING_KEYS, USER_SETTINGS_FILE, get_setting
 from config_importer import (
     CONFIG_SCHEMA,
     SENSITIVE_CONFIG_KEYS,
@@ -23,24 +23,35 @@ PRESETS_DIR = ROOT / "config_presets"
 BUILTIN_DIR = PRESETS_DIR / "builtin"
 USER_STORE_FILE = PRESETS_DIR / "user_presets.json"
 
+# Never changed when applying a preset (sidebar / launcher own sim vs real).
+PRESET_LOCKED_KEYS = frozenset(
+    {
+        "MODO_SIMULACION",
+        "SIMULATION_PROFILE_ID",
+        "PRESUPUESTO_INICIAL",
+    }
+)
+
 
 def _slugify(value: str) -> str:
     slug = re.sub(r"[^a-z0-9]+", "-", str(value or "").lower()).strip("-")
     return slug[:48] or f"preset-{int(time.time())}"
 
 
-def _full_base_settings() -> dict:
-    out = {}
-    for key in CONFIG_SCHEMA:
-        if key in SENSITIVE_CONFIG_KEYS:
-            continue
-        out[key] = DEFAULT_SETTINGS.get(key)
-    return out
+def strip_preset_locked_keys(settings: dict) -> dict:
+    """Remove keys that must not be overridden by preset apply/preview."""
+    if not settings:
+        return {}
+    return {
+        str(k).strip().upper(): v
+        for k, v in settings.items()
+        if str(k).strip().upper() not in PRESET_LOCKED_KEYS
+    }
 
 
 def _builtin_definitions() -> list[dict]:
-    recommended = _full_base_settings()
-    recommended.update({
+    # Only strategy/risk deltas — not full DEFAULT_SETTINGS (avoids forcing sim mode).
+    recommended = {
         "TRADING_EXECUTION_MODE": "auto",
         "DECISION_MODE": "hybrid",
         "MIN_AUTO_DECISION_SCORE": 0.62,
@@ -51,9 +62,10 @@ def _builtin_definitions() -> list[dict]:
         "PAIRLIST_LIQUIDITY_FILTER_ENABLED": True,
         "POSITION_MONITOR_SELLS_ENABLED": True,
         "AGGRESSIVE_TRADING_PROFILE": False,
-    })
-    conservative = _full_base_settings()
-    conservative.update({
+        "AI_ENABLE_LOCAL_BUDGET": False,
+        "AI_RULES_ONLY_ON_BUDGET_EXHAUSTED": True,
+    }
+    conservative = {
         "TRADING_EXECUTION_MODE": "consultive",
         "DECISION_MODE": "hybrid",
         "MIN_AUTO_DECISION_SCORE": 0.72,
@@ -70,9 +82,8 @@ def _builtin_definitions() -> list[dict]:
         "AGGRESSIVE_TRADING_PROFILE": False,
         "ROTATION_ENABLED": False,
         "WEBHOOK_AUTO_APPROVE": False,
-    })
-    aggressive = _full_base_settings()
-    aggressive.update({
+    }
+    aggressive = {
         "TRADING_EXECUTION_MODE": "auto",
         "DECISION_MODE": "ai_aggressive",
         "MIN_AUTO_DECISION_SCORE": 0.55,
@@ -87,7 +98,7 @@ def _builtin_definitions() -> list[dict]:
         "AI_MAX_REQUESTS_PER_DAY": 0,
         "SCALED_TAKE_PROFIT_ENABLED": True,
         "INVENTORY_SKEW_ENABLED": False,
-    })
+    }
     return [
         {
             "id": "recommended",
@@ -194,7 +205,7 @@ def parse_preset_import(raw: str) -> dict:
 
 
 def validate_preset_settings(settings: dict):
-    return validate_config_payload(settings)
+    return validate_config_payload(strip_preset_locked_keys(settings))
 
 
 def preview_preset_apply(preset_id: str):
@@ -202,6 +213,9 @@ def preview_preset_apply(preset_id: str):
     if not preset:
         raise ValueError("preset not found")
     changes, warnings, blocked, errors = validate_preset_settings(preset.get("settings") or {})
+    warnings = list(warnings)
+    if any(str(k).strip().upper() in PRESET_LOCKED_KEYS for k in (preset.get("settings") or {})):
+        warnings.append("PRESET_LOCKED_KEYS_SKIPPED")
     if errors:
         raise ValueError("; ".join(errors))
     return {
@@ -237,7 +251,7 @@ def apply_preset(preset_id: str, *, confirm_real: bool = False) -> dict:
 
 
 def save_current_as_preset(name: str, description: str = "") -> dict:
-    settings = current_safe_config_dict()
+    settings = strip_preset_locked_keys(current_safe_config_dict())
     preset_id = _slugify(name)
     store = _load_user_store()
     existing_ids = {str(p.get("id")) for p in store.get("presets", [])}
@@ -275,7 +289,7 @@ def duplicate_preset(preset_id: str, new_name: str) -> dict:
         "description": f"Copia de {source.get('name', preset_id)}",
         "builtin": False,
         "created_at": time.time(),
-        "settings": dict(source.get("settings") or {}),
+        "settings": strip_preset_locked_keys(dict(source.get("settings") or {})),
     }
     store.setdefault("presets", []).append(preset)
     _save_user_store(store)
@@ -299,6 +313,7 @@ def import_user_preset(raw: str) -> dict:
     preset = parse_preset_import(raw)
     if preset.get("builtin"):
         preset["builtin"] = False
+    preset["settings"] = strip_preset_locked_keys(preset.get("settings") or {})
     changes, warnings, blocked, errors = validate_preset_settings(preset["settings"])
     if errors:
         raise ValueError("; ".join(errors))
@@ -308,3 +323,35 @@ def import_user_preset(raw: str) -> dict:
     store["presets"].append(preset)
     _save_user_store(store)
     return preset
+
+
+def reset_settings_to_recommended() -> dict:
+    """Factory defaults + plantilla Recomendado; conserva modo sim/real y perfil activo."""
+    preserved = {
+        "MODO_SIMULACION": get_setting("MODO_SIMULACION", DEFAULT_SETTINGS["MODO_SIMULACION"], bool),
+        "SIMULATION_PROFILE_ID": get_setting(
+            "SIMULATION_PROFILE_ID", DEFAULT_SETTINGS["SIMULATION_PROFILE_ID"], str
+        ),
+    }
+    if preserved["MODO_SIMULACION"]:
+        preserved["PRESUPUESTO_INICIAL"] = get_setting(
+            "PRESUPUESTO_INICIAL", DEFAULT_SETTINGS["PRESUPUESTO_INICIAL"], float
+        )
+
+    base = {
+        key: value
+        for key, value in DEFAULT_SETTINGS.items()
+        if str(key).strip().upper() not in SENSITIVE_SETTING_KEYS
+    }
+    recommended = get_preset("recommended")
+    if recommended:
+        overrides, _warnings, _blocked, errors = validate_preset_settings(recommended.get("settings") or {})
+        if errors:
+            raise ValueError("; ".join(errors))
+        base.update(overrides)
+    base.update(preserved)
+
+    with open(USER_SETTINGS_FILE, "w", encoding="utf-8") as f:
+        json.dump(base, f, indent=4)
+    set_active_preset_id("recommended")
+    return base

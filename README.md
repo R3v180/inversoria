@@ -570,7 +570,7 @@ The settings screen (**Centro de Mandos**) is organized in four tabs:
 - Assistant **“What profile fits me?”** suggests a preset from account size, risk and activity.
 - Expandable **Manage presets** for save, duplicate, export, import and delete.
 
-Click **Save settings** in the form to persist tab fields to `user_settings.json`. Presets apply immediately after preview confirmation (with extra checkbox in real mode).
+Click **Save settings** in the form to persist tab fields to `user_settings.json`. Presets apply immediately after preview confirmation (with extra checkbox in real mode). Presets never change simulation/real mode, active simulation profile or initial budget — use the sidebar for those. **Reset global** restores factory defaults plus the **Recommended** preset while keeping your current mode and profile.
 
 **Import / export** (collapsed expander at the bottom):
 
@@ -1424,7 +1424,7 @@ Pantalla **Centro de Mandos** con cuatro pestañas:
 - Asistente **«¿Qué perfil soy?»** según tamaño de cuenta, riesgo y actividad.
 - Expander **Gestionar plantillas** para guardar, duplicar, exportar, importar y borrar.
 
-**Guardar configuración** persiste los campos del formulario. Las plantillas se aplican tras vista previa (confirmación extra en modo real).
+**Guardar configuración** persiste los campos del formulario. Las plantillas se aplican tras vista previa (confirmación extra en modo real) y **no** cambian sim/real, perfil ni presupuesto inicial. **Reset global** restaura fábrica + plantilla **Recomendado** manteniendo tu modo y perfil actuales.
 
 **Importar / exportar** (expander colapsado al final): aplicar JSON parche/completo o descargar copias seguras; paquete de diagnóstico IA opcional.
 
