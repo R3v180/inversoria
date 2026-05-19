@@ -198,6 +198,11 @@ def render_dashboard():
     pnl = total_value - baseline
     pnl_pct = (pnl / baseline) * 100 if baseline else 0
     open_positions = db.get_open_positions()
+    managed_positions_value = 0.0
+    for sym, pos in open_positions.items():
+        price = exchange.get_ticker(sym) or pos.get('entry_price') or 0
+        managed_positions_value += float(pos.get('amount') or 0) * float(price or 0)
+    other_balances_value = total_value - float(available_usdt or 0) - managed_positions_value
 
     # --- TOP METRICS ---
     dynamic_max = get_effective_max_positions(total_value)
@@ -219,6 +224,15 @@ def render_dashboard():
     m4.metric(_('PNL_USD'), f"${pnl:.2f}", f"{pnl_pct:.2f}%")
     m5.metric(_("DASH_MODE"), mode_label)
     m6.metric(_("DAEMON_STATE"), state_label, f"{decision_mode} · {diag_top.get('scanned', 0)} scan")
+    baseline_text = {
+        "evaluation": "evaluación",
+        "real_start": "inicio real",
+        "initial": "capital inicial",
+    }.get(baseline_label, baseline_label)
+    st.caption(
+        f"Desglose equity: disponible ${available_usdt:.2f} + posiciones bot ${managed_positions_value:.2f} "
+        f"+ otros saldos/dust ${other_balances_value:.2f}. PnL calculado contra baseline {baseline_text}: ${baseline:.2f}."
+    )
     if baseline_label == "evaluation":
         try:
             eval_age_min = int((time.time() - float(evaluation_ts or 0)) / 60)
