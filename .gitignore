@@ -1,4 +1,5 @@
 # Seguridad: NUNCA subir estos archivos
+.venv/
 .env
 *.json
 *.db

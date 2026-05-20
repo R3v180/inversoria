@@ -217,20 +217,26 @@ SENSITIVE_SETTING_KEYS = {
     'ALPHA_VANTAGE_API_KEY',
 }
 
+def load_config():
+    with open("config.json") as f:
+        return json.load(f)
+
 def get_setting(key, default, cast_type=str):
+    
     settings = {}
     if os.path.exists(USER_SETTINGS_FILE):
         try:
             with open(USER_SETTINGS_FILE, 'r', encoding='utf-8') as f:
                 settings = json.load(f)
-        except Exception: pass
+        except Exception:
+            pass
 
     profile_settings = {}
     try:
         if str(key).strip().upper() not in GLOBAL_SETTING_KEYS:
             profile_settings = get_active_profile_settings()
     except Exception:
-        profile_settings = {}
+        pass
 
     if str(key).strip().upper() in SENSITIVE_SETTING_KEYS:
         val = os.getenv(key, default)
@@ -242,7 +248,8 @@ def get_setting(key, default, cast_type=str):
             if isinstance(val, bool): return val
             return str(val).lower() in ('true', '1', 't')
         return cast_type(val)
-    except: return default
+    except: 
+        return default
 
 def get_text_setting(key, default):
     value = get_setting(key, default, str)
